@@ -1,0 +1,23 @@
+{
+  "name": "curate-skills",
+  "version": "0.1.0",
+  "description": "CURATE as Claude Code skills: sketch, catalog-resolve, generate, and emit FaaSr workflows with human-in-the-loop gates.",
+  "author": { "name": "Chia-Chen Kuo", "email": "kuochi@oregonstate.edu" },
+  "license": "MIT",
+  "keywords": ["faasr", "workflow", "curate", "hitl", "serverless"],
+  "userConfig": {
+    "catalog_dir": {
+      "type": "directory",
+      "title": "Catalog directory",
+      "description": "Where reusable CURATE functions are stored. Empty means ~/.curate/catalog. CURATE_CATALOG_DIR overrides this.",
+      "required": false
+    },
+    "mga_retries": {
+      "type": "number",
+      "title": "MGA retries",
+      "description": "Extra curate-mga attempts per function after a failed stub test. 0 matches the original CURATE. CURATE_MGA_RETRIES overrides this.",
+      "required": false,
+      "default": 3
+    }
+  }
+}

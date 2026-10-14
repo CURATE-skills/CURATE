@@ -1,0 +1,12 @@
+# Prototype clone (separate git repo)
+ref/curate/
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+.pytest_cache/
+
+# curate-skills run state
+.curate/

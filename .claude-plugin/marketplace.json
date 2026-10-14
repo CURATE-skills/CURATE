@@ -1,0 +1,15 @@
+{
+  "name": "curate-local",
+  "description": "Local marketplace for the curate-skills plugin.",
+  "owner": {
+    "name": "Chia-Chen Kuo",
+    "email": "kuochi@oregonstate.edu"
+  },
+  "plugins": [
+    {
+      "name": "curate-skills",
+      "source": "./curate-skills",
+      "description": "CURATE as Claude Code skills for FaaSr workflows."
+    }
+  ]
+}
