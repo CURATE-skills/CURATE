@@ -1,4 +1,46 @@
+import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+ENV_VARS = ("CURATE_CATALOG_DIR", "CURATE_MGA_RETRIES", "CURATE_STUBTEST_MODE")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_curate_env(monkeypatch):
+    for v in ENV_VARS:
+        monkeypatch.delenv(v, raising=False)
+
+
+@pytest.fixture
+def make_run(tmp_path, capsys):
+    """Create a run with spec.py init; optionally set state fields directly."""
+    import spec as spec_mod
+
+    def _make(request="count words in a text file", spec=None, project=None, extra_args=(), **state):
+        project = Path(project or tmp_path / "project")
+        project.mkdir(parents=True, exist_ok=True)
+        req = project / "request.txt"
+        req.write_text(request)
+        args = ["init", "--request-file", str(req), "--project-dir", str(project),
+                "--catalog-dir", str(tmp_path / "catalog"), *extra_args]
+        assert spec_mod.main(args) == 0, capsys.readouterr().out
+        run = Path(json.loads(capsys.readouterr().out)["run"])
+        if spec is not None or state:
+            s = json.loads((run / "state.json").read_text())
+            if spec is not None:
+                s["spec"] = spec if isinstance(spec, dict) else json.loads(spec.model_dump_json())
+            s.update(state)
+            (run / "state.json").write_text(json.dumps(s, indent=2))
+        return run
+
+    return _make
+
+
+def call(module, argv, capsys):
+    """Run a script's main() and return (exit_code, parsed JSON stdout)."""
+    code = module.main(argv)
+    return code, json.loads(capsys.readouterr().out)

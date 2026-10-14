@@ -2,9 +2,18 @@
   "name": "curate-skills",
   "version": "0.1.0",
   "description": "CURATE as Claude Code skills: sketch, catalog-resolve, generate, and emit FaaSr workflows with human-in-the-loop gates.",
-  "author": { "name": "Chia-Chen Kuo", "email": "kuochi@oregonstate.edu" },
+  "author": {
+    "name": "Chia-Chen Kuo",
+    "email": "kuochi@oregonstate.edu"
+  },
   "license": "MIT",
-  "keywords": ["faasr", "workflow", "curate", "hitl", "serverless"],
+  "keywords": [
+    "faasr",
+    "workflow",
+    "curate",
+    "hitl",
+    "serverless"
+  ],
   "userConfig": {
     "catalog_dir": {
       "type": "directory",
@@ -18,6 +27,13 @@
       "description": "Extra curate-mga attempts per function after a failed stub test. 0 matches the original CURATE. CURATE_MGA_RETRIES overrides this.",
       "required": false,
       "default": 3
+    },
+    "stubtest_mode": {
+      "type": "string",
+      "title": "Stub-test mode",
+      "description": "strict (default): every rank, deps installed, ModuleNotFoundError fails. parity: original CURATE behaviour (rank 1 only, no dep install, ModuleNotFoundError with declared deps passes). CURATE_STUBTEST_MODE overrides this.",
+      "required": false,
+      "default": "strict"
     }
   }
 }

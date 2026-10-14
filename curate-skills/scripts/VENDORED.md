@@ -16,8 +16,8 @@ Status: `planned` until the file exists; then `vendored`.
 | `emit.py` | `faasr/emit.py`; `agents/wda.py` | 1-218; 15-53 | CLI wrapper; unset `FAASR_*` deployment vars emitted as `<FAASR_NAME>` placeholders (original: `username`, `faasr-functions`, `faasr-data`, AWS defaults); bundle writer adds `spec.json`, `external_inputs.json`, `README.md`, `.deps.txt` and refuses to write if a known secret value appears; structural fallback validator | vendored |
 | `faasr_validate.py` | `faasr/validate.py` | 1-45 | Standalone PEP 723 script with its own `FaaSr_py==0.1.13` env (which pins `boto3==1.37.11`; the original's boto3 override was only for Bedrock); JSON in, JSON out | vendored |
 | `catalog.py` | `catalog/store.py`; `catalog/workflow_store.py`; `orchestrator.py` | 20-84; 1-63; 173-226 | Configurable root (`functions/`, `workflows/` subdirs); CLI; `--only-verified`; import/export | vendored |
-| `faasr_stubs.py` | `faasr/context_dir.py` (`_STUBS_CODE`) | 19-69 | Per-node layout: own `test_output` → own `test_data` → `$CURATE_UPSTREAM_DIRS` | planned |
-| `stubtest.py` | `agents/fga.py` (`_run_stub_test`); `faasr/context_dir.py` (`signature_and_test_call`) | 239-286; 234-248 | Runs every rank; isolated `uv run --with-requirements` env; writes `stubtest.log` | planned |
+| `faasr_stubs.py` | `faasr/context_dir.py` (`_STUBS_CODE`) | 19-69 | Per-node layout: own `test_output` → own `test_data` → `$CURATE_UPSTREAM_DIRS`; warning on stderr when a file is missing (still created empty, as in the original) | vendored |
+| `stubtest.py` | `agents/fga.py` (`_run_stub_test`); `faasr/context_dir.py` (`signature_and_test_call`) | 239-286; 234-248 | Two modes: `strict` (default: every rank, isolated `uv run --with-requirements` env, faasr-import and declared-output checks, `test_output/` cleared first) and `parity` (original: rank 1 only, no dep install, `ModuleNotFoundError` with declared deps passes); deployment/provider credentials removed from the env; writes `stubtest.log` | vendored |
 
 ## New code (design reference only, not vendored)
 
@@ -45,8 +45,8 @@ Status: `planned` until the file exists; then `vendored`.
 ## Deliberate behaviour changes
 
 - Unset `FAASR_*` deployment variables become `<FAASR_NAME>` placeholders instead of guessed defaults; secret values are never written (bundle aborts if one is found).
-- Stub tests run every rank (original: rank 1 only).
-- Stub tests run in an isolated `uv` env with the node's `deps.txt` (original: system interpreter; `ModuleNotFoundError` counted as pass).
+- Stub-test mode is switchable (`stubtest_mode`: flag, `CURATE_STUBTEST_MODE`, plugin setting; pinned per run). Default `strict` runs every rank in an isolated `uv` env with the node's `deps.txt`, rejects faasr imports and requires every declared output to be uploaded. `parity` reproduces the original: rank 1 only, no dep install, `ModuleNotFoundError` with declared deps counts as a pass.
+- Stub runs never see `GH_PAT`, S3 keys or LLM provider keys; secrets a function declares are passed through.
 - The orchestrator always re-runs the stub test; retries are configurable (`mga_retries`, default 3; `0` = original Claude-SDK behaviour).
 - Catalog `usage_count` is incremented at Gate 4 approval (original: during candidate resolution, `fca.py:238`).
 - Reused catalog/cached nodes are stub-run so downstream nodes get real upstream test outputs.
