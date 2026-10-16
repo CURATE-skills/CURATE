@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 import scratch
-from conftest import call
+from conftest import call, ok
 from curate_models import FunctionSpec, IOSpec, WorkflowSpec
 
 
@@ -99,13 +99,13 @@ def test_lock_unlock(built, capsys):
 
 def test_snapshot_and_verify_writes(built, capsys, tmp_path):
     run, _ = built
-    call(scratch, ["snapshot", "--run", str(run), "--node", "work"], capsys)
+    ok(scratch, ["snapshot", "--run", str(run), "--node", "work"], capsys)
     (run / "functions" / "work" / "work.py").write_text("ok")
     (run / "functions" / "work" / "test_output" / "x").write_text("ok")
     code, out = call(scratch, ["verify-writes", "--run", str(run), "--node", "work"], capsys)
     assert code == 0 and out["violations"] == []
 
-    call(scratch, ["snapshot", "--run", str(run), "--node", "work"], capsys)
+    ok(scratch, ["snapshot", "--run", str(run), "--node", "work"], capsys)
     (run / "functions" / "load" / "load.py").write_text("tampered")
     (run / "CONTEXT.md").unlink()
     (Path(state(run)["project_dir"]) / "stray.txt").write_text("x")
@@ -120,7 +120,7 @@ def test_verify_detects_catalog_writes(built, capsys):
     run, _ = built
     cat = Path(state(run)["catalog_dir"])
     cat.mkdir(parents=True, exist_ok=True)
-    call(scratch, ["snapshot", "--run", str(run), "--node", "work"], capsys)
+    ok(scratch, ["snapshot", "--run", str(run), "--node", "work"], capsys)
     (cat / "evil.json").write_text("{}")
     code, out = call(scratch, ["verify-writes", "--run", str(run), "--node", "work"], capsys)
     assert code == 1 and out["violations"][0]["area"] == "catalog"

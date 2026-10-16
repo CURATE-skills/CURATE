@@ -5,7 +5,7 @@ import pytest
 
 import catalog
 import spec as S
-from conftest import call
+from conftest import call, ok
 from curate_models import CatalogEntry, FunctionSpec, IOSpec, WorkflowSpec
 
 
@@ -65,8 +65,9 @@ def test_mga_retries_precedence(monkeypatch, flag, env, config, expected):
 def test_stubtest_mode_setting(make_run, monkeypatch, capsys):
     monkeypatch.setenv("CURATE_STUBTEST_MODE", "parity")
     assert state(make_run())["stubtest_mode"] == "parity"
-    with pytest.raises(AssertionError):
-        make_run(extra_args=["--stubtest-mode", "loose"])
+    req = make_run().parent.parent.parent / "request.txt"
+    code, out = call(S, ["init", "--request-file", str(req), "--stubtest-mode", "loose"], capsys)
+    assert code == 2 and "loose" in out["error"] and "run" not in out
 
 
 # ── skeleton / gate 1 ──
@@ -84,7 +85,7 @@ def test_skeleton_strips_io_and_prunes(make_run, capsys):
 
 def test_bad_revision_keeps_last_good(make_run, capsys):
     run = make_run()
-    call(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", SKELETON)], capsys)
+    ok(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", SKELETON)], capsys)
     bad = {"nodes": [{"name": "Bad-Name"}]}
     code, out = call(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", bad)], capsys)
     assert code == 1 and out["kept_previous"]
@@ -94,7 +95,7 @@ def test_bad_revision_keeps_last_good(make_run, capsys):
 
 def test_gate1_refinement_does_not_count(make_run, capsys):
     run = make_run()
-    call(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", SKELETON)], capsys)
+    ok(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", SKELETON)], capsys)
     code, out = call(S, ["directive", "--run", str(run), "--gate", "1", "--text", "split map"], capsys)
     assert code == 0 and out["iteration"] == 0 and out["next_stage"] == "skeleton"
     code, ctx = call(S, ["prompt-context", "--run", str(run), "--stage", "skeleton"], capsys)
@@ -104,13 +105,13 @@ def test_gate1_refinement_does_not_count(make_run, capsys):
 def test_approve_gate1_prior_spec_rules(make_run, capsys):
     coded = WorkflowSpec(name="old", nodes=[FunctionSpec(name="split_words", code="def split_words(): pass")])
     run = make_run(spec=coded)
-    call(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", SKELETON)], capsys)
-    call(S, ["approve", "--run", str(run), "--gate", "1"], capsys)
+    ok(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", SKELETON)], capsys)
+    ok(S, ["approve", "--run", str(run), "--gate", "1"], capsys)
     assert state(run)["prior_spec"]["name"] == "old"
 
     run2 = make_run(spec=coded, spec_is_seed=True)
-    call(S, ["skeleton", "--run", str(run2), "--json", write(run2, "skeleton.json", SKELETON)], capsys)
-    call(S, ["approve", "--run", str(run2), "--gate", "1"], capsys)
+    ok(S, ["skeleton", "--run", str(run2), "--json", write(run2, "skeleton.json", SKELETON)], capsys)
+    ok(S, ["approve", "--run", str(run2), "--gate", "1"], capsys)
     assert state(run2)["prior_spec"] is None
 
 
@@ -182,7 +183,7 @@ def test_user_model_wins(make_run, capsys, tmp_path):
     run = approved_run(make_run, capsys, extra_args=["--user-model", str(model)])
     cands = [{"node": "split_words", "decision": "new"}, {"node": "map_words", "decision": "new"},
              {"node": "reduce_counts", "decision": "new", "user_model_mode": "adapt"}]
-    call(S, ["apply-candidates", "--run", str(run), "--json", write(run, "candidates.json", cands)], capsys)
+    ok(S, ["apply-candidates", "--run", str(run), "--json", write(run, "candidates.json", cands)], capsys)
     node = next(n for n in state(run)["enriched_spec"]["nodes"] if n["name"] == "reduce_counts")
     assert node["source"] == "user_provided" and node["user_model_mode"] == "adapt"
     assert node["code"].startswith("def model")
@@ -221,12 +222,12 @@ def resolved_run(make_run, capsys, seeded_catalog):
     sk["nodes"].append({"name": "plot", "description": "plot"})
     sk["edges"].append({"from_node": "reduce_counts", "to_node": "plot"})
     run = make_run()
-    call(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", sk)], capsys)
-    call(S, ["approve", "--run", str(run), "--gate", "1"], capsys)
+    ok(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", sk)], capsys)
+    ok(S, ["approve", "--run", str(run), "--gate", "1"], capsys)
     cands = [{"node": "split_words", "decision": "reuse", "catalog_id": seeded_catalog},
              {"node": "map_words", "decision": "new"}, {"node": "reduce_counts", "decision": "new"},
              {"node": "plot", "decision": "new"}]
-    call(S, ["apply-candidates", "--run", str(run), "--json", write(run, "candidates.json", cands)], capsys)
+    ok(S, ["apply-candidates", "--run", str(run), "--json", write(run, "candidates.json", cands)], capsys)
     resolved = json.loads(json.dumps(RESOLVED))
     resolved["edges"] = resolved["edges"][:2]  # drop reduce->plot: plot is an orphan data consumer
     return run, call(S, ["merge-resolved", "--run", str(run), "--json",
@@ -330,4 +331,5 @@ def test_show_and_prompt_context(make_run, capsys, seeded_catalog):
     assert "Original user request (verbatim): count words" in ctx["workflow_context"]
     code, ctx = call(S, ["prompt-context", "--run", str(run), "--stage", "resolve"], capsys)
     assert "[CATALOG]" in ctx["fca_candidates"]
-    assert all("code" not in n for n in ctx["workflow_json"]["nodes"])
+    nodes = ctx["workflow_json"]["nodes"]
+    assert len(nodes) == 4 and all("code" not in n for n in nodes)

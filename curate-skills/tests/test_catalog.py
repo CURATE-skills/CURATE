@@ -170,12 +170,15 @@ def test_import_original_flat_layout_with_companion_py(tmp_path):
     cat = catalog.Catalog(tmp_path / "cat")
     res = catalog.import_entries(cat, [str(legacy)], dedupe_code=False, overwrite=False)
     assert [e["id"] for e in res["imported"]] == [eid]
+    assert [(Path(s["file"]).name, s["reason"]) for s in res["skipped"]] == [("notes.json", "not a catalog entry")]
     entry = catalog.Catalog(tmp_path / "cat").functions[eid]
     assert entry.function_spec.code.startswith("def split_words")
     assert entry.usage_count == 2
 
     again = catalog.import_entries(cat, [str(legacy)], dedupe_code=False, overwrite=False)
-    assert again["imported"] == [] and again["skipped"][0]["reason"] in ("id exists", "not a catalog entry")
+    assert again["imported"] == []
+    assert sorted((Path(s["file"]).name, s["reason"]) for s in again["skipped"]) == [
+        (f"{eid}.json", "id exists"), ("notes.json", "not a catalog entry")]
 
 
 def test_import_dedupe_code(tmp_path):

@@ -44,3 +44,10 @@ def call(module, argv, capsys):
     """Run a script's main() and return (exit_code, parsed JSON stdout)."""
     code = module.main(argv)
     return code, json.loads(capsys.readouterr().out)
+
+
+def ok(module, argv, capsys):
+    """Like call(), but the command must succeed (exit 0)."""
+    code, out = call(module, argv, capsys)
+    assert code == 0, out
+    return out

@@ -2,11 +2,12 @@
 # requires-python = "==3.13.*"
 # dependencies = ["pydantic==2.11.7", "rank-bm25==0.2.2"]
 # ///
+# Copyright (c) 2026 Nolan Cutler. MIT License; see NOTICE.
+# Partly derived from CURATE-prototype src/faasr_agents/agents/wca.py,
+# agents/fca.py and faasr/context_dir.py (commit 3fd5c16092ddf97a28bc3b83088e23e7f1b0f140):
+# the functions marked in their section headers are adapted copies. The rest is
+# new code for curate-skills. See scripts/VENDORED.md ("Ported and new code").
 """Run state and workflow-spec operations for the /curate gate loop.
-
-New code for curate-skills. Behaviour follows CURATE-prototype
-agents/wca.py, agents/fca.py and faasr/context_dir.py (cited per function);
-see scripts/VENDORED.md ("New code").
 
 State lives in <project>/.curate/runs/<run_id>/state.json. Claude writes
 work/skeleton.json, work/candidates.json and work/resolved.json; this script

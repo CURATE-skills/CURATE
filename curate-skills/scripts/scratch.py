@@ -2,13 +2,12 @@
 # requires-python = "==3.13.*"
 # dependencies = ["pydantic==2.11.7", "rank-bm25==0.2.2"]
 # ///
+# Copyright (c) 2026 Nolan Cutler. MIT License; see NOTICE.
+# Partly derived from CURATE-prototype src/faasr_agents/faasr/context_dir.py and
+# agents/fga.py (commit 3fd5c16092ddf97a28bc3b83088e23e7f1b0f140): test-data
+# seeding, the CONTEXT.md / spec.md text and the deps/secrets harvest are adapted
+# copies. The lock, snapshot and verify code is new. See scripts/VENDORED.md.
 """Scratch directory, MGA lock, write verification and harvest for /curate.
-
-New code for curate-skills. Behaviour follows CURATE-prototype
-faasr/context_dir.py (setup_context_directory, test-data seeding) and
-agents/fga.py (deps / secrets harvest). The CONTEXT.md and spec.md text is
-adapted from faasr/context_dir.py (MIT, Copyright (c) 2026 Nolan Cutler; see
-NOTICE and scripts/VENDORED.md).
 
 Layout built under <run>/:
   CONTEXT.md                 shared workflow context for every MGA subagent
