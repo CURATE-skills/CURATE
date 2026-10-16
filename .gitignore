@@ -10,3 +10,6 @@ __pycache__/
 
 # curate-skills run state
 .curate/
+
+# Personal Claude Code settings
+.claude/settings.local.json

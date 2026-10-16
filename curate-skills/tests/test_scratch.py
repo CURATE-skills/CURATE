@@ -144,3 +144,23 @@ def test_harvest_and_record(built, capsys):
     m = state(run)["mga"]["work"]
     assert m["status"] == "failed" and m["attempts"] == 2 and m["last_output_tail"] == "boom"
     assert call(scratch, ["record", "--run", str(run), "--node", "work", "--status", "great"], capsys)[0] == 2
+
+
+def test_fan_out_text_depends_on_rank_placeholder(make_run, capsys):
+    def spec_md(handed_file):
+        wf = WorkflowSpec(
+            name="w", entry="src",
+            nodes=[FunctionSpec(name="src", outputs=[IOSpec(name=handed_file)]),
+                   FunctionSpec(name="par", rank=3, inputs=[IOSpec(name=handed_file)],
+                                outputs=[IOSpec(name="o_{rank}.txt")])],
+            edges=[{"from_node": "src", "to_node": "par"}],
+            data_flow=[{"from_node": "src", "to_node": "par", "file": handed_file}])
+        run = make_run(spec=wf)
+        ok(scratch, ["build", "--run", str(run)], capsys)
+        return (run / "functions" / "src" / "spec.md").read_text()
+
+    shared = spec_md("numbers.txt")
+    assert "reads one shared file" in shared and "Write it exactly once" in shared
+    assert "MUST write exactly 3 output shards" not in shared
+    sharded = spec_md("chunk_{rank}.txt")
+    assert "MUST write exactly 3 output shards" in sharded and "reads one shared file" not in sharded

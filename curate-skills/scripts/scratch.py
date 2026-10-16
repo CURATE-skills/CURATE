@@ -228,16 +228,26 @@ def node_spec_md(run: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: str,
             "(e.g. input1.format(rank=r['rank'])).\n")
     for s in (e.to_node for e in wf.edges if e.from_node == spec.name):
         n = rank_by_name.get(s, 1)
-        if n > 1:
+        if n <= 1:
+            continue
+        handed = [d.file for d in wf.data_flow if d.from_node == spec.name and d.to_node == s]
+        if handed and not any("{rank}" in f for f in handed):
+            # A single shared file (no {rank}): every instance reads the same object.
             rank_block += (
-                f"\n## Fan-out to ranked successor `{s}` (×{n})\n"
-                f"`{s}` runs as {n} parallel instances, so you MUST write exactly {n} output shards — "
-                "one per instance. THIS function is NOT ranked: do NOT call faasr_rank() to get this "
-                "count (it reports YOUR own rank, which is 1 here). "
-                f"Hardcode the count as {n} and substitute {{rank}} with 1..{n}, e.g.\n"
-                f"    for i in range(1, {n + 1}):\n"
-                f"        faasr_put_file(local_file=..., remote_folder=folder, "
-                f"remote_file=output1.replace(\"{{rank}}\", str(i)))\n")
+                f"\n## Ranked successor `{s}` (×{n}) reads one shared file\n"
+                f"`{s}` runs as {n} parallel instances, and ALL of them read the same "
+                f"{', '.join(repr(f) for f in handed)}. Write it exactly once — do not shard it. "
+                "THIS function is NOT ranked: do NOT call faasr_rank().\n")
+            continue
+        rank_block += (
+            f"\n## Fan-out to ranked successor `{s}` (×{n})\n"
+            f"`{s}` runs as {n} parallel instances, so you MUST write exactly {n} output shards — "
+            "one per instance. THIS function is NOT ranked: do NOT call faasr_rank() to get this "
+            "count (it reports YOUR own rank, which is 1 here). "
+            f"Hardcode the count as {n} and substitute {{rank}} with 1..{n}, e.g.\n"
+            f"    for i in range(1, {n + 1}):\n"
+            f"        faasr_put_file(local_file=..., remote_folder=folder, "
+            f"remote_file=output1.replace(\"{{rank}}\", str(i)))\n")
     for p in (e.from_node for e in wf.edges if e.to_node == spec.name):
         n = rank_by_name.get(p, 1)
         if n > 1:

@@ -230,8 +230,14 @@ def main():
     project = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd()
     if os.environ.get("CURATE_GUARD_DEBUG") and data.get("agent_type"):
         # Smoke-test aid: record what Claude Code reports for subagent calls.
-        log(project, {"ts": datetime.now().isoformat(timespec="seconds"), "debug": True,
-                      "agent_type": data.get("agent_type"), "tool": data.get("tool_name"),
+        try:
+            with open(os.path.join(project, ".curate", "mga.lock.json")) as f:
+                lock_node = json.load(f).get("node")
+        except (OSError, ValueError):
+            lock_node = None
+        log(project, {"ts": datetime.now().isoformat(timespec="milliseconds"), "debug": True,
+                      "agent_type": data.get("agent_type"), "agent_id": data.get("agent_id"),
+                      "lock_node": lock_node, "tool": data.get("tool_name"),
                       "decision": "deny" if reason else "allow"})
     if reason is None:
         return 0

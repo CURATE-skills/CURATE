@@ -28,7 +28,9 @@ Your task message gives absolute paths for:
 **You may write ONLY inside your folder.** Everything else — other functions'
 folders, `CONTEXT.md`, `state.json`, the catalog, the project — is read-only. A guard
 denies writes elsewhere, and any write outside your folder fails your attempt. Use
-absolute paths. Do not install packages with pip; list them in `<name>.deps.txt`.
+absolute paths. Create and edit files with the Write and Edit tools, never with shell
+heredocs or redirections; in Bash, write paths out literally (no `$VAR` paths), or the
+guard denies the command. Do not install packages with pip; list them in `<name>.deps.txt`.
 
 ## Procedure
 

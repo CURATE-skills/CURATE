@@ -20,6 +20,7 @@ exit 0 ok, 1 check failed / needs attention, 2 bad input.
                [--stubtest-mode strict|parity] [--config-stubtest-mode M]
                [--project-dir D]
   spec.py runs [--project-dir D]
+  spec.py preflight
   spec.py status          --run R
   spec.py prompt-context  --run R --stage skeleton|mca|resolve [--k 5]
   spec.py skeleton        --run R --json work/skeleton.json
@@ -244,6 +245,31 @@ def cmd_init(args) -> dict:
                 "stubtest_mode": {"value": mode, "source": mode_source}},
             "user_models": [m.name for m in user_models],
             "context_files": [c.name for c in context_files]}
+
+
+FOREGROUND_VAR = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"
+
+
+def cmd_preflight(args) -> dict:
+    """Generation needs curate-mga subagents to run in the foreground.
+
+    In interactive sessions Claude Code runs subagents in the background unless
+    CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1, and an idle session does not resume
+    on the completion notice. Scripts inherit Claude Code's environment, so the
+    variable is visible here exactly when the session has it.
+    """
+    value = os.environ.get(FOREGROUND_VAR)
+    ok = value == "1"
+    out = {"ok": ok, FOREGROUND_VAR: value}
+    if not ok:
+        out["error"] = (
+            f"{FOREGROUND_VAR} is not set to 1 in this Claude Code session, so curate-mga "
+            "subagents would run in the background and the session would stall after each "
+            "one. Quit and relaunch with it set: add "
+            f'{{"env": {{"{FOREGROUND_VAR}": "1"}}}} to .claude/settings.local.json in the '
+            f"project, or start Claude Code as `{FOREGROUND_VAR}=1 claude`. Then resume with "
+            "/curate --resume <run_id>.")
+    return out
 
 
 def cmd_runs(args) -> dict:
@@ -1198,6 +1224,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--project-dir")
     sp = sub.add_parser("runs")
     sp.add_argument("--project-dir")
+    sub.add_parser("preflight")
 
     def with_run(name):
         q = sub.add_parser(name)
@@ -1224,7 +1251,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 COMMANDS = {
-    "init": cmd_init, "runs": cmd_runs, "status": cmd_status, "prompt-context": cmd_prompt_context,
+    "init": cmd_init, "runs": cmd_runs, "preflight": cmd_preflight, "status": cmd_status, "prompt-context": cmd_prompt_context,
     "skeleton": cmd_skeleton, "apply-candidates": cmd_apply_candidates,
     "merge-resolved": cmd_merge_resolved, "check": cmd_check, "toposort": cmd_toposort,
     "approve": cmd_approve, "directive": cmd_directive, "set-cap": cmd_set_cap,

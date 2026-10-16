@@ -333,3 +333,14 @@ def test_show_and_prompt_context(make_run, capsys, seeded_catalog):
     assert "[CATALOG]" in ctx["fca_candidates"]
     nodes = ctx["workflow_json"]["nodes"]
     assert len(nodes) == 4 and all("code" not in n for n in nodes)
+
+
+def test_preflight_requires_foreground_variable(monkeypatch, capsys):
+    monkeypatch.delenv("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", raising=False)
+    code, out = call(S, ["preflight"], capsys)
+    assert code == 1 and "settings.local.json" in out["error"]
+    monkeypatch.setenv("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "0")
+    assert call(S, ["preflight"], capsys)[0] == 1
+    monkeypatch.setenv("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "1")
+    code, out = call(S, ["preflight"], capsys)
+    assert code == 0 and out["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"
