@@ -344,3 +344,29 @@ def test_preflight_requires_foreground_variable(monkeypatch, capsys):
     monkeypatch.setenv("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "1")
     code, out = call(S, ["preflight"], capsys)
     assert code == 0 and out["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"
+
+
+def test_status_counts_auto_emit_retries(make_run, capsys):
+    spec = WorkflowSpec(name="w", nodes=[FunctionSpec(name="a", code="def a(): pass")])
+    run = make_run(spec=spec, history=[{"gate": "emit", "decision": "revise"},
+                                       {"gate": 3, "decision": "approve"},
+                                       {"gate": "emit", "decision": "revise"}])
+    assert ok(S, ["status", "--run", str(run)], capsys)["auto_emit_retries"] == 1
+
+
+def test_gate4_display_flags_missing_code_and_failures(make_run, capsys):
+    spec = WorkflowSpec(name="w", nodes=[FunctionSpec(name="a", code="def a(): pass"), FunctionSpec(name="b")])
+    run = make_run(spec=spec, validation={"ok": True, "level": "faasr_py", "error": None},
+                   mga={"b": {"status": "failed"}})
+    md = ok(S, ["show", "--run", str(run), "--gate", "4"], capsys)["markdown"]
+    assert "functions without code (not in the bundle): b" in md and "stub test failed: b" in md
+
+
+def test_gate4_lists_every_placeholder(make_run, capsys, tmp_path):
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "README.md").write_text("- `<FAASR_GH_USERNAME>`\n- `<FAASR_S3_BUCKET>`\n- `<FAASR_S3_REGION>`\n")
+    spec = WorkflowSpec(name="w", nodes=[FunctionSpec(name="a", code="def a(): pass")])
+    run = make_run(spec=spec, bundle_dir=str(bundle), validation={"ok": True, "level": "faasr_py", "error": None})
+    md = ok(S, ["show", "--run", str(run), "--gate", "4"], capsys)["markdown"]
+    assert "<FAASR_GH_USERNAME>, <FAASR_S3_BUCKET>, <FAASR_S3_REGION>" in md

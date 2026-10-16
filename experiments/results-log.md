@@ -6,20 +6,27 @@ positive (the target was inside the folder but the guard could not prove it).
 
 - **Headless runs** (`claude -p --output-format json`): cost (`total_cost_usd`) and turns
   (`num_turns`) come from the CLI's JSON result.
-- **Interactive runs**: no cost is printed, so record token usage with
-  `python3 experiments/tools/transcript_usage.py <session-id>`, which sums the session
-  transcript and its subagent transcripts. Run `/cost` before quitting if you want a dollar figure.
+- **Interactive runs**: run `/cost` before quitting and record the dollar figure and API/wall
+  time. `python3 experiments/tools/transcript_usage.py <session-id>` sums the session and
+  subagent transcripts, but transcripts do not always store a message's final usage, so its
+  output-token counts are a **lower bound** (one `make_numbers` message with two Write calls
+  shows 7 output tokens).
+- **Model**: from `modelUsage` in the headless JSON result, or the `model` field of the
+  transcript's assistant messages (main session and subagents).
 - **Denials**: from `.curate/mga_guard.log` (entries without `"debug"`).
 
-Model for every run so far: `claude-opus-5-5`. Claude Code 2.1.299.
+Claude Code 2.1.299 for every run.
 
 ## Summary
 
-| # | Date | Run | Mode | Stages | Cost (USD) | Turns | Guard denials (legit / false +) |
-|---|---|---|---|---|---|---|---|
-| 1 | 2026-10-15 | M3 guard smoke test | headless | — | not captured | not captured | 2 (2 / 0) |
-| 2 | 2026-10-15 | E2 MapReduce, through Gate 2 | headless, 2 turns | skeleton + Gate 1; resolve + Gate 2 | 0.309 + 0.664 = 0.973 | 10 + 9 = 19 | 0 |
-| 3 | 2026-10-15 | M5 test 1: sequential spawning | interactive | generate (3 functions) | not captured (tokens below) | 17 main + 19 subagent messages | 3 (0 / 3) |
+| # | Date | Run | Model | Mode | Stages | Cost (USD) | Turns | Guard denials (legit / false +) |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 2026-10-15 | M3 guard smoke test | claude-opus-5-5 | headless | — | not captured | not captured | 2 (2 / 0) |
+| 2 | 2026-10-15 | E2 MapReduce (paraphrased prompt), through Gate 2 | claude-opus-5-5 | headless, 2 turns | skeleton + Gate 1; resolve + Gate 2 | 0.309 + 0.664 = 0.973 | 10 + 9 = 19 | 0 |
+| 3 | 2026-10-15 | M5 test 1: sequential spawning | claude-opus-5-5 | interactive, background subagents | generate (3 functions) | not captured | 17 main + 19 subagent messages | 3 (0 / 3) |
+| 4 | 2026-10-15 | M5 test 2: foreground spawning | claude-opus-5-5 | interactive, `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` | generate (3 functions) | 0.72 | 13 main + 13 subagent messages | 0 |
+| 5 | 2026-10-15 | Opus 4.8 availability check | claude-opus-4-8 | headless, 1 call | — | 0.184 | 1 | — |
+| 6 | 2026-10-15 | E2 MapReduce (reconstructed prompt), Gates 1–4 | claude-opus-5-5 | headless, 5 turns, foreground subagents | all through Gate 4 | 2.369 | 54 | 0 |
 
 ## 1. M3 guard smoke test
 
@@ -32,8 +39,9 @@ Model for every run so far: `claude-opus-5-5`. Claude Code 2.1.299.
 
 ## 2. E2 MapReduce word count, through Gate 2
 
-- Sketch: paraphrase of the SeBS-Flow MapReduce workload plus the paper's two bullets verbatim
-  (the SeBS-Flow §5 prompt itself is not in the paper or in `ref/curate`).
+- Sketch: my paraphrase of the SeBS-Flow MapReduce workload plus the paper's two bullets
+  verbatim. Superseded by the reconstructed prompt in `prompts/e2-mapreduce.md` (which fixes
+  N=3 mappers and W=5000 words); this run is a pipeline check, not an E2 result.
 - Empty temporary catalog (`CURATE_CATALOG_DIR`); settings: retries 3, stub tests strict.
 - Session `c0bebd5f-a3f1-410d-8477-c79a6736a4b2`.
 
@@ -70,3 +78,55 @@ Model for every run so far: `claude-opus-5-5`. Claude Code 2.1.299.
   3. `sum_squares` — false positive
 - Fix applied: `curate-mga` now told to use Write/Edit and literal absolute paths in Bash.
 - Also found: `make_numbers`' spec asked for 2 shards of a shared, unranked file; template fixed.
+
+## 4. M5 test 2: foreground `curate-mga` spawning, interactive
+
+- Run `20261015-220729-m5-foreground-test-squares` (same three functions as test 3).
+- Session `927ecc28-3534-4f48-888b-df1c20f622d8`, launched with `env -u
+  CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`; the variable came only from
+  `.claude/settings.local.json` (`env`). `spec.py preflight` passed.
+- Result: all three subagents ran in the **foreground**, in one turn, with no user nudges; all
+  passed strict stub tests on the first attempt (`total.txt` = 385); 0 write violations; no
+  overlap (22:12:04–22:12:11, 22:12:29–22:12:41, 22:12:59–22:13:12).
+- Cost (from `/cost`): **$0.72**, 1m 35s API time, 2m 55s wall time.
+- Denials: none (the Write/Edit rule removed the test-3 false positives).
+- Finding: the Agent call returns only metadata; the `MGA_RESULT` report arrives as a separate
+  message right after (the subagent's handback). The generate step must read that message.
+
+| Transcript (lower bound) | Assistant messages | Output tokens | Cache read | Cache write |
+|---|---|---|---|---|
+| main | 13 | ≥3,862 | 487,888 | 45,921 |
+| `make_numbers` subagent | 3 | ≥47 | 20,906 | 13,686 |
+| `square_part` subagent | 5 | ≥1,008 | 53,446 | 10,630 |
+| `sum_squares` subagent | 5 | ≥1,108 | 52,516 | 10,089 |
+
+## 5. Opus 4.8 availability
+
+- `claude -p --model claude-opus-4-8` answered; `modelUsage` reported `claude-opus-4-8`.
+  Cost $0.184 for a one-word reply (mostly prompt-cache creation).
+- So the paper's model is available for comparison runs: launch with `--model claude-opus-4-8`;
+  `curate-mga` uses `model: inherit`, so its subagents follow.
+
+## 6. E2 MapReduce, reconstructed prompt, through Gate 4
+
+- Prompt: `prompts/e2-mapreduce.md` (**reconstructed**: SeBS-Flow §5 MapReduce paragraph +
+  the paper's two bullets). Empty temporary catalog; retries 3; stub tests strict.
+- Headless, `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`; turn 1 = the sketch, turns 2–5 = `approve`
+  (no revisions). Session `d8df3b2b-1f1d-4b8d-ad80-9a55dc466cab`, run `20261015-222147-mapreduce-we-base-our`.
+- `total_cost_usd` in a resumed session is cumulative, so per-stage cost = difference.
+
+| Stage | Turn | Cost (USD) | Turns | Wall (s) | Result |
+|---|---|---|---|---|---|
+| sketch → skeleton → Gate 1 | 1 | 0.213 | 10 | 42 | 5 nodes: `generate_text`, `split`, `map` ×3, `shuffle`, `reduce` ×5 |
+| approve → MCA + resolve → Gate 2 | 2 | 0.324 | 8 | 50 | all `[new]`; check clean |
+| approve → generate (5 `curate-mga`) → Gate 3 | 3 | 1.595 | 29 | 283 | 5/5 passed strict stub tests on attempt 1; 0 violations |
+| approve → emit → Gate 4 | 4 | 0.158 | 5 | 23 | bundle valid at level `faasr_py` |
+| approve → finalize (not built) | 5 | 0.079 | 2 | 21 | stopped at `stage: finalize` |
+| **Total** | | **2.369** | **54** | **419** | |
+
+- Correctness (local stub run only, not deployed): reducers produced bird, cat, dog, horse, pig
+  = 1000 each (W=5000, M=5), the expected counts.
+- Functions generated: 5, matching the paper's Table I for E2.
+- Denials: none. 5 subagents, one at a time, no overlap.
+- Bug found: Gate 4 listed 2 of 5 `<FAASR_*>` placeholders (regex excluded digits, so the
+  `S3` names were missed); fixed, with a test.

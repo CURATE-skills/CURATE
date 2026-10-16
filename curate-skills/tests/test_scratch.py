@@ -164,3 +164,19 @@ def test_fan_out_text_depends_on_rank_placeholder(make_run, capsys):
     assert "MUST write exactly 3 output shards" not in shared
     sharded = spec_md("chunk_{rank}.txt")
     assert "MUST write exactly 3 output shards" in sharded and "reads one shared file" not in sharded
+
+
+def test_build_resume_keeps_finished_nodes(built, capsys):
+    run, _ = built
+    (run / "functions" / "work" / "work.py").write_text("def work(): 'done'\n")
+    (run / "functions" / "model" / "model.py").write_text("partial")
+    ok(scratch, ["record", "--run", str(run), "--node", "work", "--status", "passed", "--attempts", "1"], capsys)
+    out = ok(scratch, ["build", "--run", str(run), "--resume"], capsys)
+    kept = {n["name"]: n.get("kept") for n in out["nodes"]}
+    assert kept["work"] == "passed" and kept["model"] is None
+    assert (run / "functions" / "work" / "work.py").read_text() == "def work(): 'done'\n"
+    assert not (run / "functions" / "model" / "model.py").exists()  # unfinished node rebuilt
+    m = state(run)["mga"]
+    assert m["work"]["status"] == "passed" and m["model"]["status"] == "pending"
+    ok(scratch, ["build", "--run", str(run)], capsys)  # without --resume everything is rebuilt
+    assert not (run / "functions" / "work" / "work.py").exists()

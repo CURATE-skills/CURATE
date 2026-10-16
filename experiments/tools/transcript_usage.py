@@ -3,7 +3,8 @@
 
 Usage: transcript_usage.py <session-id> [--project-dir ~/.claude/projects/<encoded>]
 Each assistant message can span several transcript lines; the last line per
-message id carries the final usage, so that one is counted.
+message id is counted. Transcripts do not always store a message's final usage,
+so output-token totals are a LOWER BOUND; use /cost for dollar figures.
 """
 import argparse
 import glob

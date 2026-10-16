@@ -296,7 +296,19 @@ def cmd_status(args) -> dict:
             "workflow": spec.name if spec else None,
             "nodes": [n.name for n in spec.nodes] if spec else [],
             "mga": {k: v.get("status") for k, v in (s.get("mga") or {}).items()},
-            "bundle_dir": s.get("bundle_dir"), "validation": s.get("validation")}
+            "bundle_dir": s.get("bundle_dir"), "validation": s.get("validation"),
+            "auto_emit_retries": auto_emit_retries(s)}
+
+
+def auto_emit_retries(s: dict) -> int:
+    """Automatic emit→resolve retries since the latest Gate 3 approval."""
+    count = 0
+    for h in s.get("history") or []:
+        if h.get("gate") == 3 and h.get("decision") == "approve":
+            count = 0
+        elif h.get("gate") == "emit":
+            count += 1
+    return count
 
 
 # ── shared prompt sections (agents/wca.py 28-38, 118-163; agents/fca.py) ──────
@@ -1191,6 +1203,17 @@ def show_gate(s: dict, gate: int) -> str:
                 f"- validation: {'passed' if v.get('ok') else 'FAILED'} (level `{v.get('level')}`)"]
         if v.get("error"):
             out.append(f"- error: {v['error']}")
+        missing = [n.name for n in spec.nodes if not n.code]
+        if missing:
+            out.append(f"- **functions without code (not in the bundle): {', '.join(missing)}**")
+        failed = [k for k, m in (s.get("mga") or {}).items() if m.get("status") in ("failed", "reused_failed")]
+        if failed:
+            out.append(f"- functions whose stub test failed: {', '.join(failed)}")
+        bundle_readme = Path(s["bundle_dir"]) / "README.md" if s.get("bundle_dir") else None
+        if bundle_readme and bundle_readme.exists():
+            holders = sorted(set(re.findall(r"<FAASR_[A-Z0-9_]+>", bundle_readme.read_text())))
+            if holders:
+                out.append(f"- placeholders to fill before deploying: {', '.join(holders)}")
         names = sorted({x for n in spec.nodes for x in n.secrets} | {"GH_PAT", "S3_AccessKey", "S3_SecretKey"})
         out += ["", "Secrets to set before deploying (names only):"] + [f"- `{x}`" for x in names]
         ext = external_inputs(spec)

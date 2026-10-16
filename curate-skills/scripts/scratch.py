@@ -17,7 +17,7 @@ Layout built under <run>/:
       spec.md  <node>.py  <node>.deps.txt  original_<node>.py
       test_data/  test_output/  parity_report.txt  stubtest.log
 
-  scratch.py build         --run R
+  scratch.py build         --run R [--resume]
   scratch.py lock          --run R --node N [--force]
   scratch.py unlock        (--run R | --project-dir D)
   scratch.py snapshot      --run R --node N
@@ -47,6 +47,7 @@ SCRIPTS = Path(__file__).resolve().parent
 STUBTEST = SCRIPTS / "stubtest.py"
 LARGE_CSV_BYTES = 512 * 1024
 MGA_STATUSES = ("pending", "passed", "failed", "external_only", "reused", "reused_failed")
+DONE_STATUSES = {"passed", "external_only", "reused", "reused_failed"}
 SKIP_DIRS = {".git", ".curate", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache",
              ".mypy_cache", ".tox"}
 PROJECT_FILE_CAP = 50000
@@ -385,16 +386,29 @@ def cmd_build(args) -> dict:
         except OSError as e:
             warnings.append(f"skipped reference file {c['name']!r}: {e}")
 
-    # The spec is the source of truth: rebuild every node folder from it.
+    # The spec is the source of truth: rebuild every node folder from it. On
+    # --resume, folders of nodes that already finished are kept as they are.
     fns = run / "functions"
-    shutil.rmtree(fns, ignore_errors=True)
-    fns.mkdir()
+    old_mga = s.get("mga") or {}
+    keep = {k for k, v in old_mga.items() if v.get("status") in DONE_STATUSES} if args.resume else set()
+    if keep:
+        for d in fns.iterdir() if fns.is_dir() else []:
+            if d.name not in keep:
+                shutil.rmtree(d, ignore_errors=True)
+    else:
+        shutil.rmtree(fns, ignore_errors=True)
+    fns.mkdir(exist_ok=True)
     feedback = (s.get("code_feedback") or "").strip()
     mga: dict = {}
     nodes_out = []
     for name in topo_order(wf):
         n = next(x for x in wf.nodes if x.name == name)
         d = node_dir(run, name)
+        if name in keep:
+            mga[name] = old_mga[name]
+            nodes_out.append({"name": name, "generate": False, "source": n.source, "seeded": [],
+                              "kept": old_mga[name]["status"]})
+            continue
         (d / "test_data").mkdir(parents=True)
         (d / "test_output").mkdir()
         if n.code:
@@ -597,7 +611,9 @@ def cmd_record(args) -> dict:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="scratch.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("build").add_argument("--run", required=True)
+    sp = sub.add_parser("build")
+    sp.add_argument("--run", required=True)
+    sp.add_argument("--resume", action="store_true", help="keep folders of finished nodes")
     for name in ("lock", "snapshot", "verify-writes", "harvest", "record"):
         sp = sub.add_parser(name)
         sp.add_argument("--run", required=True)

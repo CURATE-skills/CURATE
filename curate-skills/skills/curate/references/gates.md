@@ -36,6 +36,10 @@ Every Gate 2–4 change request and every automatic retry counts toward the iter
 | `gate1` | show Gate 1 and ask |
 | `resolve` | step 2.2 |
 | `gate2` | show Gate 2 and ask |
-| `generate` / `gate3` / `emit` / `gate4` / `finalize` | later milestones |
+| `generate` | step 3.1 with `scratch.py build --resume` (keeps finished functions) |
+| `gate3` | show Gate 3 and ask |
+| `emit` | step 4.1 |
+| `gate4` | show Gate 4 and ask |
+| `finalize` | step 5 |
 | `stopped` | ask which stage to reopen; `set-stage` there |
 | `done` | nothing to do; offer a new run |
