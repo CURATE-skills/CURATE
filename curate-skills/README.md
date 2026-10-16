@@ -44,8 +44,9 @@ That variable also turns off, for the whole session: background Bash commands
 (`run_in_background`), automatic backgrounding of long commands, and Ctrl+B. Use a separate
 session for work that needs those.
 
-Instead of `--plugin-dir` you can install from the local marketplace in this repository:
-`/plugin marketplace add <repo root>`, then `/plugin install curate-skills@curate-local`.
+Installing from the local marketplace in this repository (`/plugin marketplace add <repo root>`,
+then `/plugin install curate-skills@curate-local`) should also work but is not yet tested; see
+Open items.
 
 ## Use
 
@@ -83,6 +84,14 @@ The first one set wins, left to right. A run pins all three when it starts.
 
 Plugin settings in skill text are not filled in when the plugin is loaded with `--plugin-dir`;
 use the flag or the environment variable there.
+
+## Open items
+
+- **Marketplace install not tested.** Untested: installing from the local marketplace
+  (`/plugin install curate-skills@curate-local`), and whether plugin settings (`catalog_dir`,
+  `mga_retries`, `stubtest_mode`) are then filled in. Until it is checked, use the flags or
+  environment variables. If you test it, uninstall afterwards or drop `--plugin-dir` from the
+  `curate` alias, so the plugin does not load twice under the same name.
 
 ## Files it creates
 

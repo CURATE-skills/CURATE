@@ -32,6 +32,15 @@ Claude Code 2.1.299 for every run.
 | 9 | 2026-10-15 | `curate-catalog where` (setting substitution check) | claude-opus-5-5 | headless, 1 call | — | 0.104 | — | — |
 | 10 | 2026-10-15 | M7 behaviour test: retries 0, failing function, resume, iteration cap, stop | claude-opus-5-5 | headless, 2 sessions, 6 turns | Gates 1–3, resume, revise, stop | 1.158 + 0.277 = 1.435 | 44 | 0 |
 
+## Open items
+
+- **Marketplace install check: deferred** (2026-10-16, not publishing yet). Install the plugin from
+  the local marketplace and confirm whether `${user_config.*}` settings are filled in, which
+  `--plugin-dir` does not do (run #9). Procedure: plain `claude`;
+  `/plugin marketplace add /Users/laurakuo/curate`; `/plugin install curate-skills@curate-local`
+  with `catalog_dir=/tmp/curate-mkt-test`; then `/curate-skills:curate-catalog where` and record
+  the exact command run; uninstall afterwards.
+
 ## Catalog check (2026-10-15)
 
 Verified from each run's pinned `state.json` `catalog_dir`: every run used a temporary catalog
