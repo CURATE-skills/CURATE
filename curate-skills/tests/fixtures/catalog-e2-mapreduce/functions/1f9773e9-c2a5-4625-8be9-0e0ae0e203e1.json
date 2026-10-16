@@ -1,0 +1,37 @@
+{
+  "id": "1f9773e9-c2a5-4625-8be9-0e0ae0e203e1",
+  "function_spec": {
+    "name": "shuffle",
+    "description": "Shuffle flattens the resulting array Y_i of per-mapper word counts. The available workflow primitives necessitate the shuffle function, not relying on the array Y_i itself but flattening it to enable the desired level of parallelism in reduce. Read all N mapper partial-count files (N configurable via argument), flatten them into a list of (word, partial_count) pairs grouped by word, sort the distinct words deterministically, and partition them across the M reducers (M=5, configurable via argument) round-robin by sorted index so every word goes to exactly one reducer. Write one JSON partition per reducer rank 1..M mapping each assigned word to its list of partial counts; a reducer with no words gets an empty object. Must be fully generalizable to vocabularies of any size and frequency (number of distinct words may be smaller or larger than M).",
+    "inputs": [
+      {
+        "name": "map_counts_{rank}.json",
+        "type": "json",
+        "description": "all N mapper partial counts"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "shuffle_partition_{rank}.json",
+        "type": "json",
+        "description": "word -> list of partial counts, one partition per reducer rank 1..M"
+      }
+    ],
+    "dependencies": [],
+    "secrets": [],
+    "rank": 1,
+    "source": "new",
+    "user_model_mode": null,
+    "code": "import json\nimport os\nimport re\nimport tempfile\n\n# Number of parallel `reduce` instances (ranked successor x5).\nNUM_REDUCERS = 5\n\n\ndef shuffle(folder: str, input1: str, output1: str) -> None:\n    \"\"\"Flatten the per-mapper partial counts Y_i and partition words across reducers.\n\n    Discovers every mapper output matching input1 (e.g. map_counts_{rank}.json),\n    groups partial counts by word, sorts distinct words deterministically, and\n    assigns them round-robin by sorted index to reducers 1..NUM_REDUCERS. Each\n    partition is a JSON object word -> list of partial counts (ordered by mapper\n    rank); a reducer with no words receives an empty object.\n    \"\"\"\n    if \"{rank}\" not in input1:\n        msg = f\"shuffle: input1 '{input1}' must contain a {{rank}} placeholder\"\n        faasr_log(msg)\n        raise ValueError(msg)\n\n    head, tail = input1.split(\"{rank}\", 1)\n    pattern = re.compile(\"^\" + re.escape(head) + r\"(\\d+)\" + re.escape(tail) + \"$\")\n\n    keys = faasr_get_folder_list(prefix=f\"{folder}/{head}\")\n    matches = []\n    for key in keys:\n        base = key.rsplit(\"/\", 1)[-1]\n        m = pattern.match(base)\n        if m:\n            matches.append((int(m.group(1)), base))\n    matches.sort()\n\n    if not matches:\n        msg = f\"shuffle: no mapper outputs matching '{input1}' found in {folder}\"\n        faasr_log(msg)\n        raise FileNotFoundError(msg)\n\n    faasr_log(f\"shuffle: found {len(matches)} mapper outputs: {[b for _, b in matches]}\")\n\n    workdir = tempfile.mkdtemp(prefix=\"shuffle_\")\n    grouped = {}\n    for rank, base in matches:\n        local_in = os.path.join(workdir, base)\n        faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=base)\n        if not os.path.exists(local_in):\n            msg = f\"shuffle: could not retrieve {base} from {folder}\"\n            faasr_log(msg)\n            raise FileNotFoundError(msg)\n        with open(local_in, \"r\", encoding=\"utf-8\") as f:\n            text = f.read()\n        if not text.strip():\n            msg = f\"shuffle: mapper output {base} is empty\"\n            faasr_log(msg)\n            raise ValueError(msg)\n        counts = json.loads(text)\n        if not isinstance(counts, dict):\n            msg = f\"shuffle: mapper output {base} is not a JSON object\"\n            faasr_log(msg)\n            raise ValueError(msg)\n        for word, count in counts.items():\n            if isinstance(count, bool) or not isinstance(count, int):\n                msg = f\"shuffle: non-integer count {count!r} for word {word!r} in {base}\"\n                faasr_log(msg)\n                raise ValueError(msg)\n            grouped.setdefault(word, []).append(count)\n\n    words = sorted(grouped)\n    partitions = [{} for _ in range(NUM_REDUCERS)]\n    for idx, word in enumerate(words):\n        partitions[idx % NUM_REDUCERS][word] = grouped[word]\n\n    for i in range(1, NUM_REDUCERS + 1):\n        out_name = output1.replace(\"{rank}\", str(i))\n        local_out = os.path.join(workdir, f\"shuffle_partition_{i}.json\")\n        with open(local_out, \"w\", encoding=\"utf-8\") as f:\n            json.dump(partitions[i - 1], f, indent=2, sort_keys=True)\n        faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=out_name)\n        faasr_log(f\"shuffle: wrote {out_name} with {len(partitions[i - 1])} words\")\n\n    faasr_log(\n        f\"shuffle: flattened {len(words)} distinct words from {len(matches)} mappers \"\n        f\"into {NUM_REDUCERS} partitions\"\n    )\n"
+  },
+  "keywords": [
+    "shuffle",
+    "shuffle",
+    "flattens",
+    "the",
+    "resulting",
+    "array"
+  ],
+  "provenance": "workflow:mapreduce_word_count",
+  "usage_count": 0
+}

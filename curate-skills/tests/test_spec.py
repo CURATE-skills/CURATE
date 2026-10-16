@@ -338,7 +338,7 @@ def test_show_and_prompt_context(make_run, capsys, seeded_catalog):
 def test_preflight_requires_foreground_variable(monkeypatch, capsys):
     monkeypatch.delenv("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", raising=False)
     code, out = call(S, ["preflight"], capsys)
-    assert code == 1 and "settings.local.json" in out["error"]
+    assert code == 1 and "`curate` shell alias" in out["error"]
     monkeypatch.setenv("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "0")
     assert call(S, ["preflight"], capsys)[0] == 1
     monkeypatch.setenv("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "1")
@@ -370,3 +370,18 @@ def test_gate4_lists_every_placeholder(make_run, capsys, tmp_path):
     run = make_run(spec=spec, bundle_dir=str(bundle), validation={"ok": True, "level": "faasr_py", "error": None})
     md = ok(S, ["show", "--run", str(run), "--gate", "4"], capsys)["markdown"]
     assert "<FAASR_GH_USERNAME>, <FAASR_S3_BUCKET>, <FAASR_S3_REGION>" in md
+
+
+def test_summary_markdown(make_run, capsys):
+    spec = WorkflowSpec(name="w", description="demo", entry="a",
+                        nodes=[FunctionSpec(name="a", code="x\ny\n", dependencies=["numpy"]),
+                               FunctionSpec(name="b", rank=2, source="catalog", origin_kind="catalog",
+                                            origin_name="b0", code="z")],
+                        edges=[{"from_node": "a", "to_node": "b"}])
+    run = make_run(spec=spec, stage="finalize", mga={"a": {"status": "passed", "attempts": 2}},
+                   validation={"ok": True, "level": "faasr_py", "error": None},
+                   history=[{"gate": 3, "decision": "revise", "text": "use numpy", "structural": False}])
+    md = ok(S, ["summary", "--run", str(run)], capsys)["markdown"]
+    assert "| `a` | [new] | 1 | passed | 2 | 2 | numpy | — |" in md
+    assert "| `b` | [catalog] ← [catalog] b0 | 2 | — | 0 | 1 |" in md
+    assert "Gate 3: revise — use numpy" in md and "validation passed (level `faasr_py`)" in md

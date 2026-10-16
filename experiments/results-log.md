@@ -27,6 +27,9 @@ Claude Code 2.1.299 for every run.
 | 4 | 2026-10-15 | M5 test 2: foreground spawning | claude-opus-5-5 | interactive, `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` | generate (3 functions) | 0.72 | 13 main + 13 subagent messages | 0 |
 | 5 | 2026-10-15 | Opus 4.8 availability check | claude-opus-4-8 | headless, 1 call | — | 0.184 | 1 | — |
 | 6 | 2026-10-15 | E2 MapReduce (reconstructed prompt), Gates 1–4 | claude-opus-5-5 | headless, 5 turns, foreground subagents | all through Gate 4 | 2.369 | 54 | 0 |
+| 7 | 2026-10-15 | E2 finalize (`/curate --resume` → `wda-finalize`) | claude-opus-5-5 | headless, 2 turns | Gate 5 (summary, save both) | 0.293 | 11 | — |
+| 8 | 2026-10-15 | `curate-catalog` import seed + list | claude-opus-5-5 | headless, 1 call | — | 0.197 | 6 | — |
+| 9 | 2026-10-15 | `curate-catalog where` (setting substitution check) | claude-opus-5-5 | headless, 1 call | — | 0.104 | — | — |
 
 ## 1. M3 guard smoke test
 
@@ -130,3 +133,34 @@ Claude Code 2.1.299 for every run.
 - Denials: none. 5 subagents, one at a time, no overlap.
 - Bug found: Gate 4 listed 2 of 5 `<FAASR_*>` placeholders (regex excluded digits, so the
   `S3` names were missed); fixed, with a test.
+
+## 7. E2 finalize and catalog save
+
+- Session `bcf0b7ad-5b49-4765-a3b3-7ba92c644e61`: turn 1 `/curate-skills:curate --resume 20261015-222147-mapreduce-we-base-our`
+  (resumed at `stage: finalize` → `wda-finalize`), turn 2 `Save both`.
+
+| Stage | Turn | Cost (USD) | Turns | Result |
+|---|---|---|---|---|
+| resume → summary + dry-run save preview | 1 | 0.217 | 8 | summary printed verbatim; 5 functions would be stored, none skipped |
+| `Save both` → save + done | 2 | 0.076 | 3 | 5 function entries + 1 workflow entry; run `stage: done` |
+| **Total** | | **0.293** | **11** | |
+
+- Catalog (`e2fullcat`) exported as the E4 seed:
+  `curate-skills/tests/fixtures/catalog-e2-mapreduce/` (5 functions, 1 workflow; code from
+  run #6, Opus 5.5).
+- BM25 on the seed with E4-style step queries: split, map, reduce rank first; shuffle ranks
+  third (still in the top 5 the MCA sees); unrelated queries ("visualize…", "extract words from
+  words.pdf") return only weak hits, which the MCA must turn down.
+- Keywords include filler ("the", "(n=3") — the original's rule (name parts + first five
+  description words), kept as is.
+
+## 8–9. `curate-catalog` skill
+
+- #8: imported `tests/fixtures/catalog-e2-mapreduce` into a fresh folder (6 entries: 5
+  functions, 1 workflow; none skipped) and listed it correctly.
+- #9 finding: with `--plugin-dir`, `${user_config.catalog_dir}` in skill text reaches the
+  session **unsubstituted**, even with `"default": ""` in `plugin.json`. Inside double quotes
+  zsh fails on it ("bad substitution"); both sessions silently dropped the flag. Fix: the skills
+  now single-quote the placeholders, so the literal reaches the script, which treats it as unset
+  (verified under zsh). Open question for M7: whether settings are filled in when the plugin is
+  installed from the marketplace rather than loaded with `--plugin-dir`.

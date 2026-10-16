@@ -218,3 +218,38 @@ def test_inherited_bm25_quirk_single_entry_never_matches(tmp_path):
     s = fn("split_words", "split text into chunks")
     cat.save_function(CatalogEntry(function_spec=s, keywords=["split", "words"]))
     assert cat.search("split text") == []
+
+
+def test_dry_run_writes_nothing(tmp_path):
+    cat = catalog.Catalog(tmp_path / "c")
+    res = catalog.save_functions(cat, _spec(), {}, only_verified=False, dry_run=True)
+    assert res["dry_run"] and [s["name"] for s in res["stored"]] == ["split_words", "map_words"]
+    assert all(s["id"] is None for s in res["stored"]) and not (tmp_path / "c").exists()
+    wf = catalog.save_workflow(cat, _spec(), dry_run=True)
+    assert wf == {"ok": True, "dry_run": True, "id": None, "updated": False}
+    assert not (tmp_path / "c").exists()
+
+
+SEED = Path(__file__).parent / "fixtures" / "catalog-e2-mapreduce"
+
+
+def test_e2_seed_catalog_is_complete():
+    cat = catalog.Catalog(SEED)
+    names = sorted(e.function_spec.name for e in cat.functions.values())
+    assert names == ["generate_text", "map", "reduce", "shuffle", "split"]
+    assert all(e.function_spec.code and e.provenance == "workflow:mapreduce_word_count"
+               for e in cat.functions.values())
+    assert [w.workflow_spec.name for w in cat.workflows.values()] == ["mapreduce_word_count"]
+
+
+@pytest.mark.parametrize("query,expected,top", [
+    ("split the word dataset", "split", True),
+    ("map count words per batch", "map", True),
+    ("reduce sum counts per word", "reduce", True),
+    ("shuffle group partial counts by word", "shuffle", False),  # in the top 5, not first
+])
+def test_e2_seed_retrieval_for_e4_steps(query, expected, top):
+    hits = [e.function_spec.name for _, e in catalog.Catalog(SEED).search(query, k=5)]
+    assert expected in hits
+    if top:
+        assert hits[0] == expected

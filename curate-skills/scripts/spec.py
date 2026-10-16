@@ -33,6 +33,7 @@ exit 0 ok, 1 check failed / needs attention, 2 bad input.
   spec.py set-cap         --run R --max N
   spec.py set-stage       --run R --stage S
   spec.py show            --run R --gate 1|2|3|4
+  spec.py summary         --run R
 """
 from __future__ import annotations
 
@@ -265,10 +266,9 @@ def cmd_preflight(args) -> dict:
         out["error"] = (
             f"{FOREGROUND_VAR} is not set to 1 in this Claude Code session, so curate-mga "
             "subagents would run in the background and the session would stall after each "
-            "one. Quit and relaunch with it set: add "
-            f'{{"env": {{"{FOREGROUND_VAR}": "1"}}}} to .claude/settings.local.json in the '
-            f"project, or start Claude Code as `{FOREGROUND_VAR}=1 claude`. Then resume with "
-            "/curate --resume <run_id>.")
+            "one. Quit and relaunch with the `curate` shell alias, which sets it: "
+            f"alias curate='{FOREGROUND_VAR}=1 claude --plugin-dir <path to curate-skills>' "
+            "(see the plugin README). Then resume with /curate --resume <run_id>.")
     return out
 
 
@@ -1223,6 +1223,43 @@ def show_gate(s: dict, gate: int) -> str:
     raise InputError("--gate must be 1-4")
 
 
+def summary_md(s: dict) -> str:
+    """The finalize report (local stand-in for the original's post-run WDA summary)."""
+    spec = spec_of(s.get("spec"))
+    if spec is None:
+        raise InputError("no spec yet")
+    mga = s.get("mga") or {}
+    v = s.get("validation") or {}
+    out = [f"## Run summary — {spec.name}", "", spec.description or "", "",
+           f"- run: `{s['run_id']}` (stage `{s['stage']}`, {s['iteration']} revision round(s))",
+           f"- settings: catalog `{s['catalog_dir']}`, MGA retries {s['mga_max_retries']}, "
+           f"stub tests `{s['stubtest_mode']}`",
+           f"- bundle: `{s.get('bundle_dir')}` — validation "
+           f"{'passed' if v.get('ok') else 'not passed'} (level `{v.get('level')}`)", "",
+           "| Function | Source | Rank | Stub test | Attempts | Lines | Deps | Secrets |",
+           "|---|---|---|---|---|---|---|---|"]
+    for name in topo_order(spec):
+        n = next(x for x in spec.nodes if x.name == name)
+        m = mga.get(name, {})
+        out.append(f"| `{name}` | {_origin(n)} | {n.rank} | {m.get('status', '—')} | "
+                   f"{m.get('attempts', 0)} | {len((n.code or '').splitlines())} | "
+                   f"{', '.join(n.dependencies) or '—'} | {', '.join(n.secrets) or '—'} |")
+    out += ["", "```", *dag_lines(spec), "```"]
+    ext = external_inputs(spec)
+    out += ["", "Files to upload before running:"] + (
+        [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
+    hist = s.get("history") or []
+    out += ["", "Decisions:"] + ([
+        f"- Gate {h['gate']}: {h['decision']}" + (f" — {h['text']}" if h.get("text") else "")
+        + (" (structural)" if h.get("structural") else "")
+        for h in hist] or ["- none"])
+    return "\n".join(out)
+
+
+def cmd_summary(args) -> dict:
+    return {"ok": True, "markdown": summary_md(load_state(args.run))}
+
+
 def cmd_show(args) -> dict:
     s = load_state(args.run)
     return {"ok": True, "markdown": show_gate(s, args.gate)}
@@ -1270,6 +1307,7 @@ def build_parser() -> argparse.ArgumentParser:
     with_run("set-cap").add_argument("--max", type=int, required=True)
     with_run("set-stage").add_argument("--stage", required=True, choices=STAGES)
     with_run("show").add_argument("--gate", type=int, required=True, choices=[1, 2, 3, 4])
+    with_run("summary")
     return p
 
 
@@ -1278,7 +1316,7 @@ COMMANDS = {
     "skeleton": cmd_skeleton, "apply-candidates": cmd_apply_candidates,
     "merge-resolved": cmd_merge_resolved, "check": cmd_check, "toposort": cmd_toposort,
     "approve": cmd_approve, "directive": cmd_directive, "set-cap": cmd_set_cap,
-    "set-stage": cmd_set_stage, "show": cmd_show,
+    "set-stage": cmd_set_stage, "show": cmd_show, "summary": cmd_summary,
 }
 
 

@@ -42,12 +42,14 @@ Arguments: `$ARGUMENTS`
 ```
 spec.py init --request-file <file> [--user-model P]... [--context-file P]...
   [--catalog-dir D] [--mga-retries N] [--stubtest-mode M]
-  --config-catalog-dir "${user_config.catalog_dir}"
-  --config-mga-retries "${user_config.mga_retries}"
-  --config-stubtest-mode "${user_config.stubtest_mode}"
+  --config-catalog-dir '${user_config.catalog_dir}'
+  --config-mga-retries '${user_config.mga_retries}'
+  --config-stubtest-mode '${user_config.stubtest_mode}'
 ```
 
-Map `--attach` → `--user-model`, `--context` → `--context-file`, `--catalog` →
+Keep the `--config-*` values in single quotes exactly as written: if Claude Code has not
+filled in a plugin setting, the literal `${user_config...}` text must reach the script (which
+treats it as unset) instead of being expanded by the shell. Map `--attach` → `--user-model`, `--context` → `--context-file`, `--catalog` →
 `--catalog-dir`. Tell the user the run id and the settings (`catalog_dir`,
 `mga_max_retries`, `stubtest_mode`) with where each came from.
 
@@ -104,10 +106,10 @@ Map `--attach` → `--user-model`, `--context` → `--context-file`, `--catalog`
      `catalog.py increment-usage --run <run> --id <id>`; then step 5.
    - Changes → classify, `spec.py directive --run <run> --gate 4 ...`, route as at Gate 3.
 
-## 5. Finalize
+## 5. Finalize (Gate 5)
 
-Not built yet (milestone M6, `wda-finalize`). After Gate 4 approval, tell the user the bundle
-path and that the run is at `stage: finalize`.
+Invoke the `curate-skills:wda-finalize` skill with the run id. It summarizes the run and, only
+with the user's approval, saves verified functions and/or the workflow to the catalog.
 
 ## Asking at a gate
 

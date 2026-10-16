@@ -90,6 +90,7 @@ PreToolUse write-scope guard for `curate-mga` subagents. New; no counterpart in 
 - Stub runs never see `GH_PAT`, S3 keys or LLM provider keys; secrets a function declares are passed through.
 - The orchestrator always re-runs the stub test; retries are configurable (`mga_retries`, default 3; `0` = original Claude-SDK behaviour).
 - Catalog `usage_count` is incremented at Gate 4 approval (original: during candidate resolution, `fca.py:238`).
+- Saving to the catalog (`wda-finalize`) shows a dry-run preview first and saves only verified functions (stub test passed, or reused); the original's Gate 5 `save` stored any node with code.
 - Reused catalog/cached nodes are stub-run so downstream nodes get real upstream test outputs.
 - The MCA decides all nodes in one Claude turn, each node judged on its own fields (original: one LLM call per node, `agents/wca.py` 664-689). The user-model verbatim/adapt choice is made in the same turn (original: a separate call, `agents/fca.py` 59).
 - The resolve step may not rename nodes: `merge-resolved` requires the candidate names (original: the resolve LLM could rename a node whose meaning changed). A rename is handled as a structural change at Gate 2.

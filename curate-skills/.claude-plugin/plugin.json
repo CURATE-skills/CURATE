@@ -19,7 +19,8 @@
       "type": "directory",
       "title": "Catalog directory",
       "description": "Where reusable CURATE functions are stored. Empty means ~/.curate/catalog. CURATE_CATALOG_DIR overrides this.",
-      "required": false
+      "required": false,
+      "default": ""
     },
     "mga_retries": {
       "type": "number",

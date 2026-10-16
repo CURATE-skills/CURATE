@@ -19,8 +19,8 @@ Usage (prints JSON {"ok": ...}; exit 0 ok, 1 check failed, 2 bad input):
   catalog.py search-nodes --run DIR [--k 5]
   catalog.py get --id ID [--workflow]
   catalog.py increment-usage --id ID [--workflow]
-  catalog.py save-functions (--run DIR [--only-verified] | --spec FILE)
-  catalog.py save-workflow  (--run DIR | --spec FILE)
+  catalog.py save-functions (--run DIR [--only-verified] | --spec FILE) [--dry-run]
+  catalog.py save-workflow  (--run DIR | --spec FILE) [--dry-run]
   catalog.py import PATH... [--dedupe-code] [--overwrite]
   catalog.py export --out DIR [--ids ID...]
 """
@@ -215,7 +215,8 @@ def load_run(run: Optional[str], spec_file: Optional[str]) -> tuple[WorkflowSpec
         raise InputError(f"invalid WorkflowSpec:\n{e}") from e
 
 
-def save_functions(cat: Catalog, spec: WorkflowSpec, state: dict, only_verified: bool) -> dict:
+def save_functions(cat: Catalog, spec: WorkflowSpec, state: dict, only_verified: bool,
+                   dry_run: bool = False) -> dict:
     stored, skipped = [], []
     mga = state.get("mga") or {}
     existing_codes = {e.function_spec.code.strip() for e in cat.functions.values()
@@ -238,14 +239,19 @@ def save_functions(cat: Catalog, spec: WorkflowSpec, state: dict, only_verified:
             keywords=node.name.split("_") + node.description.lower().split()[:5],
             provenance=f"workflow:{spec.name}",
         )
-        cat.save_function(entry)
-        stored.append({"name": node.name, "id": entry.id})
+        if not dry_run:
+            cat.save_function(entry)
+        stored.append({"name": node.name, "id": None if dry_run else entry.id,
+                       "keywords": entry.keywords})
         existing_codes.add(node.code.strip())
-    return {"ok": True, "stored": stored, "skipped": skipped}
+    return {"ok": True, "dry_run": dry_run, "stored": stored, "skipped": skipped}
 
 
-def save_workflow(cat: Catalog, spec: WorkflowSpec) -> dict:
+def save_workflow(cat: Catalog, spec: WorkflowSpec, dry_run: bool = False) -> dict:
     existing = cat.workflow_by_name(spec.name)
+    if dry_run:
+        return {"ok": True, "dry_run": True, "id": existing.id if existing else None,
+                "updated": existing is not None}
     entry = WorkflowEntry(
         id=existing.id if existing else str(uuid.uuid4()),
         workflow_spec=spec,
@@ -338,8 +344,10 @@ def main(argv=None) -> int:
     sp = sub.add_parser("save-functions", parents=[common])
     sp.add_argument("--spec")
     sp.add_argument("--only-verified", action="store_true")
+    sp.add_argument("--dry-run", action="store_true")
     sp = sub.add_parser("save-workflow", parents=[common])
     sp.add_argument("--spec")
+    sp.add_argument("--dry-run", action="store_true")
     sp = sub.add_parser("import", parents=[common])
     sp.add_argument("paths", nargs="+")
     sp.add_argument("--dedupe-code", action="store_true")
@@ -401,10 +409,10 @@ def run_command(args, root: Path) -> dict:
         if args.only_verified and not args.run:
             raise InputError("--only-verified needs --run (stub-test status lives in state.json)")
         spec, state = load_run(args.run, args.spec)
-        return save_functions(cat, spec, state, args.only_verified)
+        return save_functions(cat, spec, state, args.only_verified, args.dry_run)
     if cmd == "save-workflow":
         spec, _ = load_run(args.run, args.spec)
-        return save_workflow(cat, spec)
+        return save_workflow(cat, spec, args.dry_run)
     if cmd == "import":
         return import_entries(cat, args.paths, args.dedupe_code, args.overwrite)
     if cmd == "export":

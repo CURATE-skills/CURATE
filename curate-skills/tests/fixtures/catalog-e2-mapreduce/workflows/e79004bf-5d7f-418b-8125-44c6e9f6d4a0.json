@@ -1,0 +1,189 @@
+{
+  "id": "e79004bf-5d7f-418b-8125-44c6e9f6d4a0",
+  "workflow_spec": {
+    "name": "mapreduce_word_count",
+    "description": "MapReduce word counting benchmark: generate text, split into N=3 batches, N parallel mappers, shuffle (flatten), M=5 parallel reducers.",
+    "nodes": [
+      {
+        "name": "generate_text",
+        "description": "Entry step. Generate the benchmark input text of W=5000 total words. For the input text generation, use [cat, dog, bird, horse, pig], each distributed evenly and shuffled randomly (M=5 different words, 1000 occurrences each). Build a list with W/len(vocab) copies of each word, shuffle it with Python's random module, and write it as a single plain-text file of whitespace-separated words. W and the vocabulary should be overridable via function arguments with these defaults. This is the only vocabulary-specific step.",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "input_text.txt",
+            "type": "txt",
+            "description": "W whitespace-separated words, shuffled"
+          }
+        ],
+        "dependencies": [],
+        "secrets": [],
+        "rank": 1,
+        "source": "new",
+        "user_model_mode": null,
+        "code": "import os\nimport random\nimport tempfile\n\n# Benchmark parameters from the user request: W = 5000 total words over\n# M = 5 distinct words, each distributed evenly and shuffled randomly.\nTOTAL_WORDS = 5000\nVOCABULARY = [\"cat\", \"dog\", \"bird\", \"horse\", \"pig\"]\n\n\ndef generate_text(folder: str, output1: str) -> None:\n    total_words = TOTAL_WORDS\n    vocab = list(VOCABULARY)\n\n    if not vocab:\n        faasr_log(\"generate_text: vocabulary is empty\")\n        raise ValueError(\"vocabulary must not be empty\")\n    if total_words <= 0 or total_words % len(vocab) != 0:\n        msg = (f\"generate_text: total words W={total_words} must be a positive \"\n               f\"multiple of vocabulary size {len(vocab)} for an even distribution\")\n        faasr_log(msg)\n        raise ValueError(msg)\n\n    per_word = total_words // len(vocab)\n    words = []\n    for w in vocab:\n        words.extend([w] * per_word)\n    random.shuffle(words)\n\n    tmpdir = tempfile.mkdtemp()\n    local_path = os.path.join(tmpdir, \"input_text.txt\")\n    with open(local_path, \"w\") as f:\n        f.write(\" \".join(words))\n        f.write(\"\\n\")\n\n    faasr_put_file(local_file=local_path, remote_folder=folder, remote_file=output1)\n    faasr_log(f\"generate_text: wrote {len(words)} words ({per_word} each of \"\n              f\"{', '.join(vocab)}) to {folder}/{output1}\")\n"
+      },
+      {
+        "name": "split",
+        "description": "The split function partitions the input text into N batches (N=3, the number of mapping functions; configurable via a function argument). Read the full input text, tokenize on whitespace, and divide the word sequence into N contiguous, near-equal batches (sizes differ by at most one; no word is lost or duplicated). Write one plain-text batch per mapper, numbered 1..N to match the mapper ranks. Must work for any input text, vocabulary size and word frequency.",
+        "inputs": [
+          {
+            "name": "input_text.txt",
+            "type": "txt",
+            "description": "full input text"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "text_batch_{rank}.txt",
+            "type": "txt",
+            "description": "one batch per mapper rank 1..N"
+          }
+        ],
+        "dependencies": [],
+        "secrets": [],
+        "rank": 1,
+        "source": "new",
+        "user_model_mode": null,
+        "code": "import os\nimport tempfile\n\n# Number of parallel map instances (ranked successor `map` x3).\nN_BATCHES = 3\n\n\ndef split(folder: str, input1: str, output1: str) -> None:\n    \"\"\"Partition the input text into N_BATCHES contiguous, near-equal word batches.\n\n    Tokenizes on whitespace; batch sizes differ by at most one and every word\n    appears in exactly one batch, preserving order. Works for any vocabulary.\n    \"\"\"\n    workdir = tempfile.mkdtemp(prefix=\"split_\")\n    local_in = os.path.join(workdir, \"input_text.txt\")\n\n    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=input1)\n    if not os.path.exists(local_in):\n        msg = f\"split: input file {input1} could not be retrieved from {folder}\"\n        faasr_log(msg)\n        raise FileNotFoundError(msg)\n\n    with open(local_in, \"r\", encoding=\"utf-8\") as f:\n        words = f.read().split()\n\n    if not words:\n        msg = f\"split: input file {input1} contains no words\"\n        faasr_log(msg)\n        raise ValueError(msg)\n\n    total = len(words)\n    base, extra = divmod(total, N_BATCHES)\n    faasr_log(f\"split: {total} words into {N_BATCHES} batches\")\n\n    start = 0\n    for i in range(1, N_BATCHES + 1):\n        size = base + (1 if i <= extra else 0)\n        batch = words[start:start + size]\n        start += size\n\n        local_out = os.path.join(workdir, f\"text_batch_{i}.txt\")\n        with open(local_out, \"w\", encoding=\"utf-8\") as f:\n            f.write(\" \".join(batch))\n            f.write(\"\\n\")\n\n        remote_name = output1.replace(\"{rank}\", str(i))\n        faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=remote_name)\n        faasr_log(f\"split: wrote {remote_name} with {len(batch)} words\")\n\n    if start != total:\n        msg = f\"split: word accounting mismatch ({start} written vs {total} read)\"\n        faasr_log(msg)\n        raise RuntimeError(msg)\n"
+      },
+      {
+        "name": "map",
+        "description": "Ranked map step (N=3 instances). N parallel map functions count how often each word occurs in their text chunk: each instance uses faasr_rank() to read the text batch matching its rank, counts word occurrences with no hard-coded vocabulary (any words, any frequency), and writes its partial count dictionary Y_i (word -> count) as JSON, numbered by its rank. Must be fully generalizable to vocabularies of any size and frequency.",
+        "inputs": [
+          {
+            "name": "text_batch_{rank}.txt",
+            "type": "txt",
+            "description": "this instance's text batch"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "map_counts_{rank}.json",
+            "type": "json",
+            "description": "partial word counts Y_i (word -> count)"
+          }
+        ],
+        "dependencies": [],
+        "secrets": [],
+        "rank": 3,
+        "source": "new",
+        "user_model_mode": null,
+        "code": "import json\nimport os\nimport tempfile\nfrom collections import Counter\n\n\ndef map(folder: str, input1: str, output1: str) -> None:\n    \"\"\"Count word occurrences in this instance's text batch (ranked map step).\n\n    Reads text_batch_{rank}.txt, tokenizes on whitespace (same as split),\n    counts every distinct word with no hard-coded vocabulary, and writes the\n    partial count dictionary Y_rank (word -> count) as JSON.\n    \"\"\"\n    r = faasr_rank()\n    rank = int(r[\"rank\"])\n    in_name = input1.replace(\"{rank}\", str(rank))\n    out_name = output1.replace(\"{rank}\", str(rank))\n    faasr_log(f\"map: rank {rank}/{r.get('max_rank')} reading {in_name}\")\n\n    workdir = tempfile.mkdtemp(prefix=f\"map_{rank}_\")\n    local_in = os.path.join(workdir, \"text_batch.txt\")\n    local_out = os.path.join(workdir, \"map_counts.json\")\n\n    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=in_name)\n    if not os.path.exists(local_in):\n        msg = f\"map: input file {in_name} could not be retrieved from {folder}\"\n        faasr_log(msg)\n        raise FileNotFoundError(msg)\n\n    with open(local_in, \"r\", encoding=\"utf-8\") as f:\n        words = f.read().split()\n\n    # An empty batch is legitimate (fewer words than mappers): emit {}.\n    counts = Counter(words)\n    result = {word: counts[word] for word in sorted(counts)}\n\n    with open(local_out, \"w\", encoding=\"utf-8\") as f:\n        json.dump(result, f, indent=2, sort_keys=True)\n\n    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=out_name)\n    faasr_log(\n        f\"map: rank {rank} counted {len(words)} words, \"\n        f\"{len(result)} distinct, wrote {out_name}\"\n    )\n"
+      },
+      {
+        "name": "shuffle",
+        "description": "Shuffle flattens the resulting array Y_i of per-mapper word counts. The available workflow primitives necessitate the shuffle function, not relying on the array Y_i itself but flattening it to enable the desired level of parallelism in reduce. Read all N mapper partial-count files (N configurable via argument), flatten them into a list of (word, partial_count) pairs grouped by word, sort the distinct words deterministically, and partition them across the M reducers (M=5, configurable via argument) round-robin by sorted index so every word goes to exactly one reducer. Write one JSON partition per reducer rank 1..M mapping each assigned word to its list of partial counts; a reducer with no words gets an empty object. Must be fully generalizable to vocabularies of any size and frequency (number of distinct words may be smaller or larger than M).",
+        "inputs": [
+          {
+            "name": "map_counts_{rank}.json",
+            "type": "json",
+            "description": "all N mapper partial counts"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "shuffle_partition_{rank}.json",
+            "type": "json",
+            "description": "word -> list of partial counts, one partition per reducer rank 1..M"
+          }
+        ],
+        "dependencies": [],
+        "secrets": [],
+        "rank": 1,
+        "source": "new",
+        "user_model_mode": null,
+        "code": "import json\nimport os\nimport re\nimport tempfile\n\n# Number of parallel `reduce` instances (ranked successor x5).\nNUM_REDUCERS = 5\n\n\ndef shuffle(folder: str, input1: str, output1: str) -> None:\n    \"\"\"Flatten the per-mapper partial counts Y_i and partition words across reducers.\n\n    Discovers every mapper output matching input1 (e.g. map_counts_{rank}.json),\n    groups partial counts by word, sorts distinct words deterministically, and\n    assigns them round-robin by sorted index to reducers 1..NUM_REDUCERS. Each\n    partition is a JSON object word -> list of partial counts (ordered by mapper\n    rank); a reducer with no words receives an empty object.\n    \"\"\"\n    if \"{rank}\" not in input1:\n        msg = f\"shuffle: input1 '{input1}' must contain a {{rank}} placeholder\"\n        faasr_log(msg)\n        raise ValueError(msg)\n\n    head, tail = input1.split(\"{rank}\", 1)\n    pattern = re.compile(\"^\" + re.escape(head) + r\"(\\d+)\" + re.escape(tail) + \"$\")\n\n    keys = faasr_get_folder_list(prefix=f\"{folder}/{head}\")\n    matches = []\n    for key in keys:\n        base = key.rsplit(\"/\", 1)[-1]\n        m = pattern.match(base)\n        if m:\n            matches.append((int(m.group(1)), base))\n    matches.sort()\n\n    if not matches:\n        msg = f\"shuffle: no mapper outputs matching '{input1}' found in {folder}\"\n        faasr_log(msg)\n        raise FileNotFoundError(msg)\n\n    faasr_log(f\"shuffle: found {len(matches)} mapper outputs: {[b for _, b in matches]}\")\n\n    workdir = tempfile.mkdtemp(prefix=\"shuffle_\")\n    grouped = {}\n    for rank, base in matches:\n        local_in = os.path.join(workdir, base)\n        faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=base)\n        if not os.path.exists(local_in):\n            msg = f\"shuffle: could not retrieve {base} from {folder}\"\n            faasr_log(msg)\n            raise FileNotFoundError(msg)\n        with open(local_in, \"r\", encoding=\"utf-8\") as f:\n            text = f.read()\n        if not text.strip():\n            msg = f\"shuffle: mapper output {base} is empty\"\n            faasr_log(msg)\n            raise ValueError(msg)\n        counts = json.loads(text)\n        if not isinstance(counts, dict):\n            msg = f\"shuffle: mapper output {base} is not a JSON object\"\n            faasr_log(msg)\n            raise ValueError(msg)\n        for word, count in counts.items():\n            if isinstance(count, bool) or not isinstance(count, int):\n                msg = f\"shuffle: non-integer count {count!r} for word {word!r} in {base}\"\n                faasr_log(msg)\n                raise ValueError(msg)\n            grouped.setdefault(word, []).append(count)\n\n    words = sorted(grouped)\n    partitions = [{} for _ in range(NUM_REDUCERS)]\n    for idx, word in enumerate(words):\n        partitions[idx % NUM_REDUCERS][word] = grouped[word]\n\n    for i in range(1, NUM_REDUCERS + 1):\n        out_name = output1.replace(\"{rank}\", str(i))\n        local_out = os.path.join(workdir, f\"shuffle_partition_{i}.json\")\n        with open(local_out, \"w\", encoding=\"utf-8\") as f:\n            json.dump(partitions[i - 1], f, indent=2, sort_keys=True)\n        faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=out_name)\n        faasr_log(f\"shuffle: wrote {out_name} with {len(partitions[i - 1])} words\")\n\n    faasr_log(\n        f\"shuffle: flattened {len(words)} distinct words from {len(matches)} mappers \"\n        f\"into {NUM_REDUCERS} partitions\"\n    )\n"
+      },
+      {
+        "name": "reduce",
+        "description": "Ranked reduce step (M=5 instances). M reducers count the total occurrences of their respective word(s) in parallel, yielding Z_i. Each instance uses faasr_rank() to read the shuffle partition matching its rank, sums the list of partial counts for each word in that partition, and writes Z_i (word -> total count) as JSON numbered by its rank. Handles an empty partition (writes an empty object). Must be fully generalizable to vocabularies of any size and frequency.",
+        "inputs": [
+          {
+            "name": "shuffle_partition_{rank}.json",
+            "type": "json",
+            "description": "this reducer's word partition"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "word_count_{rank}.json",
+            "type": "json",
+            "description": "Z_i: total count per assigned word"
+          }
+        ],
+        "dependencies": [],
+        "secrets": [],
+        "rank": 5,
+        "source": "new",
+        "user_model_mode": null,
+        "code": "import json\nimport os\nimport tempfile\n\n\ndef reduce(folder: str, input1: str, output1: str) -> None:\n    \"\"\"Sum partial counts for this reducer's word partition, yielding Z_i.\n\n    Reads the shuffle partition for this instance's rank (a JSON object\n    word -> list of partial integer counts), sums each list, and writes\n    word -> total count as JSON numbered by rank. An empty partition\n    produces an empty JSON object.\n    \"\"\"\n    r = faasr_rank()\n    rank = r[\"rank\"]\n    in_name = input1.replace(\"{rank}\", str(rank))\n    out_name = output1.replace(\"{rank}\", str(rank))\n\n    workdir = tempfile.mkdtemp(prefix=f\"reduce_{rank}_\")\n    local_in = os.path.join(workdir, \"partition.json\")\n    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=in_name)\n    if not os.path.exists(local_in):\n        msg = f\"reduce[{rank}]: could not retrieve {in_name} from {folder}\"\n        faasr_log(msg)\n        raise FileNotFoundError(msg)\n\n    with open(local_in, \"r\", encoding=\"utf-8\") as f:\n        text = f.read()\n    if not text.strip():\n        msg = f\"reduce[{rank}]: partition {in_name} is empty (expected a JSON object)\"\n        faasr_log(msg)\n        raise ValueError(msg)\n\n    partition = json.loads(text)\n    if not isinstance(partition, dict):\n        msg = f\"reduce[{rank}]: partition {in_name} is not a JSON object\"\n        faasr_log(msg)\n        raise ValueError(msg)\n\n    totals = {}\n    for word, counts in partition.items():\n        if isinstance(counts, bool) or isinstance(counts, int):\n            counts = [counts]\n        if not isinstance(counts, list):\n            msg = f\"reduce[{rank}]: counts for word {word!r} are not a list\"\n            faasr_log(msg)\n            raise ValueError(msg)\n        total = 0\n        for c in counts:\n            if isinstance(c, bool) or not isinstance(c, int):\n                msg = f\"reduce[{rank}]: non-integer count {c!r} for word {word!r}\"\n                faasr_log(msg)\n                raise ValueError(msg)\n            total += c\n        totals[word] = total\n\n    local_out = os.path.join(workdir, \"word_count.json\")\n    with open(local_out, \"w\", encoding=\"utf-8\") as f:\n        json.dump(totals, f, indent=2, sort_keys=True)\n    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=out_name)\n    faasr_log(f\"reduce[{rank}]: wrote {out_name} with {len(totals)} words: {totals}\")\n"
+      }
+    ],
+    "edges": [
+      {
+        "from_node": "generate_text",
+        "to_node": "split",
+        "condition": null
+      },
+      {
+        "from_node": "split",
+        "to_node": "map",
+        "condition": null
+      },
+      {
+        "from_node": "map",
+        "to_node": "shuffle",
+        "condition": null
+      },
+      {
+        "from_node": "shuffle",
+        "to_node": "reduce",
+        "condition": null
+      }
+    ],
+    "data_flow": [
+      {
+        "from_node": "generate_text",
+        "to_node": "split",
+        "file": "input_text.txt",
+        "format": "txt",
+        "folder": "mapreduce_word_count"
+      },
+      {
+        "from_node": "split",
+        "to_node": "map",
+        "file": "text_batch_{rank}.txt",
+        "format": "txt",
+        "folder": "mapreduce_word_count"
+      },
+      {
+        "from_node": "map",
+        "to_node": "shuffle",
+        "file": "map_counts_{rank}.json",
+        "format": "json",
+        "folder": "mapreduce_word_count"
+      },
+      {
+        "from_node": "shuffle",
+        "to_node": "reduce",
+        "file": "shuffle_partition_{rank}.json",
+        "format": "json",
+        "folder": "mapreduce_word_count"
+      }
+    ],
+    "entry": "generate_text",
+    "compute_target": "GH",
+    "data_store": "S3",
+    "folder": "mapreduce_word_count"
+  },
+  "keywords": [
+    "mapreduce_word_count",
+    "mapreduce",
+    "word",
+    "counting",
+    "benchmark:",
+    "generate"
+  ],
+  "provenance": "user request",
+  "usage_count": 0
+}
