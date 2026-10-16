@@ -85,7 +85,8 @@ treats it as unset) instead of being expanded by the shell. Map `--attach` → `
 2. Read `references/mga-spawn.md` and follow it exactly.
 3. `scratch.py build --run <run>` (add `--resume` when resuming at `stage: generate`), then
    handle each node in the returned `order`, one at a time, per `mga-spawn.md`.
-4. **Gate 3**: `spec.py show --run <run> --gate 3`, print its `markdown` exactly, then ask.
+4. **Gate 3**: `spec.py set-stage --run <run> --stage gate3`, then
+   `spec.py show --run <run> --gate 3`, print its `markdown` exactly, and ask.
    If the user wants to see code, Read `<run>/functions/<N>/<N>.py` and show it.
    - Approve → `spec.py approve --run <run> --gate 3` → step 4.
    - Changes → classify with `references/classify.md`, then

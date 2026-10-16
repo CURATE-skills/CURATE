@@ -561,7 +561,7 @@ def main(argv=None) -> int:
         return _print(result, names)
     result = write_bundle(spec, Path(args.out), args.level)
     if "bundle_dir" in result:
-        update_state(args.run, bundle_dir=result["bundle_dir"],
+        update_state(args.run, bundle_dir=result["bundle_dir"], stage="gate4",
                      validation={k: result["validation"][k] for k in ("ok", "level", "error")})
     return _print(result, names)
 

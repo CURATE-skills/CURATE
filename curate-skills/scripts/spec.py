@@ -1136,6 +1136,15 @@ def _origin(n: FunctionSpec) -> str:
     return tag
 
 
+def _last_line(text: Optional[str], limit: int = 240) -> str:
+    """Last meaningful line of a stub-test tail, for a one-line gate note."""
+    lines = [l.strip() for l in (text or "").splitlines() if l.strip() and not l.startswith("===")]
+    if not lines:
+        return "(no output)"
+    line = lines[-1]
+    return line if len(line) <= limit else "…" + line[-limit:]
+
+
 def show_gate(s: dict, gate: int) -> str:
     out: list[str] = []
     if gate == 1:
@@ -1193,8 +1202,7 @@ def show_gate(s: dict, gate: int) -> str:
                        f"{m.get('attempts', 0)} | {lines} | `{path}` |")
         warn = [k for k, v in mga.items() if v.get("status") in ("failed", "external_only")]
         if warn:
-            out += ["", "Needs attention:"] + [f"- `{k}`: {mga[k]['status']} — "
-                                               f"{(mga[k].get('last_output_tail') or '')[-300:].strip()}"
+            out += ["", "Needs attention:"] + [f"- `{k}`: {mga[k]['status']} — {_last_line(mga[k].get('last_output_tail'))}"
                                                for k in warn]
         return "\n".join(out)
     if gate == 4:

@@ -233,6 +233,7 @@ def test_cli_bundle_updates_run_state(tmp_path, capsys, structural_only):
     state = json.loads((run / "state.json").read_text())
     assert state["bundle_dir"] == out["bundle_dir"]
     assert state["validation"] == {"ok": True, "level": "structural", "error": None}
+    assert state["stage"] == "gate4"
 
 
 def test_cli_rejects_bad_spec(tmp_path, capsys):

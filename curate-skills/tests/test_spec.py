@@ -385,3 +385,11 @@ def test_summary_markdown(make_run, capsys):
     assert "| `a` | [new] | 1 | passed | 2 | 2 | numpy | — |" in md
     assert "| `b` | [catalog] ← [catalog] b0 | 2 | — | 0 | 1 |" in md
     assert "Gate 3: revise — use numpy" in md and "validation passed (level `faasr_py`)" in md
+
+
+def test_gate3_attention_shows_last_line(make_run, capsys):
+    spec = WorkflowSpec(name="w", nodes=[FunctionSpec(name="a", code="x")])
+    tail = "=== rank 1/1 ===\nTraceback (most recent call last):\n  File x\nValueError: bad input\n"
+    run = make_run(spec=spec, mga={"a": {"status": "failed", "attempts": 1, "last_output_tail": tail}})
+    md = ok(S, ["show", "--run", str(run), "--gate", "3"], capsys)["markdown"]
+    assert "- `a`: failed — ValueError: bad input" in md

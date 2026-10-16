@@ -30,6 +30,15 @@ Claude Code 2.1.299 for every run.
 | 7 | 2026-10-15 | E2 finalize (`/curate --resume` → `wda-finalize`) | claude-opus-5-5 | headless, 2 turns | Gate 5 (summary, save both) | 0.293 | 11 | — |
 | 8 | 2026-10-15 | `curate-catalog` import seed + list | claude-opus-5-5 | headless, 1 call | — | 0.197 | 6 | — |
 | 9 | 2026-10-15 | `curate-catalog where` (setting substitution check) | claude-opus-5-5 | headless, 1 call | — | 0.104 | — | — |
+| 10 | 2026-10-15 | M7 behaviour test: retries 0, failing function, resume, iteration cap, stop | claude-opus-5-5 | headless, 2 sessions, 6 turns | Gates 1–3, resume, revise, stop | 1.158 + 0.277 = 1.435 | 44 | 0 |
+
+## Catalog check (2026-10-15)
+
+Verified from each run's pinned `state.json` `catalog_dir`: every run used a temporary catalog
+in the session scratchpad — #2 `e2cat`, #3–#4 `m5cat` (never created), #6–#7 `e2fullcat`
+(holds the 5 E2 functions + 1 workflow), #8 `e4cat`. #1's run folder was deleted after the test
+(it was created with `--catalog-dir`); #5 and #9 touched no catalog (#9 only read the default
+location). The default `~/.curate/catalog` does not exist: nothing was ever written there.
 
 ## 1. M3 guard smoke test
 
@@ -164,3 +173,30 @@ Claude Code 2.1.299 for every run.
   now single-quote the placeholders, so the literal reaches the script, which treats it as unset
   (verified under zsh). Open question for M7: whether settings are filled in when the plugin is
   installed from the marketplace rather than loaded with `--plugin-dir`.
+
+## 10. M7 behaviour test
+
+- Sketch: two functions; `slow_step` must `time.sleep(90)`, which exceeds the 60 s stub-test
+  limit, so it fails deterministically. `--mga-retries 0`, stub tests strict, temp catalog `m7acat`.
+- Session A `8c8dd30d-8414-4c7f-a9e4-6df8199b10a0` (turns 1–3); session B `bcfd7bcc-04d2-46c4-a81f-58bf36490426` (turns 4–6, a fresh session resuming the run).
+- Before session B: `spec.py set-cap --max 1`; and `set-stage gate3` by hand, because the
+  skill did not yet set that stage (bug found here, fixed for future runs).
+
+| Stage | Turn | Cost (USD) | Turns | Wall (s) | Result |
+|---|---|---|---|---|---|
+| sketch → Gate 1 | 1 | 0.252 | 10 | 43 | 2 nodes |
+| approve → Gate 2 | 2 | 0.209 | 8 | 41 | both `[new]` |
+| approve → generate → Gate 3 | 3 | 0.697 | 16 | 475 | `make_greeting` passed; `slow_step` **failed, 1 attempt** (60 s timeout); exactly 2 `curate-mga` spawns |
+| new session: `/curate --resume` | 4 | 0.150 | 4 | 14 | Gate 3 re-shown (iteration 0/1) |
+| "Remove the 90-second sleep…" | 5 | 0.066 | 3 | 10 | classified FUNCTION → `resolve`; `cap_reached` → asked raise / approve as-is / stop, did not loop |
+| "stop" | 6 | 0.061 | 3 | 9 | `stage: stopped`; directive kept |
+| **Total** | | **1.435** | **44** | **592** | |
+
+- Verified: retries 0 → one spawn per function, failing function recorded `failed` (attempts 1)
+  and shown at Gate 3; resume in a new session; the cap stops the loop; stop.
+- The subagent kept the required 90 s sleep (did not shorten it to pass). In turn 3 the session
+  also re-ran the stub test with `--timeout 150` as a diagnostic (passed); the recorded result
+  stayed `failed`.
+- Bugs found and fixed: (1) the stage was not set to `gate3` after generation nor `gate4` after
+  emit, so a resume would have re-entered generation; (2) Gate 3's failure note showed a
+  mid-word slice of the output; it now shows the last error line.
