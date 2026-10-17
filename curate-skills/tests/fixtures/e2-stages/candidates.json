@@ -1,0 +1,62 @@
+[
+  {
+    "node": "generate_text",
+    "decision": "new",
+    "adapt_from": null,
+    "catalog_id": null,
+    "adaptation_notes": null,
+    "updated_inputs": [],
+    "updated_outputs": [],
+    "refined_description": "Entry step. Generate the benchmark input text of W=5000 total words. For the input text generation, use [cat, dog, bird, horse, pig], each distributed evenly and shuffled randomly (M=5 different words, 1000 occurrences each). Build a list with W/len(vocab) copies of each word, shuffle it with Python's random module, and write it as a single plain-text file of whitespace-separated words. W and the vocabulary should be overridable via function arguments with these defaults. This is the only vocabulary-specific step.",
+    "suggested_dependencies": [],
+    "required_secrets": []
+  },
+  {
+    "node": "split",
+    "decision": "new",
+    "adapt_from": null,
+    "catalog_id": null,
+    "adaptation_notes": null,
+    "updated_inputs": [],
+    "updated_outputs": [],
+    "refined_description": "The split function partitions the input text into N batches (N=3, the number of mapping functions; configurable via a function argument). Read the full input text, tokenize on whitespace, and divide the word sequence into N contiguous, near-equal batches (sizes differ by at most one; no word is lost or duplicated). Write one plain-text batch per mapper, numbered 1..N to match the mapper ranks. Must work for any input text, vocabulary size and word frequency.",
+    "suggested_dependencies": [],
+    "required_secrets": []
+  },
+  {
+    "node": "map",
+    "decision": "new",
+    "adapt_from": null,
+    "catalog_id": null,
+    "adaptation_notes": null,
+    "updated_inputs": [],
+    "updated_outputs": [],
+    "refined_description": "Ranked map step (N=3 instances). N parallel map functions count how often each word occurs in their text chunk: each instance uses faasr_rank() to read the text batch matching its rank, counts word occurrences with no hard-coded vocabulary (any words, any frequency), and writes its partial count dictionary Y_i (word -> count) as JSON, numbered by its rank. Must be fully generalizable to vocabularies of any size and frequency.",
+    "suggested_dependencies": [],
+    "required_secrets": []
+  },
+  {
+    "node": "shuffle",
+    "decision": "new",
+    "adapt_from": null,
+    "catalog_id": null,
+    "adaptation_notes": null,
+    "updated_inputs": [],
+    "updated_outputs": [],
+    "refined_description": "Shuffle flattens the resulting array Y_i of per-mapper word counts. The available workflow primitives necessitate the shuffle function, not relying on the array Y_i itself but flattening it to enable the desired level of parallelism in reduce. Read all N mapper partial-count files (N configurable via argument), flatten them into a list of (word, partial_count) pairs grouped by word, sort the distinct words deterministically, and partition them across the M reducers (M=5, configurable via argument) round-robin by sorted index so every word goes to exactly one reducer. Write one JSON partition per reducer rank 1..M mapping each assigned word to its list of partial counts; a reducer with no words gets an empty object. Must be fully generalizable to vocabularies of any size and frequency (number of distinct words may be smaller or larger than M).",
+    "suggested_dependencies": [],
+    "required_secrets": []
+  },
+  {
+    "node": "reduce",
+    "decision": "new",
+    "adapt_from": null,
+    "catalog_id": null,
+    "adaptation_notes": null,
+    "updated_inputs": [],
+    "updated_outputs": [],
+    "refined_description": "Ranked reduce step (M=5 instances). M reducers count the total occurrences of their respective word(s) in parallel, yielding Z_i. Each instance uses faasr_rank() to read the shuffle partition matching its rank, sums the list of partial counts for each word in that partition, and writes Z_i (word -> total count) as JSON numbered by its rank. Handles an empty partition (writes an empty object). Must be fully generalizable to vocabularies of any size and frequency.",
+    "suggested_dependencies": [],
+    "required_secrets": []
+  }
+]

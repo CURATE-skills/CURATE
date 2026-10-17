@@ -6,6 +6,7 @@ import pytest
 import catalog
 import spec as S
 from conftest import call, ok
+from runstate import spec_hash
 from curate_models import CatalogEntry, FunctionSpec, IOSpec, WorkflowSpec
 
 
@@ -295,14 +296,18 @@ def test_directive_routing_and_cap(make_run, capsys):
     code, out = call(S, ["directive", "--run", str(run), "--gate", "3", "--text", "use pandas",
                          "--structural", "false"], capsys)
     s = state(run)
-    assert out["next_stage"] == "resolve" and s["code_feedback"] == "use pandas"
+    assert out["next_stage"] == "reuse" and s["code_feedback"] == "use pandas"  # v2: functional → reuse
     assert s["prior_spec"]["nodes"][0]["code"] and not out["cap_reached"]
     code, out = call(S, ["directive", "--run", str(run), "--gate", "2", "--text", "add a node",
                          "--structural", "true"], capsys)
     s = state(run)
-    assert out["next_stage"] == "skeleton" and s["spec_is_seed"] and out["cap_reached"]
+    assert out["next_stage"] == "skeleton" and s["spec_is_seed"] and not out["cap_reached"]
     assert s["revision_directives"] == ["use pandas", "add a node"]
     assert len(list((run / "history").glob("*.json"))) == 2
+    # v2: at the cap the directive is refused before anything changes
+    code, out = call(S, ["directive", "--run", str(run), "--gate", "2", "--text", "third",
+                         "--structural", "false"], capsys)
+    assert code == 1 and out["cap_reached"] and state(run) == s
     code, out = call(S, ["directive", "--run", str(run), "--gate", "2", "--text", "x"], capsys)
     assert code == 2
 
@@ -313,7 +318,8 @@ def test_gate4_requires_validation_and_reports_reuse(make_run, capsys):
     run = make_run(spec=spec)
     assert call(S, ["approve", "--run", str(run), "--gate", "4"], capsys)[0] == 2
     s = state(run)
-    s["validation"] = {"ok": True, "level": "structural", "error": None}
+    s["validation"] = {"ok": True, "level": "structural", "error": None,
+                       "spec_hash": spec_hash(s["spec"])}  # v2: the bundle must match the spec
     (run / "state.json").write_text(json.dumps(s))
     code, out = call(S, ["approve", "--run", str(run), "--gate", "4"], capsys)
     assert code == 0 and out["reused_catalog_ids"] == ["c1"] and out["stage"] == "finalize"

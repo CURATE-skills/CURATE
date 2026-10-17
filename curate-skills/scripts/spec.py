@@ -31,7 +31,13 @@ exit 0 ok, 1 check failed / needs attention, 2 bad input.
   spec.py approve         --run R --gate 1|2|3|4
   spec.py directive       --run R --gate 1|2|3|4|emit --text T [--structural true|false]
   spec.py set-cap         --run R --max N
-  spec.py set-stage       --run R --stage S
+  spec.py set-stage       --run R --stage S        (low level: stop, tests)
+  spec.py import          --stage S --from FILE [--candidates F] [--functions DIR]
+                          [--functions-as reuse|seed] [--review] [init flags]
+  spec.py next            --run R
+  spec.py require         --run R --stage S
+  spec.py begin           --run R --stage S [--rewind]
+  spec.py end             --run R --stage generate
   spec.py show            --run R --gate 1|2|3|4
   spec.py summary         --run R
 """
@@ -40,9 +46,11 @@ from __future__ import annotations
 import argparse
 import ast
 import datetime as _dt
+import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 from collections import deque
 from pathlib import Path
@@ -62,14 +70,27 @@ from curate_models import (
     clean_dependencies,
 )
 from emit import external_inputs
+from runstate import node_basis, obj_hash, run_lock, spec_hash, write_json_atomic
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_MGA_RETRIES = 3
 DEFAULT_STUBTEST_MODE = "strict"
 STUBTEST_MODES = ("strict", "parity")
 DEFAULT_MAX_ITERATIONS = 5
-STAGES = ("skeleton", "gate1", "resolve", "gate2", "generate", "gate3",
+STAGES = ("skeleton", "gate1", "reuse", "resolve", "gate2", "generate", "gate3",
           "emit", "gate4", "finalize", "done", "stopped")
+# Stage skills, in pipeline order, with the run `stage` values each one owns.
+PIPELINE = (
+    ("skeleton", ("skeleton", "gate1"), "curate-skeleton"),
+    ("reuse", ("reuse",), "curate-reuse"),
+    ("resolve", ("resolve", "gate2"), "curate-resolve"),
+    ("generate", ("generate", "gate3"), "curate-generate"),
+    ("emit", ("emit", "gate4"), "curate-emit"),
+    ("finalize", ("finalize",), "wda-finalize"),
+)
+STAGE_NAMES = tuple(p[0] for p in PIPELINE)
+PLUGIN = "curate-skills"
+FINAL_MGA = {"passed", "failed", "external_only", "reused", "reused_failed"}
 SOURCE_TAGS = {"catalog": "[catalog]", "adapt": "[adapt]", "cached": "[cached]",
                "user_provided": "[User Provided Model]", "new": "[new]"}
 
@@ -84,14 +105,16 @@ def load_state(run: str | Path) -> dict:
     path = Path(run) / "state.json"
     if not path.exists():
         raise InputError(f"{path} not found — is --run a run directory?")
-    return json.loads(path.read_text())
+    state = json.loads(path.read_text())
+    if state.get("schema_version", 1) < SCHEMA_VERSION:
+        raise InputError(f"{path} was made by curate-skills v1 (schema_version "
+                         f"{state.get('schema_version', 1)}); continue it with the v1 plugin "
+                         "(the curate-v1 worktree), or start a new run")
+    return state
 
 
 def save_state(run: str | Path, state: dict) -> None:
-    path = Path(run) / "state.json"
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, indent=2) + "\n")
-    tmp.replace(path)
+    write_json_atomic(Path(run) / "state.json", state)
 
 
 def spec_of(data: Optional[dict]) -> Optional[WorkflowSpec]:
@@ -173,6 +196,12 @@ def cmd_init(args) -> dict:
     request = Path(args.request_file).read_text().strip() if args.request_file else ""
     if not request:
         raise InputError("the request file is empty")
+    _, _, out = _new_run(args, request)
+    return out
+
+
+def _new_run(args, request: str, run_id_hint: str = "") -> tuple[Path, dict, dict]:
+    """Create a run directory and its initial state (shared by init and import)."""
     project = Path(args.project_dir or ".").resolve()
 
     user_models = []
@@ -199,7 +228,7 @@ def cmd_init(args) -> dict:
         args.stubtest_mode, "CURATE_STUBTEST_MODE", args.config_stubtest_mode,
         DEFAULT_STUBTEST_MODE, _mode)
 
-    words = re.findall(r"[a-zA-Z0-9]+", request.lower())[:4]
+    words = re.findall(r"[a-zA-Z0-9]+", (run_id_hint or request).lower())[:4]
     run_id = _dt.datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + ("-".join(words) or "run")
     base_id, n = run_id, 2
     while (project / ".curate" / "runs" / run_id).exists():
@@ -231,15 +260,19 @@ def cmd_init(args) -> dict:
         "prior_spec": None,
         "spec_is_seed": None,
         "enriched_spec": None,
+        "enriched_basis": None,
+        "spec_basis": None,
         "candidates": [],
         "repairs": [],
         "mga": {},
         "validation": None,
         "bundle_dir": None,
         "history": [],
+        "stopped_from": None,
+        "begun": None,
     }
     save_state(run, state)
-    return {"ok": True, "run": str(run), "run_id": run_id,
+    return run, state, {"ok": True, "run": str(run), "run_id": run_id,
             "settings": {
                 "catalog_dir": {"value": str(catalog_dir), "source": catalog_source},
                 "mga_max_retries": {"value": retries, "source": retries_source},
@@ -263,13 +296,16 @@ def cmd_preflight(args) -> dict:
     ok = value == "1"
     out = {"ok": ok, FOREGROUND_VAR: value}
     if not ok:
-        out["error"] = (
-            f"{FOREGROUND_VAR} is not set to 1 in this Claude Code session, so curate-mga "
+        out["error"] = preflight_error()
+    return out
+
+
+def preflight_error() -> str:
+    return (f"{FOREGROUND_VAR} is not set to 1 in this Claude Code session, so curate-mga "
             "subagents would run in the background and the session would stall after each "
             "one. Quit and relaunch with the `curate` shell alias, which sets it: "
             f"alias curate='{FOREGROUND_VAR}=1 claude --plugin-dir <path to curate-skills>' "
             "(see the plugin README). Then resume with /curate --resume <run_id>.")
-    return out
 
 
 def cmd_runs(args) -> dict:
@@ -297,7 +333,8 @@ def cmd_status(args) -> dict:
             "nodes": [n.name for n in spec.nodes] if spec else [],
             "mga": {k: v.get("status") for k, v in (s.get("mga") or {}).items()},
             "bundle_dir": s.get("bundle_dir"), "validation": s.get("validation"),
-            "auto_emit_retries": auto_emit_retries(s)}
+            "auto_emit_retries": auto_emit_retries(s), "next_skill": next_skill(s),
+            "stopped_from": s.get("stopped_from")}
 
 
 def auto_emit_retries(s: dict) -> int:
@@ -392,7 +429,7 @@ def cmd_prompt_context(args) -> dict:
     spec = spec_of(s.get("spec"))
     if spec is None:
         raise InputError("no approved skeleton yet (run approve --gate 1)")
-    if args.stage == "mca":
+    if args.stage in ("reuse", "mca"):
         ctx = f"{spec.name}: {(spec.description or '').strip()}".strip().rstrip(":").strip()
         if s["user_request"].strip():
             ctx += f"\nOriginal user request (verbatim): {s['user_request'].strip()}"
@@ -817,11 +854,18 @@ def cmd_apply_candidates(args) -> dict:
     enriched = [decide_node(n, by_node[n.name], prior.get(n.name), user_models.get(n.name), cat, notes)
                 for n in spec.nodes]
     log: list[str] = []
+    unknown = [n for n in notes if "not in catalog" in n]
+    if unknown and getattr(args, "strict", False):
+        raise InputError("candidates name catalog entries that are not in this run's catalog "
+                         f"({s['catalog_dir']}): {unknown}")
     with_candidates = apply_renames(spec, enriched, log)
     summary = [candidate_summary(n) for n in with_candidates.nodes]
     s["enriched_spec"] = dump(with_candidates)
+    s["enriched_basis"] = spec_hash(s["spec"])
     s["candidates"] = summary
     s["repairs"] = log
+    s["stage"] = "resolve"
+    s["begun"] = None
     save_state(run, s)
     return {"ok": True, "candidates": [{k: c[k] for k in ("name", "source", "user_model_mode",
                                                           "origin_kind", "origin_name")} for c in summary],
@@ -873,6 +917,7 @@ def cmd_merge_resolved(args) -> dict:
     log: list[str] = []
     spec = prune_transitive_edges(ensure_reachable(merge_resolved(resolved, enriched.nodes), log), log)
     s["spec"] = dump(spec)
+    s["spec_basis"] = spec_hash(s["enriched_spec"])
     s["repairs"] = (s.get("repairs") or []) + log
     s["stage"] = "gate2"
     save_state(run, s)
@@ -1003,19 +1048,23 @@ def cmd_approve(args) -> dict:
         s["spec"] = spec
         s["skeleton_draft"] = None
         s["spec_is_seed"] = None
-        s["enriched_spec"] = None
-        s["stage"] = "resolve"
+        s.update(enriched_spec=None, enriched_basis=None, spec_basis=None, stage="reuse")
     elif g == 2:
         if not s.get("spec"):
             raise InputError("no resolved spec to approve")
-        s.update(feedback=None, structural_change=None, spec_is_seed=None, enriched_spec=None,
-                 stage="generate")
+        # enriched_spec is kept: generate checks spec_basis against it.
+        s.update(feedback=None, structural_change=None, spec_is_seed=None, stage="generate")
     elif g == 3:
         s.update(code_feedback=None, structural_change=None, stage="emit")
     elif g == 4:
-        if not (s.get("validation") or {}).get("ok"):
+        v = s.get("validation") or {}
+        if not v.get("ok"):
             raise InputError("validation has not passed; cannot approve Gate 4")
+        if v.get("spec_hash") != spec_hash(s.get("spec")):
+            raise InputError("the bundle was built from a different version of the spec; run "
+                             f"/{PLUGIN}:curate-emit --run {s['run_id']} again before approving Gate 4")
         s.update(feedback=None, stage="finalize")
+    s["begun"] = None
     _record(s, g, "approve")
     snapshot_history(run, s, f"gate{g}-approve")
     save_state(run, s)
@@ -1057,6 +1106,15 @@ def cmd_directive(args) -> dict:
         return {"ok": True, "next_stage": "skeleton", "iteration": s["iteration"],
                 "cap_reached": False}
 
+    if s["iteration"] >= s["max_iterations"]:
+        # Checked before anything changes: "approve as-is" stays a plain approve, and
+        # "raise the cap" is set-cap followed by this same directive.
+        return {"ok": False, "cap_reached": True, "iteration": s["iteration"],
+                "max_iterations": s["max_iterations"], "stage": s["stage"],
+                "error": f"revision cap reached ({s['iteration']}/{s['max_iterations']}); "
+                         "nothing was changed. Ask: approve as-is, stop, or raise the cap "
+                         "(set-cap) and repeat this directive."}
+
     spec = s.get("spec")
     if g == "2":
         s.update(feedback=text, structural_change=structural, spec_is_seed=True)
@@ -1075,7 +1133,9 @@ def cmd_directive(args) -> dict:
         structural = False
         s.update(feedback=text, structural_change=False, prior_spec=spec)
     s["iteration"] += 1
-    s["stage"] = "skeleton" if structural else "resolve"
+    # Functional changes go back through reuse (v1's resolve stage included the MCA).
+    s["stage"] = "skeleton" if structural else "reuse"
+    s["begun"] = None
     if structural:
         s["skeleton_draft"] = None
     _record(s, g if g == "emit" else int(g), "revise", text, structural)
@@ -1083,7 +1143,7 @@ def cmd_directive(args) -> dict:
     save_state(run, s)
     return {"ok": True, "next_stage": s["stage"], "structural": structural,
             "iteration": s["iteration"], "max_iterations": s["max_iterations"],
-            "cap_reached": s["iteration"] >= s["max_iterations"]}
+            "cap_reached": False, "next_skill": next_skill(s)}
 
 
 def cmd_set_cap(args) -> dict:
@@ -1097,11 +1157,398 @@ def cmd_set_cap(args) -> dict:
 
 
 def cmd_set_stage(args) -> dict:
+    """Low-level stage change (stop, and tests). Stages are normally moved by begin/approve."""
     run = Path(args.run)
     s = load_state(run)
+    if args.stage == "stopped" and s["stage"] != "stopped":
+        s["stopped_from"] = s["stage"]
     s["stage"] = args.stage
+    s["begun"] = None
     save_state(run, s)
-    return {"ok": True, "stage": args.stage}
+    return {"ok": True, "stage": args.stage, "next_skill": next_skill(s)}
+
+
+# ── import: start a stage from your own files ────────────────────────────────
+
+IMPORT_PREV_GATE = {"reuse": 1, "resolve": 1, "generate": 2, "emit": 3}
+BUNDLE_HEADER = "# Generated by curate-skills"
+
+
+def strip_bundle_header(code: str) -> str:
+    """Drop the 3-line header emit.py adds to bundle functions (and the blank after it)."""
+    lines = code.splitlines(keepends=True)
+    if lines and lines[0].startswith(BUNDLE_HEADER):
+        lines = lines[3:]
+        if lines and not lines[0].strip():
+            lines = lines[1:]
+    return "".join(lines)
+
+
+def _file_sha(path: str) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _load_full_spec(path: str) -> WorkflowSpec:
+    data = read_json_file(path)
+    if not isinstance(data, dict):
+        raise InputError(f"{path}: expected a WorkflowSpec JSON object")
+    data = {**data, "data_store": "S3"}
+    try:
+        spec = WorkflowSpec.model_validate(data)
+    except ValidationError as e:
+        raise InputError(f"{path} is not a valid WorkflowSpec:\n{e}") from e
+    bad = [n.name for n in spec.nodes if not _IDENT.match(n.name)]
+    if bad or not spec.nodes:
+        raise InputError(f"{path}: needs nodes with Python-identifier names (bad: {bad})")
+    if not spec.entry:
+        spec = spec.model_copy(update={"entry": spec.nodes[0].name})
+    return spec
+
+
+def _is_full_spec(data) -> bool:
+    return isinstance(data, dict) and any(
+        n.get("inputs") or n.get("outputs") or n.get("code") for n in data.get("nodes") or []
+        if isinstance(n, dict))
+
+
+def _apply_functions(spec: WorkflowSpec, directory: Optional[str], mode: Optional[str]) -> tuple[WorkflowSpec, list[str]]:
+    if not directory:
+        return spec, []
+    d = Path(directory)
+    if not d.is_dir():
+        raise InputError(f"--functions {directory} is not a directory")
+    found, nodes = [], []
+    for n in spec.nodes:
+        f = d / f"{n.name}.py"
+        if f.exists():
+            update = {"code": strip_bundle_header(f.read_text())}
+            if mode == "reuse":
+                update.update(source="cached", origin_kind="import", origin_name=n.name)
+            elif mode == "seed":
+                update.update(source="adapt", origin_kind="import", origin_name=n.name)
+            n = n.model_copy(update=update)
+            found.append(n.name)
+        nodes.append(n)
+    return spec.model_copy(update={"nodes": nodes}), found
+
+
+def cmd_import(args) -> dict:
+    stage = args.stage
+    if stage == "finalize":
+        raise InputError("starting at finalize from files is not supported: a bundle has no stub-test "
+                         "results, so nothing could be saved as verified. Use --run on the run that "
+                         "built it, or import at generate with --functions-as reuse")
+    if args.review and stage not in ("reuse", "generate", "emit"):
+        raise InputError(f"--review stops at the gate before {stage}; {stage} has none "
+                         "(use it when importing at reuse, generate or emit)")
+    if args.functions and stage == "generate" and args.functions_as not in ("reuse", "seed"):
+        raise InputError("with --functions at generate, say how to use them: --functions-as reuse "
+                         "(keep as is, stub-test only) or --functions-as seed (regenerate from them)")
+    src = args.from_file
+    if not Path(src).is_file():
+        raise InputError(f"{src} not found")
+
+    warnings: list[str] = []
+    data = None if stage == "skeleton" else read_json_file(src)
+    if stage == "skeleton":
+        request = Path(src).read_text().strip()
+        if not request:
+            raise InputError(f"{src} is empty")
+    elif args.request_file:
+        request = Path(args.request_file).read_text().strip()
+    else:
+        name = (data or {}).get("name", "workflow") if isinstance(data, dict) else "workflow"
+        desc = (data or {}).get("description", "") if isinstance(data, dict) else ""
+        request = f"{name}: {desc}".strip().rstrip(":")
+        warnings.append("no sketch given: the request text was built from the spec's name and "
+                        "description (pass --request-file to use your own)")
+
+    run, s, out = _new_run(args, request, run_id_hint=Path(src).stem)
+    try:
+        detail = _import_into(run, s, stage, src, data, args, warnings)
+    except Exception:
+        shutil.rmtree(run, ignore_errors=True)
+        raise
+    s = load_state(run)
+    out.update(stage=s["stage"], next_skill=next_skill(s), warnings=warnings, **detail)
+    return out
+
+
+def _import_into(run: Path, s: dict, stage: str, src: str, data, args, warnings: list[str]) -> dict:
+    ns = argparse.Namespace
+    gate = IMPORT_PREV_GATE.get(stage)
+    if stage == "skeleton":
+        _record(s, 0, "imported", src)
+        s["history"][-1]["sha256"] = _file_sha(src)
+        save_state(run, s)
+        return {}
+
+    if stage in ("reuse", "resolve"):
+        if _is_full_spec(data):
+            if args.review:
+                raise InputError("--review needs a skeleton.json (no inputs/outputs); this file is a "
+                                 "full WorkflowSpec, which is imported as a seed")
+            spec = _load_full_spec(src)
+            s.update(spec=dump(spec), spec_is_seed=True, stage="reuse")
+            warnings.append("full WorkflowSpec imported as a seed for reuse (inputs/outputs kept)")
+        else:
+            work = run / "work" / "skeleton.json"
+            work.write_text(json.dumps(data, indent=2))
+            res = cmd_skeleton(ns(run=str(run), json=str(work)))
+            if not res["ok"]:
+                raise InputError(f"{src}: {res['error']}")
+            if args.review:
+                return {"review": "gate1"}
+            cmd_approve(ns(run=str(run), gate=1))
+            s = load_state(run)
+        _record(s, 1, "imported", src)
+        s["history"][-1]["sha256"] = _file_sha(src)
+        s["begun"] = None
+        save_state(run, s)
+        if stage == "reuse":
+            return {}
+        if not args.candidates:
+            raise InputError("starting at resolve needs --candidates candidates.json "
+                             "(the reuse decisions, as written by curate-reuse)")
+        res = cmd_apply_candidates(ns(run=str(run), json=args.candidates, strict=True))
+        s = load_state(run)
+        _record(s, "reuse", "imported", args.candidates)
+        s["history"][-1]["sha256"] = _file_sha(args.candidates)
+        save_state(run, s)
+        return {"candidates": res["candidates"]}
+
+    # generate / emit: a full spec, optionally with function files.
+    spec = _load_full_spec(src)
+    spec, found = _apply_functions(spec, args.functions, args.functions_as if stage == "generate" else None)
+    s["spec"] = dump(spec)
+    s["enriched_spec"] = None
+    problems = [p for p in require_problems(s, stage, env={"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"})]
+    if problems:
+        raise InputError(f"{src} is not enough to start {stage}: " + "; ".join(problems))
+    if stage == "emit":
+        warnings.append("imported code has not been stub-tested, so wda-finalize will not save it; "
+                        "import at generate with --functions-as reuse to verify it")
+    s["stage"] = f"gate{gate}"
+    _record(s, gate, "imported", src)
+    s["history"][-1]["sha256"] = _file_sha(src)
+    save_state(run, s)
+    if not args.review:
+        cmd_approve(ns(run=str(run), gate=gate))
+    return {"functions_imported": found}
+
+
+# ── stages: next / require / begin / end ─────────────────────────────────────
+
+# Fields a stage (and everything after it) produces; cleared on a fresh entry.
+STAGE_OUTPUTS = {
+    "skeleton": ("enriched_spec", "enriched_basis", "spec_basis", "candidates", "mga",
+                 "validation", "bundle_dir"),
+    "reuse": ("enriched_spec", "enriched_basis", "spec_basis", "candidates", "mga",
+              "validation", "bundle_dir"),
+    "resolve": ("spec_basis", "mga", "validation", "bundle_dir"),
+    "generate": ("mga", "validation", "bundle_dir"),
+    "emit": ("validation", "bundle_dir"),
+    "finalize": (),
+}
+_EMPTY = {"mga": {}, "candidates": []}
+
+
+def stage_index(stage_value: str) -> Optional[int]:
+    if stage_value == "done":
+        return len(PIPELINE)
+    for i, (_, values, _) in enumerate(PIPELINE):
+        if stage_value in values:
+            return i
+    return None
+
+
+def _current_index(s: dict) -> Optional[int]:
+    if s["stage"] == "stopped":
+        return stage_index(s.get("stopped_from") or "")
+    return stage_index(s["stage"])
+
+
+def skill_for(name: str) -> str:
+    return f"{PLUGIN}:" + next(p[2] for p in PIPELINE if p[0] == name)
+
+
+def next_skill(s: dict) -> Optional[str]:
+    if s["stage"] in ("stopped", "done"):
+        return None
+    i = stage_index(s["stage"])
+    return f"{PLUGIN}:{PIPELINE[i][2]}" if i is not None and i < len(PIPELINE) else None
+
+
+def _run_cmd(s: dict, name: str) -> str:
+    return f"/{skill_for(name)} --run {s['run_id']}"
+
+
+def _needs_generation(n: FunctionSpec) -> bool:
+    return not (n.source in ("catalog", "cached") and n.code)
+
+
+def require_problems(s: dict, name: str, env=None) -> list[str]:
+    """What stage `name` is missing, each with the stage skill that produces it."""
+    env = os.environ if env is None else env
+    spec = spec_of(s.get("spec"))
+    out: list[str] = []
+    if name == "skeleton":
+        if not (s.get("user_request") or "").strip() and spec is None:
+            out.append(f"no sketch — start a run with /{skill_for('skeleton')} --from <sketch file>")
+        return out
+    if spec is None or not spec.nodes:
+        out.append(f"no approved skeleton — run {_run_cmd(s, 'skeleton')}")
+        return out
+    if name == "reuse":
+        return out
+    if name == "resolve":
+        enriched = s.get("enriched_spec")
+        if not enriched:
+            out.append(f"no reuse decisions for this skeleton — run {_run_cmd(s, 'reuse')}")
+        elif s.get("enriched_basis") != spec_hash(s["spec"]) and s.get("spec_basis") != spec_hash(enriched):
+            out.append("the reuse decisions were made for an older version of the spec — run "
+                       f"{_run_cmd(s, 'reuse')} again")
+        return out
+    if name == "generate":
+        empty = [n.name for n in spec.nodes if not n.inputs and not n.outputs]
+        if empty:
+            out.append(f"function(s) {', '.join(empty)} have no inputs or outputs yet — run "
+                       f"{_run_cmd(s, 'resolve')}")
+        errors = [p["message"] for p in check_spec(spec) if p["severity"] == "error"]
+        if errors:
+            out.append(f"the workflow spec has errors (fix them at Gate 2 with {_run_cmd(s, 'resolve')}): "
+                       + "; ".join(errors))
+        undescribed = [n.name for n in spec.nodes if _needs_generation(n) and not n.description.strip()]
+        if undescribed:
+            out.append(f"function(s) {', '.join(undescribed)} need a description to be generated — "
+                       f"add one at Gate 2 ({_run_cmd(s, 'resolve')})")
+        enriched = s.get("enriched_spec")
+        if enriched and s.get("spec_basis") and s["spec_basis"] != spec_hash(enriched):
+            out.append("the spec was not resolved from the current reuse decisions — run "
+                       f"{_run_cmd(s, 'resolve')}")
+        if any(_needs_generation(n) for n in spec.nodes) and env.get("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS") != "1":
+            out.append(preflight_error())
+        return out
+    if name == "emit":
+        no_code = [n.name for n in spec.nodes if not n.code]
+        if no_code:
+            out.append(f"function(s) {', '.join(no_code)} have no code — run {_run_cmd(s, 'generate')}")
+        nodes = {n["name"]: n for n in s["spec"]["nodes"]}
+        stale = [k for k, m in (s.get("mga") or {}).items()
+                 if m.get("basis") and k in nodes and m["basis"] != node_basis(nodes[k])]
+        if stale:
+            out.append(f"function(s) {', '.join(stale)} were generated for an older version of the "
+                       f"spec — run {_run_cmd(s, 'generate')} again")
+        return out
+    if name == "finalize":
+        v = s.get("validation") or {}
+        if not v.get("ok"):
+            out.append(f"no validated bundle — run {_run_cmd(s, 'emit')}")
+        elif v.get("spec_hash") != spec_hash(s["spec"]):
+            out.append(f"the bundle is older than the spec — run {_run_cmd(s, 'emit')} again")
+        return out
+    raise InputError(f"unknown stage {name!r}")
+
+
+def cmd_require(args) -> dict:
+    s = load_state(args.run)
+    problems = require_problems(s, args.stage)
+    return {"ok": not problems, "stage": args.stage, "run_stage": s["stage"], "problems": problems,
+            "next_skill": next_skill(s)}
+
+
+def cmd_next(args) -> dict:
+    s = load_state(args.run)
+    skill = next_skill(s)
+    out = {"ok": True, "stage": s["stage"], "next_skill": skill,
+           "command": f"/{skill} --run {s['run_id']}" if skill else None}
+    if s["stage"] == "stopped":
+        out["stopped_from"] = s.get("stopped_from")
+    return out
+
+
+def _clear_from(s: dict, name: str) -> list[str]:
+    cleared = [f for f in STAGE_OUTPUTS[name] if s.get(f) not in (None, {}, [])]
+    for f in STAGE_OUTPUTS[name]:
+        s[f] = _EMPTY.get(f, None) if f in _EMPTY else None
+    return cleared
+
+
+def cmd_begin(args) -> dict:
+    """Start (or resume, or rewind to) a stage. Every stage skill calls this first."""
+    run = Path(args.run)
+    s = load_state(run)
+    name = args.stage
+    target = STAGE_NAMES.index(name)
+    cur = _current_index(s)
+    if cur is None:
+        raise InputError(f"run is at stage {s['stage']!r}, which no stage skill owns")
+    first_value = PIPELINE[target][1][0]
+
+    if cur < target:
+        return {"ok": False, "mode": "refused", "stage": s["stage"],
+                "error": f"the run has not reached {name} yet (it is at stage {s['stage']}); run "
+                         f"/{next_skill(s) or skill_for(STAGE_NAMES[cur])} --run {s['run_id']} first"}
+
+    if cur > target:
+        if not args.rewind:
+            return {"ok": False, "mode": "refused", "stage": s["stage"],
+                    "error": f"the run is already past {name} (stage {s['stage']}); add --rewind to "
+                             "go back to it (counts as one revision round)"}
+        if s["iteration"] >= s["max_iterations"]:
+            return {"ok": False, "mode": "refused", "cap_reached": True, "stage": s["stage"],
+                    "error": f"revision cap reached ({s['iteration']}/{s['max_iterations']}); "
+                             "raise it with set-cap to rewind"}
+        spec = spec_of(s.get("spec"))
+        if spec is not None and any(n.code for n in spec.nodes):
+            s["prior_spec"] = s["spec"]  # keep working code available as [cached]
+        s["iteration"] += 1
+        if name == "skeleton":
+            s["skeleton_draft"] = None
+        _record(s, "rewind", "rewind", f"to {name} from {s['stage']}")
+        mode = "rewind"
+        cleared = _clear_from(s, name)
+        s["stage"] = first_value
+    elif s["stage"] == "stopped":
+        s["stage"] = s.get("stopped_from") or first_value
+        mode, cleared = "resume", []
+    elif s.get("begun") == name or s["stage"].startswith("gate"):
+        # Already started, or waiting at this stage's gate (its work is done).
+        mode, cleared = "resume", []
+    else:
+        mode = "fresh"
+        cleared = _clear_from(s, name)
+
+    # Resuming at a gate only re-shows it: the stage's work is done, so its inputs are
+    # not re-checked (an imported --review run may never have had them).
+    at_gate = mode == "resume" and s["stage"].startswith("gate")
+    problems = [] if at_gate else require_problems(s, name)
+    if problems:
+        return {"ok": False, "mode": mode, "stage": s["stage"], "problems": problems,
+                "error": "; ".join(problems)}
+    s["begun"] = name
+    if mode == "rewind":
+        snapshot_history(run, s, f"rewind-{name}")
+    save_state(run, s)
+    return {"ok": True, "mode": mode, "stage": s["stage"], "cleared": cleared,
+            "iteration": s["iteration"], "next_skill": next_skill(s)}
+
+
+def cmd_end(args) -> dict:
+    run = Path(args.run)
+    s = load_state(run)
+    if args.stage != "generate":
+        raise InputError("only the generate stage has an explicit end")
+    spec = spec_of(s.get("spec"))
+    mga = s.get("mga") or {}
+    pending = [n.name for n in (spec.nodes if spec else []) if (mga.get(n.name) or {}).get("status") not in FINAL_MGA]
+    if pending:
+        return {"ok": False, "pending": pending,
+                "error": f"function(s) {', '.join(pending)} have no final status yet; finish them first"}
+    s["stage"] = "gate3"
+    save_state(run, s)
+    return {"ok": True, "stage": "gate3",
+            "summary": {k: v.get("status") for k, v in mga.items()}}
 
 
 # ── gate displays ────────────────────────────────────────────────────────────
@@ -1279,17 +1726,27 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="spec.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sp = sub.add_parser("init")
-    sp.add_argument("--request-file", required=True)
-    sp.add_argument("--user-model", action="append")
-    sp.add_argument("--context-file", action="append")
-    sp.add_argument("--catalog-dir")
-    sp.add_argument("--config-catalog-dir")
-    sp.add_argument("--mga-retries")
-    sp.add_argument("--config-mga-retries")
-    sp.add_argument("--stubtest-mode")
-    sp.add_argument("--config-stubtest-mode")
-    sp.add_argument("--project-dir")
+    def init_flags(q, request_required):
+        q.add_argument("--request-file", required=request_required)
+        q.add_argument("--user-model", action="append")
+        q.add_argument("--context-file", action="append")
+        q.add_argument("--catalog-dir")
+        q.add_argument("--config-catalog-dir")
+        q.add_argument("--mga-retries")
+        q.add_argument("--config-mga-retries")
+        q.add_argument("--stubtest-mode")
+        q.add_argument("--config-stubtest-mode")
+        q.add_argument("--project-dir")
+
+    init_flags(sub.add_parser("init"), True)
+    sp = sub.add_parser("import")
+    sp.add_argument("--stage", required=True, choices=STAGE_NAMES)
+    sp.add_argument("--from", dest="from_file", required=True)
+    sp.add_argument("--candidates")
+    sp.add_argument("--functions")
+    sp.add_argument("--functions-as", choices=["reuse", "seed"])
+    sp.add_argument("--review", action="store_true")
+    init_flags(sp, False)
     sp = sub.add_parser("runs")
     sp.add_argument("--project-dir")
     sub.add_parser("preflight")
@@ -1301,7 +1758,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     with_run("status")
     q = with_run("prompt-context")
-    q.add_argument("--stage", required=True, choices=["skeleton", "mca", "resolve"])
+    q.add_argument("--stage", required=True, choices=["skeleton", "reuse", "mca", "resolve"])
     q.add_argument("--k", type=int, default=5)
     for name in ("skeleton", "apply-candidates", "merge-resolved"):
         with_run(name).add_argument("--json", required=True)
@@ -1316,6 +1773,12 @@ def build_parser() -> argparse.ArgumentParser:
     with_run("set-stage").add_argument("--stage", required=True, choices=STAGES)
     with_run("show").add_argument("--gate", type=int, required=True, choices=[1, 2, 3, 4])
     with_run("summary")
+    with_run("next")
+    with_run("require").add_argument("--stage", required=True, choices=STAGE_NAMES)
+    q = with_run("begin")
+    q.add_argument("--stage", required=True, choices=STAGE_NAMES)
+    q.add_argument("--rewind", action="store_true")
+    with_run("end").add_argument("--stage", required=True, choices=["generate"])
     return p
 
 
@@ -1325,13 +1788,18 @@ COMMANDS = {
     "merge-resolved": cmd_merge_resolved, "check": cmd_check, "toposort": cmd_toposort,
     "approve": cmd_approve, "directive": cmd_directive, "set-cap": cmd_set_cap,
     "set-stage": cmd_set_stage, "show": cmd_show, "summary": cmd_summary,
+    "import": cmd_import, "next": cmd_next, "require": cmd_require, "begin": cmd_begin,
+    "end": cmd_end,
 }
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        result = COMMANDS[args.cmd](args)
+        # One lock per run around the whole command: every read-modify-write of
+        # state.json happens inside it.
+        with run_lock(getattr(args, "run", None) or "/nonexistent"):
+            result = COMMANDS[args.cmd](args)
     except (InputError, OSError, ValidationError) as e:
         print(json.dumps({"ok": False, "error": str(e)}))
         return 2

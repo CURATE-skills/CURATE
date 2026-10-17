@@ -71,7 +71,7 @@ class FunctionSpec(BaseModel):
     # Provenance for reused/adapted/cached nodes: where the code came from.
     # "catalog" → seeded/reused from a catalog function; "cache" → this workflow's
     # own genuinely-implemented prior code. origin_name is the source function name.
-    origin_kind: Optional[Literal["catalog", "cache"]] = None
+    origin_kind: Optional[Literal["catalog", "cache", "import"]] = None  # "import": curate-skills v2
     origin_name: Optional[str] = None
 
 

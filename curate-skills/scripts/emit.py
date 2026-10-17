@@ -32,6 +32,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from curate_models import WorkflowSpec, clean_dependencies
+from runstate import run_lock, spec_hash, write_json_atomic
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_CONTAINER = "ghcr.io/faasr/github-actions-python:latest"
@@ -507,9 +508,10 @@ def update_state(run: str | None, **fields) -> None:
     if not run:
         return
     path = Path(run) / "state.json"
-    state = json.loads(path.read_text())
-    state.update(fields)
-    path.write_text(json.dumps(state, indent=2) + "\n")
+    with run_lock(run):
+        state = json.loads(path.read_text())
+        state.update(fields)
+        write_json_atomic(path, state)
 
 
 def _print(obj: dict, names=()) -> int:
@@ -557,12 +559,14 @@ def main(argv=None) -> int:
         return _print({"ok": True, "external_inputs": external_inputs(spec)}, names)
     if args.cmd == "validate":
         result = validate(emit_faasr_json(spec), args.level)
-        update_state(args.run, validation={k: result[k] for k in ("ok", "level", "error")})
+        update_state(args.run, validation={**{k: result[k] for k in ("ok", "level", "error")},
+                                           "spec_hash": spec_hash(spec.model_dump(mode="json"))})
         return _print(result, names)
     result = write_bundle(spec, Path(args.out), args.level)
     if "bundle_dir" in result:
         update_state(args.run, bundle_dir=result["bundle_dir"], stage="gate4",
-                     validation={k: result["validation"][k] for k in ("ok", "level", "error")})
+                     validation={**{k: result["validation"][k] for k in ("ok", "level", "error")},
+                                 "spec_hash": spec_hash(spec.model_dump(mode="json"))})
     return _print(result, names)
 
 

@@ -232,7 +232,9 @@ def test_cli_bundle_updates_run_state(tmp_path, capsys, structural_only):
     assert code == 0 and out["ok"]
     state = json.loads((run / "state.json").read_text())
     assert state["bundle_dir"] == out["bundle_dir"]
-    assert state["validation"] == {"ok": True, "level": "structural", "error": None}
+    v = state["validation"]
+    assert {k: v[k] for k in ("ok", "level", "error")} == {"ok": True, "level": "structural", "error": None}
+    assert v["spec_hash"]  # v2: records which spec the bundle was built from
     assert state["stage"] == "gate4"
 
 

@@ -1,0 +1,17 @@
+{
+  "name": "mapreduce_word_count",
+  "description": "MapReduce word counting benchmark: generate text, split into N=3 batches, N parallel mappers, shuffle (flatten), M=5 parallel reducers.",
+  "nodes": [
+    {"name": "generate_text", "description": "Generate the benchmark input text of W=5000 total words. For the input text generation, use [cat, dog, bird, horse, pig], each distributed evenly and shuffled randomly (M=5 different words, 1000 occurrences each). This is the only vocabulary-specific step.", "rank": 1},
+    {"name": "split", "description": "The split function partitions the input text into N batches (N=3, the number of mapping functions). Must work for any input text, vocabulary size and word frequency.", "rank": 1},
+    {"name": "map", "description": "N parallel map functions (N=3) count how often each word occurs in their text chunk; each ranked instance processes the batch matching its rank and yields Y_i. Must be fully generalizable to vocabularies of any size and frequency (no hard-coded words).", "rank": 3},
+    {"name": "shuffle", "description": "Shuffle flattens the resulting array Y_i of per-mapper word counts. The available workflow primitives necessitate the shuffle function, not relying on the array Y_i itself but flattening it to enable the desired level of parallelism in reduce: it groups the mapper partial counts by word and partitions the distinct words across the M reducers. Must be fully generalizable to vocabularies of any size and frequency.", "rank": 1},
+    {"name": "reduce", "description": "M reducers (M=5) count the total occurrences of their respective word(s) in parallel, yielding Z_i. Each ranked instance sums the partial counts for the word partition assigned to its rank. Must be fully generalizable to vocabularies of any size and frequency (works if the number of distinct words differs from M).", "rank": 5}
+  ],
+  "edges": [
+    {"from_node": "generate_text", "to_node": "split"},
+    {"from_node": "split", "to_node": "map"},
+    {"from_node": "map", "to_node": "shuffle"},
+    {"from_node": "shuffle", "to_node": "reduce"}
+  ]
+}

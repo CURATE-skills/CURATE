@@ -41,6 +41,7 @@ import sys
 from pathlib import Path
 
 from curate_models import FunctionSpec, WorkflowSpec, clean_dependencies
+from runstate import node_basis, run_lock
 from spec import InputError, load_state, save_state, spec_of, dump, topo_order
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -464,6 +465,16 @@ def cmd_unlock(args) -> dict:
         raise InputError("pass --run or --project-dir")
     lp = lock_path(project)
     existed = lp.exists()
+    if existed and args.run:
+        # Only this run's lock: another run's subagent may still be working.
+        try:
+            held = json.loads(lp.read_text()).get("run_id")
+        except (OSError, ValueError):
+            held = None
+        mine = load_state(Path(args.run))["run_id"]
+        if held and held != mine:
+            return {"ok": True, "removed": False, "held_by": held,
+                    "note": f"the MGA lock belongs to run {held}; left in place"}
     lp.unlink(missing_ok=True)
     return {"ok": True, "removed": existed}
 
@@ -585,6 +596,7 @@ def cmd_harvest(args) -> dict:
                          "dependencies": n.dependencies, "deps_file": deps_file.exists()}
         nodes.append(n)
     s["spec"] = dump(wf.model_copy(update={"nodes": nodes}))
+    s["validation"] = None  # the code changed, so any earlier bundle no longer matches
     save_state(run, s)
     return {"ok": True, "node": args.node, **harvested}
 
@@ -602,6 +614,9 @@ def cmd_record(args) -> dict:
     entry["last_output_tail"] = log.read_text()[-6000:] if log.exists() else ""
     if args.note:
         entry["note"] = args.note
+    node = next((n for n in (s.get("spec") or {}).get("nodes", []) if n["name"] == args.node), None)
+    if node is not None:
+        entry["basis"] = node_basis(node)  # lets emit detect a spec change after generation
     save_state(run, s)
     return {"ok": True, "node": args.node, "status": args.status, "attempts": entry.get("attempts", 0)}
 
@@ -632,7 +647,8 @@ def main(argv=None) -> int:
                 "snapshot": cmd_snapshot, "verify-writes": cmd_verify_writes,
                 "harvest": cmd_harvest, "record": cmd_record}
     try:
-        result = commands[args.cmd](args)
+        with run_lock(getattr(args, "run", None) or "/nonexistent"):
+            result = commands[args.cmd](args)
     except (InputError, OSError, json.JSONDecodeError) as e:
         print(json.dumps({"ok": False, "error": str(e)}))
         return 2

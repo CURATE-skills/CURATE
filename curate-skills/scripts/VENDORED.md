@@ -12,7 +12,7 @@ Status: `planned` until the file exists; then `vendored`.
 
 | Script | Source file(s) | Lines | Changes | Status |
 |---|---|---|---|---|
-| `curate_models.py` | `models.py` | 8-67, 96-135, 157-163 | Drop `UsageRecord`; reduce `UserModel`/`ContextFile` to `{name, path, description}` | vendored |
+| `curate_models.py` | `models.py` | 8-67, 96-135, 157-163 | Drop `UsageRecord`; reduce `UserModel`/`ContextFile` to `{name, path, description}`; v2: `origin_kind` also accepts `"import"` | vendored |
 | `emit.py` | `faasr/emit.py`; `agents/wda.py` | 1-218; 15-53 | CLI wrapper; unset `FAASR_*` deployment vars emitted as `<FAASR_NAME>` placeholders (original: `username`, `faasr-functions`, `faasr-data`, AWS defaults); bundle writer adds `spec.json`, `external_inputs.json`, `README.md`, `.deps.txt` and refuses to write if a known secret value appears; structural fallback validator | vendored |
 | `faasr_validate.py` | `faasr/validate.py` | 1-45 | Standalone PEP 723 script with its own `FaaSr_py==0.1.13` env (which pins `boto3==1.37.11`; the original's boto3 override was only for Bedrock); JSON in, JSON out | vendored |
 | `catalog.py` | `catalog/store.py`; `catalog/workflow_store.py`; `orchestrator.py` | 20-84; 1-63; 173-226 | Configurable root (`functions/`, `workflows/` subdirs); CLI; `--only-verified`; import/export | vendored |
@@ -63,6 +63,10 @@ Replaces the FGA's single temporary context directory with one folder per node, 
 | `extract_secrets`, `read_reported_deps` | Secrets from `faasr_secret("X")`; deps from `<node>.deps.txt` | `agents/fga.py` 957-981 | copy |
 | `cmd_harvest` | Put generated code, secrets and deps back into the spec | `agents/fga.py` 927-947 | follows |
 | `cmd_record` | Record MGA status, attempts and the stub-test tail | — | new |
+
+### `scripts/runstate.py` (v2)
+
+Run lock (`fcntl.flock` on `<run>/state.lock`), atomic JSON writes, and the input hashes stages record (`spec_hash`, `node_basis`). New; no counterpart in the original.
 
 ### `hooks/mga_guard.py`
 
