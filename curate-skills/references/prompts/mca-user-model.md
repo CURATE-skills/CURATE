@@ -3,7 +3,7 @@
 Adapted from CURATE-prototype `prompts/fca_prompts.py` `FCA_USER_MODEL_PROMPT`
 (MIT, Copyright (c) 2026 Nolan Cutler; see NOTICE).
 
-For a node whose `user_model` is set (from `prompt-context --stage mca`), read the model file
+For a node whose `user_model` is set (from `prompt-context --stage reuse`), read the model file
 at `user_model.path` (first ~200 lines are enough) and decide. Record the answer in that
 node's `candidates.json` entry as `"decision": "new", "user_model_mode": "verbatim"|"adapt"`.
 

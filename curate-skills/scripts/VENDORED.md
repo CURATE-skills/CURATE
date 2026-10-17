@@ -76,13 +76,13 @@ PreToolUse write-scope guard for `curate-mga` subagents. New; no counterpart in 
 
 | Plugin file | Source |
 |---|---|
-| `skills/curate/references/wca-system.md` | `prompts/wca_prompts.py` 1-45 (`WCA_SYSTEM`) |
-| `skills/curate/references/classify.md` | `prompts/wca_prompts.py` 47-66 (`WCA_CHANGE_CLASSIFY_PROMPT`) |
-| `skills/curate/references/wca-skeleton.md` | `prompts/wca_prompts.py` 68-115 (`WCA_SKELETON_PROMPT`) |
-| `skills/curate/references/wca-resolve.md` | `prompts/wca_prompts.py` 117-208 (`WCA_RESOLVE_PROMPT`) |
-| `skills/curate/references/mca-candidates.md` | `prompts/fca_prompts.py` 1-108 (`FCA_SYSTEM`, `FCA_CANDIDATE_PROMPT`) |
-| `skills/curate/references/mca-user-model.md` | `prompts/fca_prompts.py` 111-147 (`FCA_USER_MODEL_PROMPT`) |
-| `skills/curate/references/mga-spawn.md` | `agents/fga.py` 700-763 (`_turn_prompt`) |
+| `references/prompts/wca-system.md` | `prompts/wca_prompts.py` 1-45 (`WCA_SYSTEM`) |
+| `references/prompts/classify.md` | `prompts/wca_prompts.py` 47-66 (`WCA_CHANGE_CLASSIFY_PROMPT`) |
+| `references/prompts/wca-skeleton.md` | `prompts/wca_prompts.py` 68-115 (`WCA_SKELETON_PROMPT`) |
+| `references/prompts/wca-resolve.md` | `prompts/wca_prompts.py` 117-208 (`WCA_RESOLVE_PROMPT`) |
+| `references/prompts/mca-candidates.md` | `prompts/fca_prompts.py` 1-108 (`FCA_SYSTEM`, `FCA_CANDIDATE_PROMPT`) |
+| `references/prompts/mca-user-model.md` | `prompts/fca_prompts.py` 111-147 (`FCA_USER_MODEL_PROMPT`) |
+| `references/prompts/mga-spawn.md` | `agents/fga.py` 700-763 (`_turn_prompt`) |
 | `agents/curate-mga.md` | `agents/fga.py` 71-157 (`_SHARED_RULES`) |
 | `skills/faasr-reference/SKILL.md` | `faasr/context_dir.py` 251-357 (`_shared_context_md`), 403-436 (rank rules) |
 | `scratch.py` templates (`CONTEXT.md`, `spec.md`) | `faasr/context_dir.py` 251-569 |

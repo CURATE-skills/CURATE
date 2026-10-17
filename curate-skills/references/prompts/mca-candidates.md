@@ -6,7 +6,7 @@ Nolan Cutler; see NOTICE). The original's "FCA" is the paper's MCA.
 
 ## Inputs
 
-Run `spec.py prompt-context --run <run> --stage mca`. It returns `workflow_context`,
+Run `spec.py prompt-context --run <run> --stage reuse`. It returns `workflow_context`,
 `feedback` (standing change requests) and one entry per node with `name`, `description`,
 `inputs`, `outputs`, `catalog_matches` (BM25 top-5 lines, `[id] name: description |
 inputs=[..] | outputs=[..]`), `prior_implementation` and `user_model`.

@@ -2,19 +2,21 @@
 
 A run lives in `<project>/.curate/runs/<run_id>/`. Only the scripts write `state.json`.
 
-## state.json (schema_version 1)
+## state.json (schema_version 2; v1 runs are refused)
 
 | Field | Meaning |
 |---|---|
 | `run_id`, `run_dir`, `project_dir`, `created` | identity |
 | `catalog_dir`, `mga_max_retries`, `stubtest_mode` | settings pinned at `init` |
 | `user_request`, `user_models`, `context_files` | the sketch and attachments |
-| `stage`, `iteration`, `max_iterations` | where the loop is |
+| `stage`, `iteration`, `max_iterations` | where the run is (`skeleton`, `gate1`, `reuse`, `resolve`, `gate2`, `generate`, `gate3`, `emit`, `gate4`, `finalize`, `done`, `stopped`) and how many revision rounds were used |
+| `begun`, `stopped_from` | which stage was started (for resume); where a stopped run stopped |
 | `revision_directives`, `feedback`, `code_feedback`, `structural_change` | change requests; directives persist across rounds |
 | `skeleton_draft` | Gate 1 draft: `spec`, `last_good`, `parse_error`, `refinement` |
 | `spec`, `prior_spec`, `spec_is_seed` | approved WorkflowSpec; prior code-bearing spec for `[cached]` |
 | `enriched_spec`, `candidates`, `repairs` | MCA results and automatic repairs |
 | `mga`, `validation`, `bundle_dir`, `history` | generation, emit and decision history |
+| `enriched_basis`, `spec_basis`, `mga[n].basis`, `validation.spec_hash` | input hashes: what each result was built from, so a later stage can tell it is out of date |
 
 ## Files you write in `work/`
 

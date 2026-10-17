@@ -25,9 +25,9 @@ Below, `spec.py ...` is shorthand for the first line. Exit 0 = ok, 1 = needs att
 (read the JSON), 2 = bad input (fix what you wrote, then re-run).
 
 References (read each when its stage starts, not all up front):
-`references/wca-system.md`, `references/wca-skeleton.md`, `references/mca-candidates.md`,
-`references/mca-user-model.md`, `references/wca-resolve.md`, `references/classify.md`,
-`references/mga-spawn.md`, `references/gates.md`, `references/state-contract.md`.
+`${CLAUDE_PLUGIN_ROOT}/references/prompts/wca-system.md`, `${CLAUDE_PLUGIN_ROOT}/references/prompts/wca-skeleton.md`, `${CLAUDE_PLUGIN_ROOT}/references/prompts/mca-candidates.md`,
+`${CLAUDE_PLUGIN_ROOT}/references/prompts/mca-user-model.md`, `${CLAUDE_PLUGIN_ROOT}/references/prompts/wca-resolve.md`, `${CLAUDE_PLUGIN_ROOT}/references/prompts/classify.md`,
+`${CLAUDE_PLUGIN_ROOT}/references/prompts/mga-spawn.md`, `${CLAUDE_PLUGIN_ROOT}/references/gates.md`, `${CLAUDE_PLUGIN_ROOT}/references/state-contract.md`.
 
 ## 0. Start or resume
 
@@ -35,7 +35,7 @@ Arguments: `$ARGUMENTS`
 
 - `--resume <run_id>`: find the run with `spec.py runs`, run `scratch.py unlock --run <run>`
   (clears a stale lock), read `spec.py status --run <run>` and continue at its `stage`
-  (table in `references/gates.md`).
+  (table in `${CLAUDE_PLUGIN_ROOT}/references/gates.md`).
 - Otherwise the remaining text is the sketch. If there is none, ask the user for it.
   Write the sketch verbatim to a temp file and create the run:
 
@@ -55,7 +55,7 @@ treats it as unset) instead of being expanded by the shell. Map `--attach` → `
 
 ## 1. Skeleton → Gate 1
 
-1. Read `references/wca-system.md` and `references/wca-skeleton.md`.
+1. Read `${CLAUDE_PLUGIN_ROOT}/references/prompts/wca-system.md` and `${CLAUDE_PLUGIN_ROOT}/references/prompts/wca-skeleton.md`.
 2. `spec.py prompt-context --run <run> --stage skeleton`; write `work/skeleton.json`.
 3. `spec.py skeleton --run <run> --json <run>/work/skeleton.json`. If it reports a parse
    error, fix the file and re-run.
@@ -67,14 +67,14 @@ treats it as unset) instead of being expanded by the shell. Map `--attach` → `
 
 ## 2. Resolve → Gate 2
 
-1. Read `references/mca-candidates.md` (and `mca-user-model.md` if any node has a user model).
+1. Read `${CLAUDE_PLUGIN_ROOT}/references/prompts/mca-candidates.md` (and `mca-user-model.md` if any node has a user model).
 2. `spec.py prompt-context --run <run> --stage mca`; decide every node; write
    `work/candidates.json`; `spec.py apply-candidates ...`. Mention any `notes` it returns.
-3. Read `references/wca-resolve.md`; `spec.py prompt-context --run <run> --stage resolve`;
+3. Read `${CLAUDE_PLUGIN_ROOT}/references/prompts/wca-resolve.md`; `spec.py prompt-context --run <run> --stage resolve`;
    write `work/resolved.json`; `spec.py merge-resolved ...`. One fix pass on `error` problems.
 4. **Gate 2**: `spec.py show --run <run> --gate 2`, print its `markdown` exactly, then ask.
    - Approve → `spec.py approve --run <run> --gate 2` → step 3.
-   - Changes → classify with `references/classify.md`, then
+   - Changes → classify with `${CLAUDE_PLUGIN_ROOT}/references/prompts/classify.md`, then
      `spec.py directive --run <run> --gate 2 --text "<verbatim>" --structural true|false`;
      go to step 1.2 if `next_stage` is `skeleton`, else step 2.
 
@@ -82,14 +82,14 @@ treats it as unset) instead of being expanded by the shell. Map `--attach` → `
 
 1. `spec.py preflight`. If it fails, `spec.py set-stage --run <run> --stage generate`, show
    its error, and stop: the user must relaunch with the variable set, then resume.
-2. Read `references/mga-spawn.md` and follow it exactly.
+2. Read `${CLAUDE_PLUGIN_ROOT}/references/prompts/mga-spawn.md` and follow it exactly.
 3. `scratch.py build --run <run>` (add `--resume` when resuming at `stage: generate`), then
    handle each node in the returned `order`, one at a time, per `mga-spawn.md`.
 4. **Gate 3**: `spec.py set-stage --run <run> --stage gate3`, then
    `spec.py show --run <run> --gate 3`, print its `markdown` exactly, and ask.
    If the user wants to see code, Read `<run>/functions/<N>/<N>.py` and show it.
    - Approve → `spec.py approve --run <run> --gate 3` → step 4.
-   - Changes → classify with `references/classify.md`, then
+   - Changes → classify with `${CLAUDE_PLUGIN_ROOT}/references/prompts/classify.md`, then
      `spec.py directive --run <run> --gate 3 --text "<verbatim>" --structural true|false`;
      `skeleton` → step 1.2, `resolve` → step 2 (unchanged functions come back `[cached]`).
 
