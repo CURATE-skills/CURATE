@@ -34,6 +34,9 @@ Claude Code 2.1.299 for every run.
 | 11 | 2026-10-17 | v2-files V2 checks: skeleton / reuse / resolve from imports, wrong-order start | claude-opus-5-5 | headless, 4 sessions | one stage each | 0.286 + 0.330 + 0.334 + 0.103 = 1.053 | 35 | 0 |
 | 12 | 2026-10-17 | v2-files: Gate 3 functional revision across 4 separate sessions | claude-opus-5-5 | headless, 4 sessions, 6 turns | generate → reuse → resolve → generate | 1.666 | 60 | 0 |
 | 13 | 2026-10-17 | v2-files: first /curate end to end (E2, reconstructed prompt) | claude-opus-5-5 | headless, 1 session, 6 turns | all six stages | 2.920 | 70 | 0 |
+| 14 | 2026-10-17 | V4: E2 via /curate (v2-files) | claude-opus-5-5 | headless, 1 session, 6 turns | all six stages | 2.831 | 69 | 0 |
+| 15 | 2026-10-17 | V4: E2 stage by stage, one session per stage (v2-files) | claude-opus-5-5 | headless, 6 sessions, 11 turns | all six stages | 3.063 | 86 | 0 |
+| 16 | 2026-10-17 | V4: fresh-session baseline (plugin loaded, one-word reply) | claude-opus-5-5 | headless, 2 sessions | — | 0.066 + 0.004 | 2 | — |
 
 ## Open items
 
@@ -277,3 +280,71 @@ fixtures from `curate-skills/tests/fixtures/e2-stages/` (from run #6).
 - Guard log: 5 spawns, one at a time, 0 denials.
 - Compared with v1 on the same prompt (runs #6 + #7: $2.369 + $0.293 = $2.662, 65 turns):
   v2-files $2.920, 70 turns. One run each; not a measured difference.
+
+## 14–16. V4: E2 on v2-files via /curate and stage by stage (commit `ee64eda`)
+
+Reconstructed E2 prompt; each run in its own project with an empty catalog; retries 3, strict;
+every gate answered `approve`, Gate 5 `Save both`. Both runs ran at the same time.
+
+### 14. Via /curate (one session `6b7e8639-c29f-49c0-8fbb-36cbf41ae99a`)
+
+| Stage | Turn | Cost (USD) | Turns | Wall (s) |
+|---|---|---|---|---|
+| sketch → skeleton → Gate 1 | 1 | 0.331 | 13 | 41 |
+| approve → reuse → resolve → Gate 2 | 2 | 0.456 | 15 | 69 |
+| approve → generate (5 spawns) → Gate 3 | 3 | 1.548 | 26 | 255 |
+| approve → emit → Gate 4 | 4 | 0.225 | 8 | 29 |
+| approve → finalize: summary + preview | 5 | 0.167 | 5 | 21 |
+| `Save both` → done | 6 | 0.104 | 2 | 12 |
+| **Total** | | **2.831** | **69** | **426** |
+
+### 15. Stage by stage (one fresh session per stage skill; gate answered by resuming it)
+
+| Stage skill session | Session | First turn (USD) | Gate answer (USD) | Stage total (USD) | Turns | Wall (s) |
+|---|---|---|---|---|---|---|
+| skeleton | `81c6b133-9d6c-4a19-b204-f0d7bd3c2b40` | 0.282 | 0.052 | 0.334 | 12 | 37 |
+| reuse | `a2cd200b-066b-4d99-a1d7-405c09fed607` | 0.290 | — | 0.290 | 10 | 39 |
+| resolve | `4d18c77b-96c9-4862-b34a-9b96a85e94bc` | 0.332 | 0.050 | 0.382 | 13 | 44 |
+| generate | `b34a0f73-42dd-4da3-8c01-23d10e2db235` | 1.521 | 0.058 | 1.579 | 30 | 269 |
+| emit | `c884b960-7011-4a3f-87d4-7b5e46bb6cc8` | 0.174 | 0.058 | 0.233 | 11 | 23 |
+| finalize | `2d168f11-4c9b-444f-a45b-02f7cf768d07` | 0.152 | 0.093 | 0.245 | 10 | 28 |
+| **Total** | | | | **3.063** | **86** | **441** |
+
+### 16. Startup cost of a fresh session
+
+A fresh headless session with the plugin loaded, asked to reply `OK`: **$0.066**
+the first time (prompt cache cold) and **$0.004** right after (cache warm).
+Stage by stage used 5 more sessions than /curate, so the pure startup share is about
+$0.02–0.33 of the difference; the rest is each session re-reading its stage file, `gates.md`
+and prompts, and finding the run.
+
+### Comparison (single runs; observations, not measured differences)
+
+| | v1 /curate (#6 + #7) | v2-files /curate (#13) | v2-files /curate (#14) | v2-files stage by stage (#15) |
+|---|---|---|---|---|
+| Cost (USD) | 2.662 | 2.920 | 2.831 | 3.063 |
+| Turns | 65 | 70 | 69 | 86 |
+| Functions generated | 5 | 5 | 5 | 5 |
+| Stub tests (attempt 1) | 5/5 | 5/5 | 5/5 | 5/5 |
+| Reducer counts | 1000 each | 1000 each | 1000 each | 1000 each |
+| FaaSr_py validation | passed | passed | passed | passed |
+| Saved to catalog | 5 + workflow | 5 + workflow | 5 + workflow | 5 + workflow |
+
+- Stage order (transcripts): #14 skeleton → reuse → resolve → generate → emit → finalize, with
+  `spec.py next` before each stage after the first; #15 each session ran only its own stage
+  and stopped with the next skill named. No Skill tool calls, no unprompted or wrong starts,
+  no stage skipped or repeated in either run.
+- Guard: 5 spawns each, one at a time; 0 denials.
+- Stage by stage cost +8% vs /curate in this pair of runs; turns +17.
+
+### Line counts (v1 tag vs v2-files, `experiments/tools/line_counts.py --compare`)
+
+| Bucket | v1 | v2-files | Change |
+|---|---|---|---|
+| `spec.py` alone | 1,343 | 1,816 | +473 |
+| Vendored Python | 1,537 | 1,541 | +4 |
+| Ported/new Python (`spec`, `scratch`, `runstate`, hook) | 2,256 | 2,804 | +548 |
+| **Python total** | **3,793** | **4,345** | **+552** |
+| Tests | 1,467 | 1,902 | +435 |
+| Skill, stage and reference text | 1,058 | 1,369 | +311 |
+| **All** | **6,318** | **7,616** | **+1,298** |

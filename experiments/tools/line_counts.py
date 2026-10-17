@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Line counts for curate-skills vs the CURATE prototype.
 
-Usage: python3 experiments/tools/line_counts.py [--json]
+Usage: python3 experiments/tools/line_counts.py [--json] [--plugin DIR] [--compare DIR]
+
+--plugin counts another checkout (default: this repo's curate-skills); --compare prints
+bucket totals for both, e.g. --plugin ../curate-v1/curate-skills --compare curate-skills.
 
 For every plugin file: total, blank, comment and code lines. For files derived from
 the prototype, code (or prose) lines are split into "copied" and "added": the file's
@@ -32,7 +35,7 @@ PORTED = {
     "scripts/spec.py": ["agents/wca.py", "agents/fca.py", "faasr/context_dir.py", "orchestrator.py"],
     "scripts/scratch.py": ["faasr/context_dir.py", "agents/fga.py"],
 }
-NEW = ["hooks/mga_guard.py", "hooks/hooks.json"]
+NEW = ["scripts/runstate.py", "hooks/mga_guard.py", "hooks/hooks.json"]  # missing files are skipped
 PROMPT_SOURCES = ["prompts/wca_prompts.py", "prompts/fca_prompts.py", "prompts/wda_prompts.py",
                   "agents/fga.py", "faasr/context_dir.py"]
 # The prototype code that the plugin's pieces replace, for comparison.
@@ -85,6 +88,8 @@ def copied(body, src):
 
 
 def row(rel, sources=None, markdown=False):
+    if not (PLUGIN / rel).exists():
+        return None
     c = classify(PLUGIN / rel)
     r = {"file": rel, "total": c["total"], "blank": c["blank"], "comment": c["comment"],
          "code": len(c["body"])}
@@ -105,17 +110,48 @@ def count_original(rel_paths):
     return {"total": total, "code": code}
 
 
-def main():
-    report = {
-        "vendored": [row(k, v) for k, v in VENDORED.items()],
-        "ported_new": [row(k, v) for k, v in PORTED.items()] + [row(k) for k in NEW],
-        "tests": [row(str(p.relative_to(PLUGIN))) for p in sorted((PLUGIN / "tests").glob("*.py"))],
-        "skills_prompts": [row(str(p.relative_to(PLUGIN)), PROMPT_SOURCES, markdown=True)
-                           for p in sorted(list((PLUGIN / "skills").rglob("*.md"))
-                                           + [PLUGIN / "agents" / "curate-mga.md"])],
+def build_report():
+    text_files = sorted(list((PLUGIN / "skills").rglob("*.md")) + list((PLUGIN / "references").rglob("*.md"))
+                        + [PLUGIN / "agents" / "curate-mga.md"])
+    rows = lambda xs: [r for r in xs if r]
+    return {
+        "vendored": rows(row(k, v) for k, v in VENDORED.items()),
+        "ported_new": rows([row(k, v) for k, v in PORTED.items()] + [row(k) for k in NEW]),
+        "tests": rows(row(str(p.relative_to(PLUGIN))) for p in sorted((PLUGIN / "tests").glob("*.py"))),
+        "skills_prompts": rows(row(str(p.relative_to(PLUGIN)), PROMPT_SOURCES, markdown=True)
+                               for p in text_files),
         "original": {k: count_original(v) for k, v in ORIGINAL_GROUPS.items()},
         "original_all": count_original(["."]),
     }
+
+
+def totals(report):
+    out = {}
+    for section in ("vendored", "ported_new", "tests", "skills_prompts"):
+        out[section] = {k: sum(r.get(k, 0) for r in report[section])
+                        for k in ("total", "code", "copied", "added")}
+    out["python_total"] = out["vendored"]["total"] + out["ported_new"]["total"]
+    out["all_total"] = out["python_total"] + out["tests"]["total"] + out["skills_prompts"]["total"]
+    return out
+
+
+def main():
+    global PLUGIN
+    args = sys.argv[1:]
+    if "--plugin" in args:
+        PLUGIN = Path(args[args.index("--plugin") + 1]).resolve()
+    if "--compare" in args:
+        other = Path(args[args.index("--compare") + 1]).resolve()
+        first, PLUGIN_A = totals(build_report()), PLUGIN
+        PLUGIN = other
+        second = totals(build_report())
+        print(f"bucket | {PLUGIN_A} | {other}")
+        for k in ("vendored", "ported_new", "tests", "skills_prompts"):
+            print(f"{k} (total lines) | {first[k]['total']} | {second[k]['total']}")
+        for k in ("python_total", "all_total"):
+            print(f"{k} | {first[k]} | {second[k]}")
+        return
+    report = build_report()
     if "--json" in sys.argv:
         print(json.dumps(report, indent=2))
         return

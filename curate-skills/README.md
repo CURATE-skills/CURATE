@@ -5,18 +5,25 @@ Automated Task Execution* (Cutler, Kuo, Velugoti, Newhart, Figueiredo; arXiv 260
 skills, one subagent and a few small scripts, instead of the prototype's LangGraph code.
 
 You describe a scientific workflow in plain language. Claude Code turns it into a FaaSr
-serverless workflow, stopping at human approval gates:
+serverless workflow in six stages, stopping at human approval gates. Run them all with
+`/curate`, or run any stage on its own with its stage skill (v2):
 
-| Stage | Who | Gate |
-|---|---|---|
-| Skeleton: the steps and their order | Claude (as CURATE's WCA) | **1** |
-| Resolve: reuse from the catalog, concrete files and data flow | Claude (as the MCA and WCA) | **2** |
-| Generate: one function at a time, tested locally against FaaSr stubs | a `curate-mga` subagent per function | **3** |
-| Emit: FaaSr `workflow.json` + functions, validated with FaaSr_py | scripts | **4** |
-| Finalize: summary, then save verified functions to the catalog | `wda-finalize` | **5** |
+| Stage skill | Does | Who | Ends at |
+|---|---|---|---|
+| `curate-skeleton` | the steps and their order | Claude (as CURATE's WCA) | Gate **1** |
+| `curate-reuse` | catalog search; reuse / adapt / cached / new per function | Claude (as the MCA) | shows decisions |
+| `curate-resolve` | concrete files, data flow, packages | Claude (as the WCA) | Gate **2** |
+| `curate-generate` | one function at a time, tested locally against FaaSr stubs | a `curate-mga` subagent per function | Gate **3** |
+| `curate-emit` | FaaSr `workflow.json` + functions, validated with FaaSr_py | scripts | Gate **4** |
+| `wda-finalize` | summary, then save verified functions to the catalog | Claude | Gate **5** |
 
-**v1 does not deploy.** It stops at a validated bundle in `faasr_output/<workflow>/`; deploying
+**It does not deploy.** It stops at a validated bundle in `faasr_output/<workflow>/`; deploying
 to GitHub Actions and monitoring the run are not implemented.
+
+**Versions.** v1 (git tag `v1`) has one `/curate` skill. v2 (branch `v2-files`) splits it into
+the stage skills above; the stage procedures live once in `references/stages/` and both
+`/curate` and the stage skills follow them. v2 cannot continue a run started with v1 (use the
+v1 plugin for those).
 
 ## Requirements
 
@@ -37,8 +44,9 @@ Claude Code with `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, for example with a sh
 alias curate='CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude --plugin-dir /absolute/path/to/curate-skills'
 ```
 
-Use an absolute path so the alias works from any folder. `/curate` checks for the variable
-before generating (`spec.py preflight`) and stops with instructions if it is missing.
+Use an absolute path so the alias works from any folder. The generate stage checks for the
+variable before spawning anything and stops with instructions if it is missing (not needed
+when every function is reused).
 
 That variable also turns off, for the whole session: background Bash commands
 (`run_in_background`), automatic backgrounding of long commands, and Ctrl+B. Use a separate
@@ -54,13 +62,34 @@ Open items.
 /curate-skills:curate <workflow sketch> [--catalog DIR] [--attach model.py] [--context FILE]
                       [--mga-retries N] [--stubtest-mode strict|parity]
 /curate-skills:curate --resume <run_id>
+/curate-skills:curate --from <file> --stage <stage> [...]
+
+/curate-skills:curate-skeleton --from <sketch> | <sketch text> | --run <run_id>
+/curate-skills:curate-reuse    --from <skeleton.json> | --run <run_id>
+/curate-skills:curate-resolve  --from <skeleton.json> --candidates <candidates.json> | --run <run_id>
+/curate-skills:curate-generate --from <spec.json> [--functions DIR --functions-as reuse|seed] | --run <run_id>
+/curate-skills:curate-emit     --from <spec.json> [--functions DIR] | --run <run_id>
+/curate-skills:wda-finalize    [--run <run_id>]
+
 /curate-skills:curate-catalog where | list | search <q> | init | import <path> | export <dir>
-/curate-skills:wda-finalize [run_id]          (normally called by /curate after Gate 4)
 ```
 
 At each gate, approve, stop, or type the changes you want. Changes at Gates 2–4 are classified
-as structural (back to the skeleton) or functional (back to resolve; working functions come
-back as `[cached]`). After 5 revision rounds /curate asks before looping again.
+as structural (back to the skeleton) or functional (back to reuse; working functions come
+back as `[cached]`). Each change request counts as one revision round; at the cap (5) nothing
+is changed until you approve as-is, stop, or raise the cap.
+
+**Running stages separately.** A stage skill stops after its gate and prints the next one to
+run, e.g. `Next: /curate-skills:curate-reuse --run <run_id>`; `/curate` instead carries on by
+itself. Every stage first checks what it needs and, if something is missing or out of date,
+says which earlier stage produces it — including "approve Gate N first" when the run is still
+waiting at an earlier gate. Going back to an earlier stage needs `--rewind` in the stage's
+`spec.py begin` (it counts as a revision round and keeps working code as `[cached]`).
+
+**Starting from your own files** (`--from`): an imported file counts as approved; add
+`--review` to see the gate before the stage first. Accepted formats per stage, and why a FaaSr
+`workflow.json` is not enough to start from, are in `references/stage-io.md`. Code you bring
+counts as verified only after it has been stub-tested at generate (`--functions-as reuse`).
 
 - `--attach model.py`: your own Python script or function becomes a workflow step, wrapped
   verbatim (or adapted, if you ask for changes to it) and checked for output parity.
