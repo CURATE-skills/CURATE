@@ -107,8 +107,15 @@ def test_require_generate_preflight_only_when_generating(make_run, capsys, monke
 def test_begin_refuses_before_the_stage_is_reached(make_run, capsys):
     run = make_run(stage="gate2", spec=resolved_spec())
     code, out = call(S, ["begin", "--run", str(run), "--stage", "generate"], capsys)
-    assert code == 1 and out["mode"] == "refused" and "has not reached generate" in out["error"]
-    assert "curate-resolve" in out["error"] and state(run)["stage"] == "gate2"
+    rid = state(run)["run_id"]
+    assert code == 1 and out["mode"] == "refused" and out["error"] == (
+        "the run has not reached generate yet: it is waiting at Gate 2. Approve Gate 2 first: "
+        f"/curate-skills:curate-resolve --run {rid}")
+    assert state(run)["stage"] == "gate2"
+    run = make_run(stage="reuse", spec=resolved_spec())
+    code, out = call(S, ["begin", "--run", str(run), "--stage", "resolve"], capsys)
+    assert out["error"].endswith("it is at stage reuse. Run "
+                                 f"/curate-skills:curate-reuse --run {state(run)['run_id']} first")
 
 
 def test_begin_fresh_clears_downstream_and_resume_keeps(make_run, capsys):

@@ -1,7 +1,7 @@
 ---
 name: curate-resolve
 description: CURATE stage 3 of 6 — make the skeleton concrete — files, data flow, packages — and stop at Gate 2. Run it by name; /curate runs it as part of the full pipeline.
-argument-hint: "--run <run_id> | --from <file> --candidates <file> [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity]"
+argument-hint: "--run <run_id> | --from <skeleton.json> --candidates <file> [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity]"
 disable-model-invocation: true
 allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*)
 ---
@@ -31,7 +31,7 @@ Arguments: `$ARGUMENTS`
 ## 2. Begin
 
 `spec.py begin --run <run> --stage resolve`. If `ok` is false, show the `error` exactly — it
-names the skill to run instead — and stop. Otherwise note the `mode` (fresh, resume or rewind).
+names what to do instead — and stop. Otherwise note the `mode` (fresh, resume or rewind).
 
 ## 3. Do the stage
 

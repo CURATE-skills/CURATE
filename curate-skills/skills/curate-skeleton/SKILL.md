@@ -1,7 +1,7 @@
 ---
 name: curate-skeleton
 description: CURATE stage 1 of 6 — turn a workflow sketch into a skeleton (the steps and their order) and stop at Gate 1. Run it by name; /curate runs it as part of the full pipeline.
-argument-hint: "--run <run_id> | --from <file> [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity] | <sketch text>"
+argument-hint: "--run <run_id> | --from <sketch> | <sketch text> [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity]"
 disable-model-invocation: true
 allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*)
 ---
@@ -26,13 +26,14 @@ Arguments: `$ARGUMENTS`
   Keep the `--config-*` values in single quotes exactly as written. Map `--catalog` →
   `--catalog-dir`, `--attach` → `--user-model`, `--context` → `--context-file`. Tell the user the
   run id, the settings and any `warnings`. Accepted files: `${CLAUDE_PLUGIN_ROOT}/references/stage-io.md`.
-- Plain text and no flags: it is the sketch. Write it verbatim to `.curate/sketches/<short-name>.txt` and import that file as above.
+- Plain text and no flags: it is the sketch. Write it verbatim to
+  `.curate/sketches/<short-name>.txt` and import that file as above.
 - Neither: ask for `--run` or `--from`. On exit 2, show the `error` exactly and stop.
 
 ## 2. Begin
 
 `spec.py begin --run <run> --stage skeleton`. If `ok` is false, show the `error` exactly — it
-names the skill to run instead — and stop. Otherwise note the `mode` (fresh, resume or rewind).
+names what to do instead — and stop. Otherwise note the `mode` (fresh, resume or rewind).
 
 ## 3. Do the stage
 

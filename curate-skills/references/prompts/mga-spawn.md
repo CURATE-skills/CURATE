@@ -7,7 +7,8 @@ Adapted from CURATE-prototype `agents/fga.py` (`_turn_prompt` 700-763, `_impleme
 
 - **One subagent at a time.** Never spawn the next `curate-mga` until the current one has
   finished and you have run every "after" step for it.
-- **Foreground only.** `spec.py preflight` must pass before the first spawn. If a spawn ever
+- **Foreground only.** `spec.py begin --stage generate` already checked the foreground setting
+  (it refuses when anything must be generated and the setting is missing). If a spawn ever
   comes back saying the subagent is running in the background, do nothing else until its
   completion notification arrives, then continue — and tell the user the session is not
   running with `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`.
@@ -48,6 +49,10 @@ reused_failed` if not (report that at Gate 3; do not regenerate it).
      inputs may be missing; the user decides at Gate 3).
 
 Report one line per node as you go, e.g. `square_part ×2 — passed (attempt 1)`.
+
+`record` also stores each function's input hash, so emit can tell if the spec changes later.
+When every node has a final status, run `spec.py end --run <run> --stage generate`; it moves the
+run to `gate3` (and refuses, listing them, if any node is still pending).
 
 ## Spawn prompt template
 

@@ -1486,9 +1486,14 @@ def cmd_begin(args) -> dict:
     first_value = PIPELINE[target][1][0]
 
     if cur < target:
+        here = f"/{next_skill(s) or skill_for(STAGE_NAMES[cur])} --run {s['run_id']}"
+        if s["stage"].startswith("gate"):
+            n = s["stage"][4:]
+            how = f"it is waiting at Gate {n}. Approve Gate {n} first: {here}"
+        else:
+            how = f"it is at stage {s['stage']}. Run {here} first"
         return {"ok": False, "mode": "refused", "stage": s["stage"],
-                "error": f"the run has not reached {name} yet (it is at stage {s['stage']}); run "
-                         f"/{next_skill(s) or skill_for(STAGE_NAMES[cur])} --run {s['run_id']} first"}
+                "error": f"the run has not reached {name} yet: {how}"}
 
     if cur > target:
         if not args.rewind:

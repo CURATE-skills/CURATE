@@ -1,7 +1,7 @@
 ---
 name: curate-reuse
 description: CURATE stage 2 of 6 — search the catalog and decide, per function, whether to reuse, adapt, keep cached or write new code; shows the decisions (no gate). Run it by name; /curate runs it as part of the full pipeline.
-argument-hint: "--run <run_id> | --from <file> [--review] [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity]"
+argument-hint: "--run <run_id> | --from <skeleton.json> [--review] [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity]"
 disable-model-invocation: true
 allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*)
 ---
@@ -31,7 +31,7 @@ Arguments: `$ARGUMENTS`
 ## 2. Begin
 
 `spec.py begin --run <run> --stage reuse`. If `ok` is false, show the `error` exactly — it
-names the skill to run instead — and stop. Otherwise note the `mode` (fresh, resume or rewind).
+names what to do instead — and stop. Otherwise note the `mode` (fresh, resume or rewind).
 
 ## 3. Do the stage
 

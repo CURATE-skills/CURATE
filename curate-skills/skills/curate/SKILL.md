@@ -1,134 +1,52 @@
 ---
 name: curate
 description: Build a FaaSr serverless scientific workflow from a natural-language sketch with CURATE — skeleton, catalog reuse, code generation and a validated FaaSr bundle, with human approval gates. Use when the user asks to compose, build, generate or revise a FaaSr workflow or a multi-step serverless pipeline, or runs /curate.
-argument-hint: "<workflow sketch> | --resume <run_id> [--catalog DIR] [--attach model.py] [--context FILE] [--mga-retries N] [--stubtest-mode strict|parity]"
-allowed-tools: Read, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*), Agent(curate-skills:curate-mga)
+argument-hint: "<workflow sketch> | --resume <run_id> | --from <file> --stage <stage> [--catalog DIR] [--attach model.py] [--context FILE] [--mga-retries N] [--stubtest-mode strict|parity]"
+allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*), Agent(curate-skills:curate-mga)
 ---
 
-# /curate — CURATE workflow gate loop
+# /curate — the whole CURATE pipeline
 
-You orchestrate CURATE (arXiv 2608.04270): you act as the Workflow Composition Agent (WCA)
-and the Module Candidate Agent (MCA) yourself, spawn one `curate-mga` subagent per function
-for code generation, and stop at five human gates. Deterministic work is done by scripts;
-never edit `state.json` by hand.
+/curate runs the six CURATE stages in order — skeleton → reuse → resolve → generate → emit →
+finalize — by following the same stage files the stage skills (`/curate-skills:curate-skeleton`
+…) use. It does no stage work of its own: `spec.py next` decides what comes next.
 
-Scripts (always run exactly like this; each prints JSON with `"ok"`):
-
-```
-uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/spec.py <command> ...
-uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/catalog.py <command> ...
-uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/scratch.py <command> ...
-uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/emit.py <command> ...
-```
-
-Below, `spec.py ...` is shorthand for the first line. Exit 0 = ok, 1 = needs attention
-(read the JSON), 2 = bad input (fix what you wrote, then re-run).
-
-References (read each when its stage starts, not all up front):
-`${CLAUDE_PLUGIN_ROOT}/references/prompts/wca-system.md`, `${CLAUDE_PLUGIN_ROOT}/references/prompts/wca-skeleton.md`, `${CLAUDE_PLUGIN_ROOT}/references/prompts/mca-candidates.md`,
-`${CLAUDE_PLUGIN_ROOT}/references/prompts/mca-user-model.md`, `${CLAUDE_PLUGIN_ROOT}/references/prompts/wca-resolve.md`, `${CLAUDE_PLUGIN_ROOT}/references/prompts/classify.md`,
-`${CLAUDE_PLUGIN_ROOT}/references/prompts/mga-spawn.md`, `${CLAUDE_PLUGIN_ROOT}/references/gates.md`, `${CLAUDE_PLUGIN_ROOT}/references/state-contract.md`.
-
-## 0. Start or resume
+Plugin folder (`<plugin>` in the stage files): `${CLAUDE_PLUGIN_ROOT}`.
+Script shorthand: `spec.py …` means `uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/spec.py …`
+(likewise `catalog.py`, `scratch.py`, `emit.py`, `stubtest.py`). Each prints JSON with `"ok"`;
+exit 1 = needs attention, 2 = bad input.
 
 Arguments: `$ARGUMENTS`
 
-- `--resume <run_id>`: find the run with `spec.py runs`, run `scratch.py unlock --run <run>`
-  (clears a stale lock), read `spec.py status --run <run>` and continue at its `stage`
-  (table in `${CLAUDE_PLUGIN_ROOT}/references/gates.md`).
-- Otherwise the remaining text is the sketch. If there is none, ask the user for it.
-  Write the sketch verbatim to a temp file and create the run:
+## Start
 
-```
-spec.py init --request-file <file> [--user-model P]... [--context-file P]...
-  [--catalog-dir D] [--mga-retries N] [--stubtest-mode M]
-  --config-catalog-dir '${user_config.catalog_dir}'
-  --config-mga-retries '${user_config.mga_retries}'
-  --config-stubtest-mode '${user_config.stubtest_mode}'
-```
+- `--resume <run_id>`: find it with `spec.py runs`; also run `scratch.py unlock --run <run>`
+  (clears this run's leftover subagent lock, if any).
+- `--from <file> --stage <stage>`: `spec.py import --stage <stage> --from <file> …` with the
+  extra flags described in `${CLAUDE_PLUGIN_ROOT}/references/stage-io.md`.
+- Otherwise the text is the sketch: write it verbatim to `.curate/sketches/<short-name>.txt`
+  and `spec.py import --stage skeleton --from <that file>`.
 
-Keep the `--config-*` values in single quotes exactly as written: if Claude Code has not
-filled in a plugin setting, the literal `${user_config...}` text must reach the script (which
-treats it as unset) instead of being expanded by the shell. Map `--attach` → `--user-model`, `--context` → `--context-file`, `--catalog` →
-`--catalog-dir`. Tell the user the run id and the settings (`catalog_dir`,
-`mga_max_retries`, `stubtest_mode`) with where each came from.
+With `import`, always add `--config-catalog-dir '${user_config.catalog_dir}'
+--config-mga-retries '${user_config.mga_retries}' --config-stubtest-mode '${user_config.stubtest_mode}'`
+in single quotes exactly as written, and map `--catalog` → `--catalog-dir`, `--attach` →
+`--user-model`, `--context` → `--context-file`. Tell the user the run id and the settings.
 
-## 1. Skeleton → Gate 1
+## The loop — standing instructions for this whole session
 
-1. Read `${CLAUDE_PLUGIN_ROOT}/references/prompts/wca-system.md` and `${CLAUDE_PLUGIN_ROOT}/references/prompts/wca-skeleton.md`.
-2. `spec.py prompt-context --run <run> --stage skeleton`; write `work/skeleton.json`.
-3. `spec.py skeleton --run <run> --json <run>/work/skeleton.json`. If it reports a parse
-   error, fix the file and re-run.
-4. **Gate 1**: `spec.py show --run <run> --gate 1`, print its `markdown` exactly, then ask
-   (see "Asking at a gate").
-   - Approve → `spec.py approve --run <run> --gate 1` → step 2.
-   - Changes → `spec.py directive --run <run> --gate 1 --text "<verbatim>"` → back to 1.2
-     (a refinement round; it does not count toward the iteration cap).
+These hold until the run is done or stopped, including after the user answers a gate in a
+later turn:
 
-## 2. Resolve → Gate 2
+1. `spec.py next --run <run>` → `next_skill`, e.g. `curate-skills:curate-reuse`. If it is none,
+   the run is done or stopped: summarize and stop.
+2. Its stage is the part after `curate-` (`skeleton`, `reuse`, `resolve`, `generate`, `emit`);
+   for `wda-finalize` it is `finalize`. Tell the user one line: `Stage: <stage>`.
+3. `spec.py begin --run <run> --stage <stage>`. If refused, show the `error` exactly and stop.
+4. Read `${CLAUDE_PLUGIN_ROOT}/references/stages/<stage>.md` and follow it **as if started with
+   `--chain`**: at its end ("After the gate decision"), do not stop — go back to step 1.
+5. At a gate, the turn ends while you wait for the user. When they answer, apply the decision
+   as that stage file says, then go back to step 1.
 
-1. Read `${CLAUDE_PLUGIN_ROOT}/references/prompts/mca-candidates.md` (and `mca-user-model.md` if any node has a user model).
-2. `spec.py prompt-context --run <run> --stage mca`; decide every node; write
-   `work/candidates.json`; `spec.py apply-candidates ...`. Mention any `notes` it returns.
-3. Read `${CLAUDE_PLUGIN_ROOT}/references/prompts/wca-resolve.md`; `spec.py prompt-context --run <run> --stage resolve`;
-   write `work/resolved.json`; `spec.py merge-resolved ...`. One fix pass on `error` problems.
-4. **Gate 2**: `spec.py show --run <run> --gate 2`, print its `markdown` exactly, then ask.
-   - Approve → `spec.py approve --run <run> --gate 2` → step 3.
-   - Changes → classify with `${CLAUDE_PLUGIN_ROOT}/references/prompts/classify.md`, then
-     `spec.py directive --run <run> --gate 2 --text "<verbatim>" --structural true|false`;
-     go to step 1.2 if `next_stage` is `skeleton`, else step 2.
-
-## 3. Generate → Gate 3
-
-1. `spec.py preflight`. If it fails, `spec.py set-stage --run <run> --stage generate`, show
-   its error, and stop: the user must relaunch with the variable set, then resume.
-2. Read `${CLAUDE_PLUGIN_ROOT}/references/prompts/mga-spawn.md` and follow it exactly.
-3. `scratch.py build --run <run>` (add `--resume` when resuming at `stage: generate`), then
-   handle each node in the returned `order`, one at a time, per `mga-spawn.md`.
-4. **Gate 3**: `spec.py set-stage --run <run> --stage gate3`, then
-   `spec.py show --run <run> --gate 3`, print its `markdown` exactly, and ask.
-   If the user wants to see code, Read `<run>/functions/<N>/<N>.py` and show it.
-   - Approve → `spec.py approve --run <run> --gate 3` → step 4.
-   - Changes → classify with `${CLAUDE_PLUGIN_ROOT}/references/prompts/classify.md`, then
-     `spec.py directive --run <run> --gate 3 --text "<verbatim>" --structural true|false`;
-     `skeleton` → step 1.2, `resolve` → step 2 (unchanged functions come back `[cached]`).
-
-## 4. Emit → Gate 4
-
-1. `emit.py bundle --run <run> --out <project>/faasr_output` (project = the run's
-   `project_dir`). It writes `workflow.json`, the functions, `spec.json`, `external_inputs.json`
-   and a README, validates with FaaSr_py (or structural checks if FaaSr_py cannot run), and
-   records `bundle_dir` and `validation`. It refuses to write if a secret value would leak.
-2. If `validation.ok` is false: when `spec.py status` shows `auto_emit_retries` = 0, run
-   `spec.py directive --run <run> --gate emit --text "FaaSr validation failed: <error>"` and go
-   back to step 2 (resolve) once automatically; otherwise show the error and ask the user.
-3. **Gate 4**: `spec.py show --run <run> --gate 4`, print its `markdown` exactly, then ask.
-   - Approve → `spec.py approve --run <run> --gate 4`; for each id in `reused_catalog_ids`,
-     `catalog.py increment-usage --run <run> --id <id>`; then step 5.
-   - Changes → classify, `spec.py directive --run <run> --gate 4 ...`, route as at Gate 3.
-
-## 5. Finalize (Gate 5)
-
-Invoke the `curate-skills:wda-finalize` skill with the run id. It summarizes the run and, only
-with the user's approval, saves verified functions and/or the workflow to the catalog.
-
-## Asking at a gate
-
-Print the gate markdown first, unchanged. Then use AskUserQuestion with the options
-**Approve** and **Stop here**, noting that typing in "Other" requests changes. Without
-AskUserQuestion, ask in chat: `approve` / `yes` / `y` / `lgtm` approve; `stop` stops;
-anything else is a change request.
-
-- **Stop** → `spec.py set-stage --run <run> --stage stopped`; tell the user how to resume.
-- **Iteration cap**: when `directive` returns `"cap_reached": true`, do not loop again
-  silently. Ask: approve the current version as-is, stop, or raise the cap
-  (`spec.py set-cap --run <run> --max N`).
-- **Override**: if the user disputes your STRUCTURE/FUNCTION call, move the run with
-  `spec.py set-stage --run <run> --stage skeleton|resolve` and continue from that stage.
-
-## Rules
-
-- You write only `work/*.json` (and the sketch temp file). Everything else in the run is
-  written by the scripts or by `curate-mga` subagents.
-- Never paraphrase a gate display, never skip a gate, never approve on the user's behalf.
-- Keep chat short between gates: one line on what you are doing, then the gate.
+Never pick the next stage yourself, never skip a gate, and never answer a gate for the user.
+Stages that loop automatically here (a Gate 1 refinement, the emit retry back to reuse) just
+show up as the next `next_skill`.
