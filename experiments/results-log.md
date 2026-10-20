@@ -38,6 +38,8 @@ Claude Code 2.1.299 for every run.
 | 15 | 2026-10-17 | V4: E2 stage by stage, one session per stage (v2-files) | claude-opus-5-5 | headless, 6 sessions, 11 turns | all six stages | 3.063 | 86 | 0 |
 | 16 | 2026-10-17 | V4: fresh-session baseline (plugin loaded, one-word reply) | claude-opus-5-5 | headless, 2 sessions | — | 0.066 + 0.004 | 2 | — |
 | 17 | 2026-10-18 | Bug from a user test: `/curate-skills:curate-generate --from …/spec.json` (bundle spec with inline code) | — | interactive (user) | generate | not recorded | — | — |
+| 18 | 2026-10-19 | Finding from a user test: plain request "re-generate the code for run …" → Claude rewound the run itself, without asking | — | interactive (user) | generate (rewind) | not recorded | — | — |
+| 19 | 2026-10-19 | Bug from the same test: after a rewind to generate, old code was placed in the folders of functions marked new | — | interactive (user) | generate | not recorded | — | — |
 
 ## Open items
 
@@ -375,3 +377,53 @@ and prompts, and finding the run.
   two folders; same run twice → `-2`, first folder untouched, `bundle_dir` updated). The existing
   `test_bundle_never_overwrites` already covered the `-2` suffix. Mutation check: restoring the
   silent seeding fails 2 tests; dropping the run id fails 1.
+- **Renamed afterwards** (2026-10-19): `--functions-as reuse|seed` became `--existing-code
+  keep|rewrite|ignore` (`ignore` = drop the code and generate from scratch); the old spelling is a
+  hidden alias. Gate labels for imported code are now `kept: your code` and `rewritten from your
+  code` instead of `[cached] ← [import]` / `[adapt] ← [import]`.
+
+## 18. Finding: a plain request led to an unasked rewind (user test, 2026-10-19)
+
+- **What happened** (reported by the user): in project `curate-tests`, the user typed plainly "I
+  want to re-generate the code for run 20261018-215939-normal-stats", naming no skill. Claude did
+  not point to a stage command; it ran `spec.py` itself and rewound the run to generate, using
+  revision round 1 of 5, without asking first. The scripts allowed it.
+- **Why**: the stage skills cannot be started by Claude (`disable-model-invocation`), so nothing
+  steered it to them, and `spec.py begin --rewind` needed no confirmation.
+- **Fix**:
+  - `spec.py begin --rewind` now refuses without `--confirmed`, changing nothing; the refusal has
+    `needs_confirmation` and states the cost ("going back to generate uses one revision round
+    (0 of 5 used) and redoes generate and every stage after it … Ask them; only if they say yes,
+    run begin again with --rewind --confirmed"). The refusal for a run past the stage now says
+    "Ask the user first".
+  - The six stage skills and `gates.md` ("Rewinding") say to ask the user, state the cost, and
+    pass `--confirmed` only after a clear yes. `--confirmed` is an instruction-level guard: it
+    makes the step explicit and visible, but a model that ignores instructions could still pass it.
+  - `/curate`'s description (always visible to Claude) now says: for a request to redo one stage of
+    an existing run, don't run CURATE's scripts; tell the user the stage command, e.g.
+    `/curate-skills:curate-generate --run <run_id>`. The README has a "Redoing a stage" paragraph.
+- **Tests**: `test_rewind_without_confirmation_changes_nothing` (state byte-identical after the
+  refused rewind); `test_rewind_needs_flag_moves_code_and_counts` updated to pass `--confirmed`.
+- **Not re-tested yet** with a live session: whether the description change makes Claude name the
+  command instead of acting. That needs the same plain request in a fresh session.
+
+## 19. Bug: old code placed in "new" functions after a rewind (same user test)
+
+- **What happened**: after the rewind to generate, `scratch.py build` copied each function's
+  previous `.py` into its folder (and added a "Previous Implementation" note) although the
+  functions were marked `new`, so the subagents would have kept the old code. Same class of bug
+  as #17.
+- **Fix**, in two places:
+  - `scratch.py build` places code in a function's folder only when the function is meant to
+    start from it — reused (catalog/cached), rewritten (adapt), or a user model's original. A
+    function marked `new` starts empty, with no "Previous Implementation" note, wherever stale
+    code came from.
+  - A confirmed rewind to generate (or earlier) removes the code of functions marked `new` from
+    the spec; it is kept in `prior_spec` (now a real copy) for later `[cached]` decisions, so a
+    failed regeneration cannot leave stale code for emit. Cached and adapt functions keep theirs.
+- **Tests**: `test_rewind_to_generate_starts_new_functions_empty` (from gate4: new functions lose
+  code and start empty; cached is reused untouched; adapt is seeded; prior_spec keeps all code),
+  `test_build_never_seeds_a_new_function_with_code`. Mutation check: removing the `--confirmed`
+  check, the strip on rewind, or the build guard each fails one test.
+- **The user's run** (`curate-tests/.curate/runs/20261018-215939-normal-stats`) was not touched by
+  these fixes; it was rewound under the old code.

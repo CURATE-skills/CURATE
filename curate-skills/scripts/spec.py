@@ -33,10 +33,10 @@ exit 0 ok, 1 check failed / needs attention, 2 bad input.
   spec.py set-cap         --run R --max N
   spec.py set-stage       --run R --stage S        (low level: stop, tests)
   spec.py import          --stage S --from FILE [--candidates F] [--functions DIR]
-                          [--functions-as reuse|seed] [--review] [init flags]
+                          [--existing-code keep|rewrite|ignore] [--review] [init flags]
   spec.py next            --run R
   spec.py require         --run R --stage S
-  spec.py begin           --run R --stage S [--rewind]
+  spec.py begin           --run R --stage S [--rewind --confirmed]
   spec.py end             --run R --stage generate
   spec.py show            --run R --gate 1|2|3|4
   spec.py summary         --run R
@@ -1211,18 +1211,35 @@ def _is_full_spec(data) -> bool:
         if isinstance(n, dict))
 
 
+EXISTING_CODE_ALIASES = {"reuse": "keep", "seed": "rewrite"}  # old --functions-as values
+
+
+def _existing_code_mode(args) -> Optional[str]:
+    """--existing-code, or the old --functions-as (hidden alias). Both given must agree."""
+    new = getattr(args, "existing_code", None)
+    old = EXISTING_CODE_ALIASES.get(getattr(args, "functions_as", None) or "")
+    if new and old and new != old:
+        raise InputError(f"--existing-code {new} contradicts --functions-as {args.functions_as}; use one")
+    return new or old
+
+
 def _apply_functions(spec: WorkflowSpec, directory: Optional[str], mode: Optional[str],
                      stage: str) -> tuple[WorkflowSpec, list[str], list[str]]:
     """Attach code from --functions files (which override code inside the spec).
 
     At generate, every function that ends up with code (from a file or inline in the spec,
-    e.g. a bundle's spec.json) needs an explicit --functions-as: `reuse` keeps it
-    ([cached] ← [import], stub-tested only) and `seed` regenerates from it
-    ([adapt] ← [import]). Nothing is used silently as a seed.
+    e.g. a bundle's spec.json) needs an explicit --existing-code:
+      keep    — keep it as is (stub-tested only, no subagents)
+      rewrite — regenerate each function starting from it
+      ignore  — drop it and generate from scratch
+    Nothing is used silently as a seed.
     """
     d = Path(directory) if directory else None
     if d is not None and not d.is_dir():
         raise InputError(f"--functions {directory} is not a directory")
+    if mode == "ignore" and d is not None:
+        raise InputError("--existing-code ignore drops all code, so --functions has no effect; "
+                         "leave out --functions, or choose keep or rewrite")
     from_files, inline, undecided, nodes = [], [], [], []
     for n in spec.nodes:
         f = d / f"{n.name}.py" if d is not None else None
@@ -1234,10 +1251,13 @@ def _apply_functions(spec: WorkflowSpec, directory: Optional[str], mode: Optiona
             inline.append(n.name)
         has_code = bool(update.get("code") or n.code)
         if stage == "generate" and has_code:
-            if mode == "reuse":
+            if mode == "keep":
                 update.update(source="cached", origin_kind="import", origin_name=n.name)
-            elif mode == "seed":
+            elif mode == "rewrite":
                 update.update(source="adapt", origin_kind="import", origin_name=n.name)
+            elif mode == "ignore":
+                update.update(code=None, source="new", origin_kind=None, origin_name=None,
+                              catalog_id=None)
             else:
                 undecided.append(n.name)
         nodes.append(n.model_copy(update=update) if update else n)
@@ -1245,9 +1265,9 @@ def _apply_functions(spec: WorkflowSpec, directory: Optional[str], mode: Optiona
         where = " and ".join(x for x, ok in (("--functions", from_files), ("the spec itself", inline)) if ok)
         raise InputError(
             f"function(s) {', '.join(undecided)} already have code (from {where}). Say what to do "
-            "with it: --functions-as reuse (keep it as is; stub-tested only, no subagents) or "
-            "--functions-as seed (regenerate each function starting from it). To generate from "
-            "scratch, import a spec without code.")
+            "with it: --existing-code keep (keep it as is; stub-tested only, no subagents), "
+            "--existing-code rewrite (regenerate each function starting from it) or "
+            "--existing-code ignore (drop it and generate from scratch).")
     return spec.model_copy(update={"nodes": nodes}), from_files, inline
 
 
@@ -1256,10 +1276,12 @@ def cmd_import(args) -> dict:
     if stage == "finalize":
         raise InputError("starting at finalize from files is not supported: a bundle has no stub-test "
                          "results, so nothing could be saved as verified. Use --run on the run that "
-                         "built it, or import at generate with --functions-as reuse")
+                         "built it, or import at generate with --existing-code keep")
     if args.review and stage not in ("reuse", "generate", "emit"):
         raise InputError(f"--review stops at the gate before {stage}; {stage} has none "
                          "(use it when importing at reuse, generate or emit)")
+    if _existing_code_mode(args) and stage != "generate":
+        raise InputError("--existing-code only applies when starting at generate")
     src = args.from_file
     if not Path(src).is_file():
         raise InputError(f"{src} not found")
@@ -1335,8 +1357,8 @@ def _import_into(run: Path, s: dict, stage: str, src: str, data, args, warnings:
 
     # generate / emit: a full spec, optionally with function files.
     spec = _load_full_spec(src)
-    spec, found, inline = _apply_functions(spec, args.functions,
-                                           args.functions_as if stage == "generate" else None, stage)
+    mode = _existing_code_mode(args) if stage == "generate" else None
+    spec, found, inline = _apply_functions(spec, args.functions, mode, stage)
     s["spec"] = dump(spec)
     s["enriched_spec"] = None
     problems = [p for p in require_problems(s, stage, env={"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"})]
@@ -1344,7 +1366,7 @@ def _import_into(run: Path, s: dict, stage: str, src: str, data, args, warnings:
         raise InputError(f"{src} is not enough to start {stage}: " + "; ".join(problems))
     if stage == "emit":
         warnings.append("imported code has not been stub-tested, so wda-finalize will not save it; "
-                        "import at generate with --functions-as reuse to verify it")
+                        "import at generate with --existing-code keep to verify it")
     s["stage"] = f"gate{gate}"
     _record(s, gate, "imported", src)
     s["history"][-1]["sha256"] = _file_sha(src)
@@ -1352,7 +1374,7 @@ def _import_into(run: Path, s: dict, stage: str, src: str, data, args, warnings:
     if not args.review:
         cmd_approve(ns(run=str(run), gate=gate))
     return {"functions_imported": found, "inline_code": inline,
-            "functions_as": args.functions_as if stage == "generate" and (found or inline) else None}
+            "existing_code": mode if found or inline else None}
 
 
 # ── stages: next / require / begin / end ─────────────────────────────────────
@@ -1514,17 +1536,30 @@ def cmd_begin(args) -> dict:
                 "error": f"the run has not reached {name} yet: {how}"}
 
     if cur > target:
+        cost = (f"going back to {name} uses one revision round ({s['iteration']} of "
+                f"{s['max_iterations']} used) and redoes {name} and every stage after it")
         if not args.rewind:
-            return {"ok": False, "mode": "refused", "stage": s["stage"],
-                    "error": f"the run is already past {name} (stage {s['stage']}); add --rewind to "
-                             "go back to it (counts as one revision round)"}
+            return {"ok": False, "mode": "refused", "stage": s["stage"], "needs_confirmation": True,
+                    "error": f"the run is already past {name} (stage {s['stage']}). {cost[0].upper()}"
+                             f"{cost[1:]}. Ask the user first; only if they agree, run begin again "
+                             "with --rewind --confirmed"}
         if s["iteration"] >= s["max_iterations"]:
             return {"ok": False, "mode": "refused", "cap_reached": True, "stage": s["stage"],
                     "error": f"revision cap reached ({s['iteration']}/{s['max_iterations']}); "
                              "raise it with set-cap to rewind"}
+        if not args.confirmed:
+            # A rewind is the user's decision: the gate routine asks, then passes --confirmed.
+            return {"ok": False, "mode": "refused", "stage": s["stage"], "needs_confirmation": True,
+                    "error": f"rewinding needs the user's explicit OK: {cost}. Ask them; only if they "
+                             "say yes, run begin again with --rewind --confirmed"}
         spec = spec_of(s.get("spec"))
         if spec is not None and any(n.code for n in spec.nodes):
-            s["prior_spec"] = s["spec"]  # keep working code available as [cached]
+            s["prior_spec"] = json.loads(json.dumps(s["spec"]))  # a copy: working code for [cached]
+            if target <= STAGE_NAMES.index("generate"):
+                # Functions marked new are regenerated from scratch: their old code stays only in
+                # prior_spec (for later [cached] decisions), never in the spec or the folders.
+                s["spec"]["nodes"] = [
+                    {**n, "code": None} if n.get("source") == "new" else n for n in s["spec"]["nodes"]]
         s["iteration"] += 1
         if name == "skeleton":
             s["skeleton_draft"] = None
@@ -1598,6 +1633,9 @@ def _io_names(items) -> str:
 
 
 def _origin(n: FunctionSpec) -> str:
+    if n.origin_kind == "import":  # code the user brought with --from / --functions
+        return {"cached": "kept: your code", "adapt": "rewritten from your code"}.get(
+            n.source, f"[{n.source}] ← your code")
     tag = SOURCE_TAGS.get(n.source, f"[{n.source}]")
     if n.source == "user_provided" and n.user_model_mode:
         tag = f"[User Provided Model — {n.user_model_mode}]"
@@ -1767,7 +1805,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--from", dest="from_file", required=True)
     sp.add_argument("--candidates")
     sp.add_argument("--functions")
-    sp.add_argument("--functions-as", choices=["reuse", "seed"])
+    sp.add_argument("--existing-code", choices=["keep", "rewrite", "ignore"])
+    sp.add_argument("--functions-as", choices=["reuse", "seed"], help=argparse.SUPPRESS)  # old name
     sp.add_argument("--review", action="store_true")
     init_flags(sp, False)
     sp = sub.add_parser("runs")
@@ -1801,6 +1840,8 @@ def build_parser() -> argparse.ArgumentParser:
     q = with_run("begin")
     q.add_argument("--stage", required=True, choices=STAGE_NAMES)
     q.add_argument("--rewind", action="store_true")
+    q.add_argument("--confirmed", action="store_true",
+                   help="the user explicitly agreed to rewind (passed only after asking them)")
     with_run("end").add_argument("--stage", required=True, choices=["generate"])
     return p
 

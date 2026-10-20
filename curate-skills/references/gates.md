@@ -33,7 +33,13 @@ stops; anything else is a change request. Never approve on the user's behalf.
   the same directive).
 - **Stop.** `spec.py set-stage --run <run> --stage stopped` (records where it stopped).
 - **Override a classification.** If the user disputes STRUCTURE/FUNCTION after it was recorded,
-  `spec.py begin --run <run> --stage skeleton|reuse --rewind`.
+  go back with a rewind (below).
+- **Rewinding** (going back to an earlier stage of a run that is already past it) is always the
+  user's decision. Tell them what it costs — one revision round, and that stage plus every stage
+  after it is redone (working code is kept for `[cached]` decisions; functions marked new are
+  regenerated from scratch) — and ask. Only after a clear yes:
+  `spec.py begin --run <run> --stage <S> --rewind --confirmed`. Never pass `--confirmed` without
+  asking; `begin` refuses a rewind without it.
 
 ## After the gate decision
 
@@ -53,5 +59,5 @@ Every stage starts with `spec.py begin --run <run> --stage <S>`:
 |---|---|
 | `fresh` | normal entry; S's earlier outputs (and everything after) were cleared |
 | `resume` | S was already started, or the run is waiting at S's gate — continue (or just re-show the gate) |
-| `rewind` | only with `--rewind`: going back from a later stage; counts as one revision round |
+| `rewind` | only with `--rewind --confirmed` after the user agreed: going back from a later stage; counts as one revision round |
 | `refused` | show the `error` exactly and stop — it names the skill to run instead |

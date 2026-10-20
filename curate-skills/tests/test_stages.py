@@ -143,13 +143,14 @@ def test_rewind_needs_flag_moves_code_and_counts(make_run, capsys):
     spec = coded_spec()
     run = make_run(stage="gate3", spec=spec, mga={"map": {"status": "passed"}}, max_iterations=1)
     code, out = call(S, ["begin", "--run", str(run), "--stage", "reuse"], capsys)
-    assert code == 1 and "--rewind" in out["error"] and state(run)["stage"] == "gate3"
-    out = ok(S, ["begin", "--run", str(run), "--stage", "reuse", "--rewind"], capsys)
+    assert code == 1 and "--rewind --confirmed" in out["error"] and out["needs_confirmation"]
+    assert "Ask the user first" in out["error"] and state(run)["stage"] == "gate3"
+    out = ok(S, ["begin", "--run", str(run), "--stage", "reuse", "--rewind", "--confirmed"], capsys)
     s = state(run)
     assert out["mode"] == "rewind" and s["stage"] == "reuse" and s["iteration"] == 1
     assert s["prior_spec"] == spec and s["mga"] == {} and s["history"][-1]["gate"] == "rewind"
     patch(run, stage="gate3")
-    code, out = call(S, ["begin", "--run", str(run), "--stage", "reuse", "--rewind"], capsys)
+    code, out = call(S, ["begin", "--run", str(run), "--stage", "reuse", "--rewind", "--confirmed"], capsys)
     assert code == 1 and out["cap_reached"]  # cap 1 already used
 
 
@@ -245,7 +246,7 @@ def test_walk_from_generate_import_to_finalize(tmp_path, capsys, monkeypatch):
     """Import code to verify at generate, mark it reused, emit, and reach finalize."""
     monkeypatch.delenv("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS")  # all reused: no preflight needed
     code, out = call(S, ["import", "--stage", "generate", "--from", str(FIX / "spec-resolved.json"),
-                         "--functions", str(FIX / "functions"), "--functions-as", "reuse",
+                         "--functions", str(FIX / "functions"), "--existing-code", "keep",
                          "--project-dir", str(tmp_path / "p"), "--catalog-dir", str(tmp_path / "c")], capsys)
     assert code == 0, out
     run = out["run"]
@@ -262,3 +263,50 @@ def test_walk_from_generate_import_to_finalize(tmp_path, capsys, monkeypatch):
     ok(S, ["approve", "--run", run, "--gate", "4"], capsys)
     assert ok(S, ["require", "--run", run, "--stage", "finalize"], capsys)["problems"] == []
     assert ok(S, ["next", "--run", run], capsys)["next_skill"] == "curate-skills:wda-finalize"
+
+
+# ── regressions from a user test (results log #18, #19) ──
+
+def test_rewind_without_confirmation_changes_nothing(make_run, capsys):
+    spec = coded_spec()
+    run = make_run(stage="gate4", spec=spec, mga={"map": {"status": "passed"}},
+                   validation={"ok": True})
+    before = state(run)
+    code, out = call(S, ["begin", "--run", str(run), "--stage", "generate", "--rewind"], capsys)
+    assert code == 1 and out["needs_confirmation"] and "explicit OK" in out["error"]
+    assert "uses one revision round (0 of 5 used)" in out["error"]
+    assert state(run) == before
+
+
+def test_rewind_to_generate_starts_new_functions_empty(make_run, capsys):
+    spec = coded_spec()
+    by = {n["name"]: n for n in spec["nodes"]}
+    by["split"].update(source="cached", origin_kind="cache", origin_name="split")
+    by["shuffle"].update(source="adapt", origin_kind="cache", origin_name="shuffle")
+    run = make_run(stage="gate4", spec=spec, mga={n: {"status": "passed"} for n in by})  # past generate
+    out = ok(S, ["begin", "--run", str(run), "--stage", "generate", "--rewind", "--confirmed"], capsys)
+    assert out["mode"] == "rewind" and out["iteration"] == 1
+    s = state(run)
+    now = {n["name"]: n for n in s["spec"]["nodes"]}
+    assert now["map"]["code"] is None and now["reduce"]["code"] is None          # new: dropped
+    assert now["split"]["code"] and now["shuffle"]["code"]                        # cached / adapt: kept
+    assert all(n["code"] for n in s["prior_spec"]["nodes"])                       # old code kept here
+    out = ok(scratch, ["build", "--run", str(run)], capsys)
+    gen = {n["name"]: n["generate"] for n in out["nodes"]}
+    assert gen == {"generate_text": True, "split": False, "map": True, "shuffle": True, "reduce": True}
+    fns = run / "functions"
+    assert not (fns / "map" / "map.py").exists() and not (fns / "generate_text" / "generate_text.py").exists()
+    assert "Previous Implementation" not in (fns / "map" / "spec.md").read_text()
+    assert (fns / "shuffle" / "shuffle.py").exists()
+    assert "Previous Implementation" in (fns / "shuffle" / "spec.md").read_text()
+    assert (fns / "split" / "split.py").exists() and not (fns / "split" / "spec.md").exists()
+
+
+def test_build_never_seeds_a_new_function_with_code(make_run, capsys):
+    spec = coded_spec()  # every node: source new, with code (e.g. harvested earlier)
+    run = make_run(stage="generate", spec=spec)
+    ok(scratch, ["build", "--run", str(run)], capsys)
+    for n in spec["nodes"]:
+        d = run / "functions" / n["name"]
+        assert not (d / f"{n['name']}.py").exists()
+        assert "Previous Implementation" not in (d / "spec.md").read_text()

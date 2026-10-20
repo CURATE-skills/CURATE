@@ -67,7 +67,7 @@ Open items.
 /curate-skills:curate-skeleton --from <sketch> | <sketch text> | --run <run_id>
 /curate-skills:curate-reuse    --from <skeleton.json> | --run <run_id>
 /curate-skills:curate-resolve  --from <skeleton.json> --candidates <candidates.json> | --run <run_id>
-/curate-skills:curate-generate --from <spec.json> [--functions DIR --functions-as reuse|seed] | --run <run_id>
+/curate-skills:curate-generate --from <spec.json> [--functions DIR] [--existing-code keep|rewrite|ignore] | --run <run_id>
 /curate-skills:curate-emit     --from <spec.json> [--functions DIR] | --run <run_id>
 /curate-skills:wda-finalize    [--run <run_id>]
 
@@ -79,6 +79,15 @@ as structural (back to the skeleton) or functional (back to reuse; working funct
 back as `[cached]`). Each change request counts as one revision round; at the cap (5) nothing
 is changed until you approve as-is, stop, or raise the cap.
 
+**Redoing a stage of an existing run.** Type the stage command yourself, e.g.
+`/curate-skills:curate-generate --run <run_id>` to regenerate the code. If the run is already
+past that stage, the command explains what going back costs (one revision round; that stage
+and all later ones are redone) and asks you before it rewinds. Claude is told not to run
+CURATE's scripts on its own for requests like "re-generate the code for run X", but to name the
+command; rewinds are refused unless you have confirmed. After a rewind to generate, functions
+marked new start from an empty folder (your old code stays available for `[cached]` decisions,
+not as a starting point); use a revision at Gate 3 instead if you want only some functions redone.
+
 **Running stages separately.** A stage skill stops after its gate and prints the next one to
 run, e.g. `Next: /curate-skills:curate-reuse --run <run_id>`; `/curate` instead carries on by
 itself. Every stage first checks what it needs and, if something is missing or out of date,
@@ -89,9 +98,15 @@ waiting at an earlier gate. Going back to an earlier stage needs `--rewind` in t
 **Starting from your own files** (`--from`): an imported file counts as approved; add
 `--review` to see the gate before the stage first. Accepted formats per stage, and why a FaaSr
 `workflow.json` is not enough to start from, are in `references/stage-io.md`. Code you bring
-counts as verified only after it has been stub-tested at generate (`--functions-as reuse`).
-A spec that already contains code (such as a bundle's `spec.json`) needs `--functions-as
-reuse|seed` too; the import stops rather than guess.
+counts as verified only after it has been stub-tested at generate. When you start generate
+with code — a `--functions` folder, or a spec that already contains code such as a bundle's
+`spec.json` — say what to do with it; the import stops rather than guess:
+
+| `--existing-code` | What happens | Gate 3 shows |
+|---|---|---|
+| `keep` | your code is kept as is and only stub-tested (no subagents) | `kept: your code` |
+| `rewrite` | each function is regenerated, starting from your code | `rewritten from your code` |
+| `ignore` | your code is dropped; functions are generated from scratch | `[new]` |
 
 - `--attach model.py`: your own Python script or function becomes a workflow step, wrapped
   verbatim (or adapted, if you ask for changes to it) and checked for output parity.

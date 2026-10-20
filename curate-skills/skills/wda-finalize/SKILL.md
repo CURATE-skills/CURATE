@@ -25,7 +25,10 @@ Arguments: `$ARGUMENTS`
 ## 2. Begin
 
 `spec.py begin --run <run> --stage finalize`. If `ok` is false, show the `error` exactly — it
-names what to do instead — and stop. Otherwise note the `mode` (fresh, resume or rewind).
+names what to do instead — and stop, with one exception: if it has `needs_confirmation` (the run
+is already past this stage), ask the user whether to go back, stating what it costs (the error
+says). Only if they clearly say yes, run `begin` again with `--rewind --confirmed`; never pass
+`--confirmed` without asking. Otherwise note the `mode` (fresh, resume or rewind).
 
 ## 3. Do the stage
 

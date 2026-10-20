@@ -1,6 +1,6 @@
 ---
 name: curate
-description: Build a FaaSr serverless scientific workflow from a natural-language sketch with CURATE — skeleton, catalog reuse, code generation and a validated FaaSr bundle, with human approval gates. Use when the user asks to compose, build, generate or revise a FaaSr workflow or a multi-step serverless pipeline, or runs /curate.
+description: Build a FaaSr serverless scientific workflow from a natural-language sketch with CURATE — skeleton, catalog reuse, code generation and a validated FaaSr bundle, with human approval gates. Use when the user asks to compose, build, generate or revise a FaaSr workflow or a multi-step serverless pipeline, or runs /curate. For a request to redo one stage of an existing CURATE run (e.g. "re-generate the code for run X"), do not run CURATE's scripts yourself: tell the user the stage command to type, such as /curate-skills:curate-generate --run <run_id>, which asks before going back.
 argument-hint: "<workflow sketch> | --resume <run_id> | --from <file> --stage <stage> [--catalog DIR] [--attach model.py] [--context FILE] [--mga-retries N] [--stubtest-mode strict|parity]"
 allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*), Agent(curate-skills:curate-mga)
 ---

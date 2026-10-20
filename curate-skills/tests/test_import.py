@@ -114,10 +114,10 @@ def test_generate_refuses_incomplete_spec(imp, tmp_path):
 
 def test_generate_with_functions(imp):
     code, out, _ = imp("generate", FIX / "spec-resolved.json", "--functions", FIX / "functions")
-    assert code == 2 and "--functions-as" in out["error"]
+    assert code == 2 and "--existing-code keep" in out["error"]
 
     code, out, run = imp("generate", FIX / "spec-resolved.json", "--functions", FIX / "functions",
-                         "--functions-as", "reuse")
+                         "--existing-code", "keep")
     nodes = {n["name"]: n for n in state(run)["spec"]["nodes"]}
     assert code == 0 and sorted(out["functions_imported"]) == sorted(nodes)
     assert all(n["source"] == "cached" and n["origin_kind"] == "import" for n in nodes.values())
@@ -125,7 +125,7 @@ def test_generate_with_functions(imp):
     assert nodes["map"]["code"].lstrip().startswith(("def ", "import ", "from ", '"""'))
 
     code, out, run = imp("generate", FIX / "spec-resolved.json", "--functions", FIX / "functions",
-                         "--functions-as", "seed")
+                         "--existing-code", "rewrite")
     assert {n["source"] for n in state(run)["spec"]["nodes"]} == {"adapt"}
 
 
@@ -169,22 +169,51 @@ def test_generate_spec_with_inline_code_needs_explicit_choice(imp, tmp_path):
     before = runs_dir(tmp_path)
     code, out, _ = imp("generate", FIX / "spec-with-code.json")
     assert code == 2 and "already have code (from the spec itself)" in out["error"]
-    assert "--functions-as reuse" in out["error"] and "--functions-as seed" in out["error"]
+    assert all(f"--existing-code {m}" in out["error"] for m in ("keep", "rewrite", "ignore"))
     assert runs_dir(tmp_path) == before  # nothing half-created
 
 
-@pytest.mark.parametrize("mode,source,tag", [("reuse", "cached", "[cached] ← [import]"),
-                                             ("seed", "adapt", "[adapt] ← [import]")])
+@pytest.mark.parametrize("mode,source,tag", [("keep", "cached", "kept: your code"),
+                                             ("rewrite", "adapt", "rewritten from your code"),
+                                             ("ignore", "new", "[new]")])
 def test_generate_inline_code_labels_match_what_happens(imp, capsys, mode, source, tag):
     import scratch
-    code, out, run = imp("generate", FIX / "spec-with-code.json", "--functions-as", mode)
+    code, out, run = imp("generate", FIX / "spec-with-code.json", "--existing-code", mode)
     nodes = state(run)["spec"]["nodes"]
     assert code == 0 and sorted(out["inline_code"]) == sorted(n["name"] for n in nodes)
-    assert out["functions_as"] == mode and {n["source"] for n in nodes} == {source}
+    assert out["existing_code"] == mode and {n["source"] for n in nodes} == {source}
+    assert all(bool(n["code"]) is (mode != "ignore") for n in nodes)
     built = ok(scratch, ["build", "--run", str(run)], capsys)
-    # reuse → no node is generated (no subagents); seed → every node is regenerated from its code
-    assert all(n["generate"] is (mode == "seed") for n in built["nodes"])
+    # keep → no node is generated (no subagents); rewrite/ignore → every node gets a subagent
+    assert all(n["generate"] is (mode != "keep") for n in built["nodes"])
     md = ok(S, ["show", "--run", str(run), "--gate", "3"], capsys)["markdown"]
-    assert f"| `map` | {tag} map |" in md and "[new]" not in md
-    if mode == "seed":
+    assert f"| `map` | {tag} |" in md and "[import]" not in md
+    if mode == "rewrite":
         assert "seeded from import `map`" in (run / "functions" / "map" / "spec.md").read_text()
+
+
+def test_old_functions_as_spelling_still_works(imp):
+    for old, new_source in (("reuse", "cached"), ("seed", "adapt")):
+        code, out, run = imp("generate", FIX / "spec-with-code.json", "--functions-as", old)
+        assert code == 0 and out["existing_code"] == {"reuse": "keep", "seed": "rewrite"}[old]
+        assert {n["source"] for n in state(run)["spec"]["nodes"]} == {new_source}
+
+
+def test_existing_code_misuse_is_refused(imp, tmp_path):
+    before = runs_dir(tmp_path)
+    code, out, _ = imp("generate", FIX / "spec-with-code.json", "--existing-code", "keep",
+                       "--functions-as", "seed")
+    assert code == 2 and "contradicts" in out["error"]
+    code, out, _ = imp("generate", FIX / "spec-resolved.json", "--functions", FIX / "functions",
+                       "--existing-code", "ignore")
+    assert code == 2 and "--functions has no effect" in out["error"]
+    code, out, _ = imp("emit", FIX / "spec-with-code.json", "--existing-code", "keep")
+    assert code == 2 and "only applies when starting at generate" in out["error"]
+    assert runs_dir(tmp_path) == before
+
+
+def test_existing_code_hidden_alias_not_in_help(capsys):
+    with pytest.raises(SystemExit):
+        S.main(["import", "--help"])
+    help_text = capsys.readouterr().out
+    assert "--existing-code" in help_text and "--functions-as" not in help_text

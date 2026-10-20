@@ -1,7 +1,7 @@
 ---
 name: curate-generate
 description: CURATE stage 4 of 6 — write and stub-test every function, one curate-mga subagent at a time, and stop at Gate 3. Run it by name; /curate runs it as part of the full pipeline.
-argument-hint: "--run <run_id> | --from <spec.json> [--functions DIR --functions-as reuse|seed] [--review] [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity]"
+argument-hint: "--run <run_id> | --from <spec.json> [--functions DIR] [--existing-code keep|rewrite|ignore] [--review] [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity]"
 disable-model-invocation: true
 allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*), Agent(curate-skills:curate-mga)
 ---
@@ -19,7 +19,7 @@ Arguments: `$ARGUMENTS`
 
 - `--run <run_id>`: `spec.py runs` lists the runs in this project; use the matching `run` path.
 - `--from <file>`: create a run from your file —
-  `spec.py import --stage generate --from <file> [--functions DIR --functions-as reuse|seed] [--review] [--catalog-dir D] [--mga-retries N]
+  `spec.py import --stage generate --from <file> [--functions DIR] [--existing-code keep|rewrite|ignore] [--review] [--catalog-dir D] [--mga-retries N]
   [--stubtest-mode M] [--user-model P]... [--context-file P]...
   --config-catalog-dir '${user_config.catalog_dir}' --config-mga-retries '${user_config.mga_retries}'
   --config-stubtest-mode '${user_config.stubtest_mode}'`.
@@ -31,7 +31,10 @@ Arguments: `$ARGUMENTS`
 ## 2. Begin
 
 `spec.py begin --run <run> --stage generate`. If `ok` is false, show the `error` exactly — it
-names what to do instead — and stop. Otherwise note the `mode` (fresh, resume or rewind).
+names what to do instead — and stop, with one exception: if it has `needs_confirmation` (the run
+is already past this stage), ask the user whether to go back, stating what it costs (the error
+says). Only if they clearly say yes, run `begin` again with `--rewind --confirmed`; never pass
+`--confirmed` without asking. Otherwise note the `mode` (fresh, resume or rewind).
 
 ## 3. Do the stage
 

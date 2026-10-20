@@ -265,7 +265,7 @@ def node_spec_md(run: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: str,
                       "\nAddress all points above in your implementation.\n") if feedback else ""
     user = spec.source == "user_provided"
     prior_block = ""
-    if spec.code and not user:
+    if spec.code and not user and spec.source != "new":
         prior_block = (f"\n## Previous Implementation\nSee `{me}/{spec.name}.py` (seeded from "
                        f"{spec.origin_kind or 'a previous round'}"
                        f"{' `' + spec.origin_name + '`' if spec.origin_name else ''}) — make the "
@@ -412,7 +412,10 @@ def cmd_build(args) -> dict:
             continue
         (d / "test_data").mkdir(parents=True)
         (d / "test_output").mkdir()
-        if n.code:
+        # Code goes into the folder only when the function is meant to start from it:
+        # reused (catalog/cached), rewritten (adapt), or a user model's original. A function
+        # marked new starts empty, even if old code is around (e.g. after a rewind).
+        if n.code and n.source != "new":
             target = d / (f"original_{name}.py" if n.source == "user_provided" else f"{name}.py")
             target.write_text(n.code)
         if not needs_generation(n):
