@@ -13,6 +13,7 @@ Usage (prints JSON {"ok": ...}; exit 0 ok, 1 check failed, 2 bad input):
   emit.py external-inputs (--spec FILE | --run DIR)
   emit.py validate        (--spec FILE | --run DIR | --workflow FILE) [--level auto|faasr_py|structural]
   emit.py bundle          (--spec FILE | --run DIR) [--out DIR] [--level ...]
+                          → <out>/<workflow>-<run_id>/ (with --run), never overwriting
 
 Unset FAASR_* variables are emitted as "<FAASR_NAME>" placeholders. Secret
 values are never written: only secret names appear in any output, and the
@@ -426,13 +427,21 @@ def _bundle_readme(spec: WorkflowSpec, wf: dict, ext: list[dict], validation: di
     return "\n".join(lines) + "\n"
 
 
-def write_bundle(spec: WorkflowSpec, out_root: Path, level: str = "auto") -> dict:
+def write_bundle(spec: WorkflowSpec, out_root: Path, level: str = "auto",
+                 run_id: str | None = None) -> dict:
+    """Write the bundle to a new folder: <out_root>/<workflow>[-<run_id>][-2, -3, …].
+
+    With a run id, two runs of the same workflow never share a folder; an existing,
+    non-empty folder is never overwritten (a numbered suffix is added instead).
+    """
     wf = emit_faasr_json(spec)
     validation = validate(wf, level)
     ext = external_inputs(spec)
     placeholders = placeholders_used()
 
     safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", spec.name)
+    if run_id:
+        safe_name += "-" + re.sub(r"[^a-zA-Z0-9_-]", "_", run_id)
     out_dir = _unique_out_dir(out_root / safe_name)
     fn_dir = out_dir / "functions"
     fn_dir.mkdir(parents=True, exist_ok=True)
@@ -562,7 +571,8 @@ def main(argv=None) -> int:
         update_state(args.run, validation={**{k: result[k] for k in ("ok", "level", "error")},
                                            "spec_hash": spec_hash(spec.model_dump(mode="json"))})
         return _print(result, names)
-    result = write_bundle(spec, Path(args.out), args.level)
+    run_id = json.loads((Path(args.run) / "state.json").read_text()).get("run_id") if args.run else None
+    result = write_bundle(spec, Path(args.out), args.level, run_id=run_id)
     if "bundle_dir" in result:
         update_state(args.run, bundle_dir=result["bundle_dir"], stage="gate4",
                      validation={**{k: result["validation"][k] for k in ("ok", "level", "error")},

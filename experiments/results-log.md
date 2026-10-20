@@ -37,6 +37,7 @@ Claude Code 2.1.299 for every run.
 | 14 | 2026-10-17 | V4: E2 via /curate (v2-files) | claude-opus-5-5 | headless, 1 session, 6 turns | all six stages | 2.831 | 69 | 0 |
 | 15 | 2026-10-17 | V4: E2 stage by stage, one session per stage (v2-files) | claude-opus-5-5 | headless, 6 sessions, 11 turns | all six stages | 3.063 | 86 | 0 |
 | 16 | 2026-10-17 | V4: fresh-session baseline (plugin loaded, one-word reply) | claude-opus-5-5 | headless, 2 sessions | — | 0.066 + 0.004 | 2 | — |
+| 17 | 2026-10-18 | Bug from a user test: `/curate-skills:curate-generate --from …/spec.json` (bundle spec with inline code) | — | interactive (user) | generate | not recorded | — | — |
 
 ## Open items
 
@@ -348,3 +349,29 @@ and prompts, and finding the run.
 | Tests | 1,467 | 1,902 | +435 |
 | Skill, stage and reference text | 1,058 | 1,369 | +311 |
 | **All** | **6,318** | **7,616** | **+1,298** |
+
+## 17. Bug: bundle spec with inline code silently used as seeds (found in a user test, 2026-10-18)
+
+- **What happened** (reported by the user): `/curate-skills:curate-generate --from
+  faasr_output/normal_chunk_stats/spec.json` — a bundle `spec.json` with inline code and no
+  `--functions` flag — placed the old code in the function folders as seeds, labelled every node
+  `[new]`, and still spawned 3 `curate-mga` subagents that only wrote `deps.txt` files.
+- **Cause**: `spec.py import` only applied `--functions-as` to code from a `--functions` folder.
+  Code inside the spec kept the spec's `source: new`; at generate, `new` nodes with code are
+  regenerated with that code as the "previous implementation", and Gate 3 showed `[new]`.
+- **Fix (chosen: require an explicit choice)**: at generate, any function that has code — from
+  `--functions` or inline in the spec — needs `--functions-as reuse` (`[cached] ← [import]`,
+  stub-tested only, no subagents) or `--functions-as seed` (`[adapt] ← [import]`, regenerated
+  from that code). Without it, the import stops with an error naming the functions and both
+  options; no run is created. Gate 3 now shows what actually happens.
+- **Related fix**: bundles were named after the workflow (`faasr_output/<workflow>/`), so two
+  runs of the same workflow (e.g. one imported from the other's `spec.json`) competed for the
+  same folder name (the second got `-2`, untraceable to its run). The folder is now
+  `faasr_output/<workflow>-<run_id>/`, recorded as `bundle_dir` in `state.json`; emitting again in
+  the same run adds `-2`, `-3`…, and an existing non-empty folder is never overwritten (as before).
+- **Tests**: `test_generate_spec_with_inline_code_needs_explicit_choice`,
+  `test_generate_inline_code_labels_match_what_happens` (reuse and seed: sources, which nodes get
+  a subagent, Gate 3 tags), `test_bundle_folder_is_per_run_and_never_overwritten` (two runs →
+  two folders; same run twice → `-2`, first folder untouched, `bundle_dir` updated). The existing
+  `test_bundle_never_overwrites` already covered the `-2` suffix. Mutation check: restoring the
+  silent seeding fails 2 tests; dropping the run id fails 1.

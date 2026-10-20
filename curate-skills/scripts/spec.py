@@ -1211,25 +1211,44 @@ def _is_full_spec(data) -> bool:
         if isinstance(n, dict))
 
 
-def _apply_functions(spec: WorkflowSpec, directory: Optional[str], mode: Optional[str]) -> tuple[WorkflowSpec, list[str]]:
-    if not directory:
-        return spec, []
-    d = Path(directory)
-    if not d.is_dir():
+def _apply_functions(spec: WorkflowSpec, directory: Optional[str], mode: Optional[str],
+                     stage: str) -> tuple[WorkflowSpec, list[str], list[str]]:
+    """Attach code from --functions files (which override code inside the spec).
+
+    At generate, every function that ends up with code (from a file or inline in the spec,
+    e.g. a bundle's spec.json) needs an explicit --functions-as: `reuse` keeps it
+    ([cached] ← [import], stub-tested only) and `seed` regenerates from it
+    ([adapt] ← [import]). Nothing is used silently as a seed.
+    """
+    d = Path(directory) if directory else None
+    if d is not None and not d.is_dir():
         raise InputError(f"--functions {directory} is not a directory")
-    found, nodes = [], []
+    from_files, inline, undecided, nodes = [], [], [], []
     for n in spec.nodes:
-        f = d / f"{n.name}.py"
-        if f.exists():
-            update = {"code": strip_bundle_header(f.read_text())}
+        f = d / f"{n.name}.py" if d is not None else None
+        update: dict = {}
+        if f is not None and f.exists():
+            update["code"] = strip_bundle_header(f.read_text())
+            from_files.append(n.name)
+        elif n.code:
+            inline.append(n.name)
+        has_code = bool(update.get("code") or n.code)
+        if stage == "generate" and has_code:
             if mode == "reuse":
                 update.update(source="cached", origin_kind="import", origin_name=n.name)
             elif mode == "seed":
                 update.update(source="adapt", origin_kind="import", origin_name=n.name)
-            n = n.model_copy(update=update)
-            found.append(n.name)
-        nodes.append(n)
-    return spec.model_copy(update={"nodes": nodes}), found
+            else:
+                undecided.append(n.name)
+        nodes.append(n.model_copy(update=update) if update else n)
+    if undecided:
+        where = " and ".join(x for x, ok in (("--functions", from_files), ("the spec itself", inline)) if ok)
+        raise InputError(
+            f"function(s) {', '.join(undecided)} already have code (from {where}). Say what to do "
+            "with it: --functions-as reuse (keep it as is; stub-tested only, no subagents) or "
+            "--functions-as seed (regenerate each function starting from it). To generate from "
+            "scratch, import a spec without code.")
+    return spec.model_copy(update={"nodes": nodes}), from_files, inline
 
 
 def cmd_import(args) -> dict:
@@ -1241,9 +1260,6 @@ def cmd_import(args) -> dict:
     if args.review and stage not in ("reuse", "generate", "emit"):
         raise InputError(f"--review stops at the gate before {stage}; {stage} has none "
                          "(use it when importing at reuse, generate or emit)")
-    if args.functions and stage == "generate" and args.functions_as not in ("reuse", "seed"):
-        raise InputError("with --functions at generate, say how to use them: --functions-as reuse "
-                         "(keep as is, stub-test only) or --functions-as seed (regenerate from them)")
     src = args.from_file
     if not Path(src).is_file():
         raise InputError(f"{src} not found")
@@ -1319,7 +1335,8 @@ def _import_into(run: Path, s: dict, stage: str, src: str, data, args, warnings:
 
     # generate / emit: a full spec, optionally with function files.
     spec = _load_full_spec(src)
-    spec, found = _apply_functions(spec, args.functions, args.functions_as if stage == "generate" else None)
+    spec, found, inline = _apply_functions(spec, args.functions,
+                                           args.functions_as if stage == "generate" else None, stage)
     s["spec"] = dump(spec)
     s["enriched_spec"] = None
     problems = [p for p in require_problems(s, stage, env={"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"})]
@@ -1334,7 +1351,8 @@ def _import_into(run: Path, s: dict, stage: str, src: str, data, args, warnings:
     save_state(run, s)
     if not args.review:
         cmd_approve(ns(run=str(run), gate=gate))
-    return {"functions_imported": found}
+    return {"functions_imported": found, "inline_code": inline,
+            "functions_as": args.functions_as if stage == "generate" and (found or inline) else None}
 
 
 # ── stages: next / require / begin / end ─────────────────────────────────────

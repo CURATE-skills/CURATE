@@ -161,3 +161,30 @@ def test_review_import_can_be_resumed_at_its_gate(imp, capsys):
     code, out, run = imp("generate", FIX / "spec-resolved.json", "--review")
     out = ok(S, ["begin", "--run", str(run), "--stage", "resolve"], capsys)
     assert out["mode"] == "resume" and out["stage"] == "gate2"
+
+
+# ── regression: a bundle spec.json with inline code (results log #17) ──
+
+def test_generate_spec_with_inline_code_needs_explicit_choice(imp, tmp_path):
+    before = runs_dir(tmp_path)
+    code, out, _ = imp("generate", FIX / "spec-with-code.json")
+    assert code == 2 and "already have code (from the spec itself)" in out["error"]
+    assert "--functions-as reuse" in out["error"] and "--functions-as seed" in out["error"]
+    assert runs_dir(tmp_path) == before  # nothing half-created
+
+
+@pytest.mark.parametrize("mode,source,tag", [("reuse", "cached", "[cached] ← [import]"),
+                                             ("seed", "adapt", "[adapt] ← [import]")])
+def test_generate_inline_code_labels_match_what_happens(imp, capsys, mode, source, tag):
+    import scratch
+    code, out, run = imp("generate", FIX / "spec-with-code.json", "--functions-as", mode)
+    nodes = state(run)["spec"]["nodes"]
+    assert code == 0 and sorted(out["inline_code"]) == sorted(n["name"] for n in nodes)
+    assert out["functions_as"] == mode and {n["source"] for n in nodes} == {source}
+    built = ok(scratch, ["build", "--run", str(run)], capsys)
+    # reuse → no node is generated (no subagents); seed → every node is regenerated from its code
+    assert all(n["generate"] is (mode == "seed") for n in built["nodes"])
+    md = ok(S, ["show", "--run", str(run), "--gate", "3"], capsys)["markdown"]
+    assert f"| `map` | {tag} map |" in md and "[new]" not in md
+    if mode == "seed":
+        assert "seeded from import `map`" in (run / "functions" / "map" / "spec.md").read_text()

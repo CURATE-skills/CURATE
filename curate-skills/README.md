@@ -17,7 +17,7 @@ serverless workflow in six stages, stopping at human approval gates. Run them al
 | `curate-emit` | FaaSr `workflow.json` + functions, validated with FaaSr_py | scripts | Gate **4** |
 | `wda-finalize` | summary, then save verified functions to the catalog | Claude | Gate **5** |
 
-**It does not deploy.** It stops at a validated bundle in `faasr_output/<workflow>/`; deploying
+**It does not deploy.** It stops at a validated bundle in `faasr_output/<workflow>-<run_id>/`; deploying
 to GitHub Actions and monitoring the run are not implemented.
 
 **Versions.** v1 (git tag `v1`) has one `/curate` skill. v2 (branch `v2-files`) splits it into
@@ -90,6 +90,8 @@ waiting at an earlier gate. Going back to an earlier stage needs `--rewind` in t
 `--review` to see the gate before the stage first. Accepted formats per stage, and why a FaaSr
 `workflow.json` is not enough to start from, are in `references/stage-io.md`. Code you bring
 counts as verified only after it has been stub-tested at generate (`--functions-as reuse`).
+A spec that already contains code (such as a bundle's `spec.json`) needs `--functions-as
+reuse|seed` too; the import stops rather than guess.
 
 - `--attach model.py`: your own Python script or function becomes a workflow step, wrapped
   verbatim (or adapted, if you ask for changes to it) and checked for output parity.
@@ -129,7 +131,8 @@ use the flag or the environment variable there.
   `.gitignore`.
 - `.curate/mga.lock.json` while a `curate-mga` subagent runs; `.curate/mga_guard.log` for denied
   writes (and every subagent call when `CURATE_GUARD_DEBUG=1`).
-- `faasr_output/<workflow>/` — the bundle: `workflow.json`, `functions/`, `spec.json`,
+- `faasr_output/<workflow>-<run_id>/` — the bundle, one folder per run (a numbered `-2`… if a run
+  emits again; an existing bundle is never overwritten), path recorded in `state.json`: `workflow.json`, `functions/`, `spec.json`,
   `external_inputs.json`, `README.md`. Unset `FAASR_*` deployment variables appear as
   `<FAASR_NAME>` placeholders; only secret **names** are ever written, and the bundle is not
   written if a known secret value would appear in it.

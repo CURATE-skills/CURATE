@@ -8,7 +8,9 @@ function has code generated for the current spec). If the run is already at `gat
 step 3.
 
 1. `emit.py bundle --run <run> --out <project>/faasr_output` (`<project>` = the run's
-   `project_dir` from `spec.py status`). It writes `workflow.json`, the functions, `spec.json`,
+   `project_dir` from `spec.py status`). The bundle goes to a new folder
+   `faasr_output/<workflow>-<run_id>/` (`-2`, `-3`… if emitted again; an existing folder is never
+   overwritten), recorded as `bundle_dir`. It writes `workflow.json`, the functions, `spec.json`,
    `external_inputs.json` and a README; validates with FaaSr_py (or structural checks if FaaSr_py
    cannot run); records `bundle_dir` and the validation with the spec's hash; and moves the run to
    `gate4`. It refuses to write anything if a secret value would leak.

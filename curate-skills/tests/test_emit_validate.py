@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -244,3 +245,29 @@ def test_cli_rejects_bad_spec(tmp_path, capsys):
                                "edges": [{"from_node": "a", "to_node": "ghost"}]}))
     assert emit.main(["emit", "--spec", str(bad)]) == 2
     assert "ghost" in capsys.readouterr().out
+
+
+def test_bundle_folder_is_per_run_and_never_overwritten(tmp_path, capsys, structural_only):
+    out_root = tmp_path / "out"
+
+    def make(run_id):
+        run = tmp_path / run_id
+        run.mkdir()
+        (run / "state.json").write_text(json.dumps({"run_id": run_id,
+                                                    "spec": json.loads(single_node_spec().model_dump_json())}))
+        return run
+
+    a, b = make("20261018-run-a"), make("20261018-run-b")
+    emit.main(["bundle", "--run", str(a), "--out", str(out_root)])
+    first = json.loads(capsys.readouterr().out)["bundle_dir"]
+    emit.main(["bundle", "--run", str(b), "--out", str(out_root)])
+    other = json.loads(capsys.readouterr().out)["bundle_dir"]
+    assert first.endswith("local_function_test-20261018-run-a")
+    assert other.endswith("local_function_test-20261018-run-b")
+
+    marker = Path(first) / "workflow.json"
+    before = marker.read_text()
+    emit.main(["bundle", "--run", str(a), "--out", str(out_root)])  # same run again
+    again = json.loads(capsys.readouterr().out)["bundle_dir"]
+    assert again == first + "-2" and marker.read_text() == before
+    assert json.loads((a / "state.json").read_text())["bundle_dir"] == again
