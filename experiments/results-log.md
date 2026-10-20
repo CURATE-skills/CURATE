@@ -40,6 +40,7 @@ Claude Code 2.1.299 for every run.
 | 17 | 2026-10-18 | Bug from a user test: `/curate-skills:curate-generate --from …/spec.json` (bundle spec with inline code) | — | interactive (user) | generate | not recorded | — | — |
 | 18 | 2026-10-19 | Finding from a user test: plain request "re-generate the code for run …" → Claude rewound the run itself, without asking | — | interactive (user) | generate (rewind) | not recorded | — | — |
 | 19 | 2026-10-19 | Bug from the same test: after a rewind to generate, old code was placed in the folders of functions marked new | — | interactive (user) | generate | not recorded | — | — |
+| 20 | 2026-10-19 | U0: re-test of the plain request "I want to re-generate the code for run X" (commit `a5170ad`) | claude-opus-5-5 | headless, 3 fresh sessions | — | 0.131 | 3 | — |
 
 ## Open items
 
@@ -427,3 +428,27 @@ and prompts, and finding the run.
   check, the strip on rewind, or the build guard each fails one test.
 - **The user's run** (`curate-tests/.curate/runs/20261018-215939-normal-stats`) was not touched by
   these fixes; it was rewound under the old code.
+
+## 20. U0: re-test of finding #18 (plain request, no skill named)
+
+- Setup: a throwaway copy of run #14's project (`20261017-163538-mapreduce`, `stage: done`);
+  plugin loaded with the same tool permissions as the user's test (`Skill Read Write Glob Grep
+  Bash(uv run *) Agent`, so Claude *could* run `spec.py`); `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`.
+  Prompt, verbatim: "I want to re-generate the code for run 20261017-163538-mapreduce."
+- Repeated 3 times, each a fresh headless session.
+
+| # | Session | Cost (USD) | Turns | Tool calls | Named the command | Stated the cost (revision round) |
+|---|---|---|---|---|---|---|
+| 1 | `478b2b10-1b52-4b49-adff-d2867d87266b` | 0.070 | 1 | none | yes | no |
+| 2 | `29a17d41-2b60-4b97-98f7-a22278aec823` | 0.054 | 1 | none | yes | no |
+| 3 | `3eab87c4-d5e8-4fa1-b355-f5a074d22c4d` | 0.007 | 1 | none | yes | no |
+
+- Reply (run 1): "To re-generate the code for that run, type this command:
+  `/curate-skills:curate-generate --run 20261017-163538-mapreduce`. It will ask you to confirm
+  before it goes back to the code-generation stage. Anything produced after that stage, like the
+  validated FaaSr bundle, may need to be rebuilt afterwards."
+- Result: in 3/3 runs Claude named the stage command and did nothing else; `state.json` and every
+  file in the project are byte-identical afterwards (sha1 of all files compared).
+- Gaps: none of the replies stated the cost (one revision round), and none offered the safe
+  alternative (a new run), which does not exist yet; both are planned for U4's description change.
+- Caveat: headless, not interactive like the user's test; 3 runs only.
