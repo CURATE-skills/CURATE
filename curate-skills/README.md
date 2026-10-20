@@ -100,7 +100,8 @@ waiting at an earlier gate. Going back to an earlier stage needs `--rewind` in t
 `workflow.json` is not enough to start from, are in `references/stage-io.md`. Code you bring
 counts as verified only after it has been stub-tested at generate. When you start generate
 with code — a `--functions` folder, or a spec that already contains code such as a bundle's
-`spec.json` — say what to do with it; the import stops rather than guess:
+`spec.json` — say what to do with it with `--existing-code`. If you don't, the skill asks you
+(Keep / Rewrite / Ignore); in a headless run it stops and lists the options. It never guesses:
 
 | `--existing-code` | What happens | Gate 3 shows |
 |---|---|---|

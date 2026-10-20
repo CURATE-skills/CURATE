@@ -34,7 +34,9 @@ description; `--request-file` overrides it.
 | finalize | not supported (a bundle has no stub-test results) | use `--run` |
 
 At generate, any code you bring — a `--functions` folder, or code already inside the spec
-(e.g. a bundle's `spec.json`) — needs an explicit `--existing-code`; without one the import stops:
+(e.g. a bundle's `spec.json`) — needs an explicit `--existing-code`. Without one, the import creates nothing and returns
+`needs_choice: "existing_code"`; the skill then asks you (Keep / Rewrite / Ignore) and reruns, or, in a
+headless run where it cannot ask, stops with the three options:
 
 | `--existing-code` | What happens | Gate 3 shows |
 |---|---|---|

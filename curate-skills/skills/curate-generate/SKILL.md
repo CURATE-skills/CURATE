@@ -26,6 +26,12 @@ Arguments: `$ARGUMENTS`
   Keep the `--config-*` values in single quotes exactly as written. Map `--catalog` →
   `--catalog-dir`, `--attach` → `--user-model`, `--context` → `--context-file`. Tell the user the
   run id, the settings and any `warnings`. Accepted files: `${CLAUDE_PLUGIN_ROOT}/references/stage-io.md`.
+- If the import fails with `needs_choice: "existing_code"` (some functions already have code
+  and you didn't say what to do with it): ask the user with AskUserQuestion — question "What
+  should happen to the existing code of <functions>?", options **Keep**, **Rewrite**, **Ignore**
+  with the returned `options` texts as descriptions — then rerun the same import with
+  `--existing-code keep|rewrite|ignore`. If you cannot ask (no AskUserQuestion, e.g. a headless
+  run), show the error and the three options and stop. Never choose for the user.
 - Neither: ask for `--run` or `--from`. On exit 2, show the `error` exactly and stop.
 
 ## 2. Begin

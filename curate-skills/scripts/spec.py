@@ -99,6 +99,21 @@ class InputError(Exception):
     pass
 
 
+class NeedsChoice(InputError):
+    """A decision only the user can make; the caller should ask, then rerun with it."""
+
+    def __init__(self, message: str, choice: str, options: dict, **extra):
+        super().__init__(message)
+        self.details = {"needs_choice": choice, "options": options, **extra}
+
+
+EXISTING_CODE_OPTIONS = {
+    "keep": "Keep your code as it is: each function is only stub-tested; no subagents run.",
+    "rewrite": "Rewrite: a subagent regenerates each function, starting from your code.",
+    "ignore": "Ignore: drop your code and generate every function from scratch.",
+}
+
+
 # ── state I/O ────────────────────────────────────────────────────────────────
 
 def load_state(run: str | Path) -> dict:
@@ -1263,11 +1278,12 @@ def _apply_functions(spec: WorkflowSpec, directory: Optional[str], mode: Optiona
         nodes.append(n.model_copy(update=update) if update else n)
     if undecided:
         where = " and ".join(x for x, ok in (("--functions", from_files), ("the spec itself", inline)) if ok)
-        raise InputError(
+        raise NeedsChoice(
             f"function(s) {', '.join(undecided)} already have code (from {where}). Say what to do "
             "with it: --existing-code keep (keep it as is; stub-tested only, no subagents), "
             "--existing-code rewrite (regenerate each function starting from it) or "
-            "--existing-code ignore (drop it and generate from scratch).")
+            "--existing-code ignore (drop it and generate from scratch).",
+            "existing_code", EXISTING_CODE_OPTIONS, functions=undecided, flag="--existing-code")
     return spec.model_copy(update={"nodes": nodes}), from_files, inline
 
 
@@ -1865,7 +1881,7 @@ def main(argv=None) -> int:
         with run_lock(getattr(args, "run", None) or "/nonexistent"):
             result = COMMANDS[args.cmd](args)
     except (InputError, OSError, ValidationError) as e:
-        print(json.dumps({"ok": False, "error": str(e)}))
+        print(json.dumps({"ok": False, "error": str(e), **getattr(e, "details", {})}, indent=2))
         return 2
     print(json.dumps(result, indent=2))
     return 0 if result.get("ok") else 1

@@ -31,6 +31,12 @@ With `import`, always add `--config-catalog-dir '${user_config.catalog_dir}'
 --config-mga-retries '${user_config.mga_retries}' --config-stubtest-mode '${user_config.stubtest_mode}'`
 in single quotes exactly as written, and map `--catalog` → `--catalog-dir`, `--attach` →
 `--user-model`, `--context` → `--context-file`. Tell the user the run id and the settings.
+- If the import fails with `needs_choice: "existing_code"` (some functions already have code
+  and you didn't say what to do with it): ask the user with AskUserQuestion — question "What
+  should happen to the existing code of <functions>?", options **Keep**, **Rewrite**, **Ignore**
+  with the returned `options` texts as descriptions — then rerun the same import with
+  `--existing-code keep|rewrite|ignore`. If you cannot ask (no AskUserQuestion, e.g. a headless
+  run), show the error and the three options and stop. Never choose for the user.
 
 ## The loop — standing instructions for this whole session
 

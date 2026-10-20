@@ -217,3 +217,24 @@ def test_existing_code_hidden_alias_not_in_help(capsys):
         S.main(["import", "--help"])
     help_text = capsys.readouterr().out
     assert "--existing-code" in help_text and "--functions-as" not in help_text
+
+
+def test_missing_existing_code_returns_a_choice_to_ask(imp, tmp_path):
+    before = runs_dir(tmp_path)
+    code, out, _ = imp("generate", FIX / "spec-with-code.json")
+    assert code == 2 and out["ok"] is False and runs_dir(tmp_path) == before  # headless: refuse, create nothing
+    assert out["needs_choice"] == "existing_code" and out["flag"] == "--existing-code"
+    assert set(out["options"]) == {"keep", "rewrite", "ignore"}
+    assert all(out["options"][k].strip() for k in out["options"])
+    assert sorted(out["functions"]) == sorted(n["name"] for n in coded_nodes())
+    code, out, _ = imp("generate", FIX / "spec-resolved.json")  # no code anywhere: no choice needed
+    assert code == 0 and "needs_choice" not in out
+
+
+def coded_nodes():
+    return json.loads((FIX / "spec-with-code.json").read_text())["nodes"]
+
+
+def test_other_errors_carry_no_choice(imp):
+    code, out, _ = imp("generate", FIX / "skeleton.json")
+    assert code == 2 and "needs_choice" not in out

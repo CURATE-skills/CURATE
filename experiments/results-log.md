@@ -41,6 +41,7 @@ Claude Code 2.1.299 for every run.
 | 18 | 2026-10-19 | Finding from a user test: plain request "re-generate the code for run …" → Claude rewound the run itself, without asking | — | interactive (user) | generate (rewind) | not recorded | — | — |
 | 19 | 2026-10-19 | Bug from the same test: after a rewind to generate, old code was placed in the folders of functions marked new | — | interactive (user) | generate | not recorded | — | — |
 | 20 | 2026-10-19 | U0: re-test of the plain request "I want to re-generate the code for run X" (commit `a5170ad`) | claude-opus-5-5 | headless, 3 fresh sessions | — | 0.131 | 3 | — |
+| 21 | 2026-10-19 | U1: missing `--existing-code` with a spec that has code (headless) | claude-opus-5-5 | headless, 2 sessions | generate import | 0.117 + 0.137 = 0.254 | 5 | — |
 
 ## Open items
 
@@ -452,3 +453,20 @@ and prompts, and finding the run.
 - Gaps: none of the replies stated the cost (one revision round), and none offered the safe
   alternative (a new run), which does not exist yet; both are planned for U4's description change.
 - Caveat: headless, not interactive like the user's test; 3 runs only.
+
+## 21. U1: asking for `--existing-code`
+
+- Change: when code is present and `--existing-code` is missing, `spec.py import` creates nothing
+  and returns `needs_choice: "existing_code"` with `options` (keep / rewrite / ignore, one line
+  each), the `functions` concerned and the `flag`. The generate skill and `/curate` ask with
+  AskUserQuestion and rerun with the answer; where they cannot ask, they stop and list the options.
+- Headless check (no question tool), `tests/fixtures/e2-stages/spec-with-code.json`, empty catalog:
+
+| Invocation | Session | Cost (USD) | Turns | Result | Runs created |
+|---|---|---|---|---|---|
+| `/curate-skills:curate-generate --from spec-with-code.json` | `498e40b8-428e-46c0-81dd-9218229c4c14` | 0.117 | 2 | stopped without choosing; named the 5 functions; listed Keep / Rewrite / Ignore; gave the command with `--existing-code keep` as an example; offered to redo the import if the user replies with a choice | 0 |
+| `/curate-skills:curate --from spec-with-code.json --stage generate` | `1f52d233-ce03-4e99-9a95-d21f569232b1` | 0.137 | 3 | same: stopped, listed the options, example command | 0 |
+
+- Tests: `test_missing_existing_code_returns_a_choice_to_ask` (fields, nothing created, no choice
+  needed for a spec without code), `test_other_errors_carry_no_choice`.
+- Not tested: the interactive path (AskUserQuestion in a live session); needs a user session.
