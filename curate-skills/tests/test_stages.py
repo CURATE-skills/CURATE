@@ -310,3 +310,34 @@ def test_build_never_seeds_a_new_function_with_code(make_run, capsys):
         d = run / "functions" / n["name"]
         assert not (d / f"{n['name']}.py").exists()
         assert "Previous Implementation" not in (d / "spec.md").read_text()
+
+
+# ── from the user's interactive U1 test ──
+
+def test_stopped_run_names_the_resume_command(make_run, capsys):
+    run = make_run(stage="gate2", spec=resolved_spec())
+    rid = state(run)["run_id"]
+    out = ok(S, ["set-stage", "--run", str(run), "--stage", "stopped"], capsys)
+    for out in (out, ok(S, ["next", "--run", str(run)], capsys), ok(S, ["status", "--run", str(run)], capsys)):
+        assert out["resume_command"] == f"/curate-skills:curate --resume {rid}"
+        assert out["resume_stage_command"] == f"/curate-skills:curate-resolve --run {rid}"
+        assert out["stopped_from"] == "gate2"
+    assert "resume_command" not in ok(S, ["next", "--run", str(make_run(stage="gate2"))], capsys)
+
+
+def test_gate3_after_a_kept_import_says_kept_and_passed(tmp_path, capsys, monkeypatch):
+    import stubtest
+    code, out = call(S, ["import", "--stage", "generate", "--from", str(FIX / "spec-with-code.json"),
+                         "--existing-code", "keep", "--project-dir", str(tmp_path / "p"),
+                         "--catalog-dir", str(tmp_path / "c")], capsys)
+    run = out["run"]
+    ok(S, ["begin", "--run", run, "--stage", "generate"], capsys)
+    built = ok(scratch, ["build", "--run", run], capsys)
+    assert not any(n["generate"] for n in built["nodes"])  # kept: no subagents
+    for n in built["order"]:
+        assert stubtest.run_stubtest(Path(run), n)["ok"]
+        ok(scratch, ["record", "--run", run, "--node", n, "--status", "reused"], capsys)
+    ok(S, ["end", "--run", run, "--stage", "generate"], capsys)
+    md = ok(S, ["show", "--run", run, "--gate", "3"], capsys)["markdown"]
+    for n in built["order"]:
+        assert f"| `{n}` | kept: your code | passed (not regenerated) |" in md

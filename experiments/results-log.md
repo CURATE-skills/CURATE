@@ -42,6 +42,8 @@ Claude Code 2.1.299 for every run.
 | 19 | 2026-10-19 | Bug from the same test: after a rewind to generate, old code was placed in the folders of functions marked new | — | interactive (user) | generate | not recorded | — | — |
 | 20 | 2026-10-19 | U0: re-test of the plain request "I want to re-generate the code for run X" (commit `a5170ad`) | claude-opus-5-5 | headless, 3 fresh sessions | — | 0.131 | 3 | — |
 | 21 | 2026-10-19 | U1: missing `--existing-code` with a spec that has code (headless) | claude-opus-5-5 | headless, 2 sessions | generate import | 0.117 + 0.137 = 0.254 | 5 | — |
+| 22 | 2026-10-19 | U4: `/curate --start-at` from a run and from a bundle; plain request after the description change | claude-opus-5-5 | headless, 11 sessions | generate / emit | 2.925 | 85 | 0 |
+| 23 | 2026-10-19 | U4 finish: "Start this run?" confirmation (yes / stop), resume commands, Gate 3 kept labels | claude-opus-5-5 | headless, 2 sessions × 2 turns | emit (from bundle) | 0.284 + 0.190 = 0.474 | 16 | 0 |
 
 ## Open items
 
@@ -470,3 +472,60 @@ and prompts, and finding the run.
 - Tests: `test_missing_existing_code_returns_a_choice_to_ask` (fields, nothing created, no choice
   needed for a spec without code), `test_other_errors_carry_no_choice`.
 - Not tested: the interactive path (AskUserQuestion in a live session); needs a user session.
+
+## 22. U4: `/curate --start-at` with typed sources
+
+Source for every check: a throwaway copy of run #14's project (`20261017-163538-mapreduce`,
+`stage: done`, with its bundle `faasr_output/mapreduce_word_count`). Each check in its own copy.
+
+| Check | Session | Cost (USD) | Turns | Result |
+|---|---|---|---|---|
+| A. `/curate-skills:curate --start-at generate --from-run 20261017-163538-mapreduce` | `efb64db1-b8a8-4b93-bec2-c91352b93dcd` | 1.559 | 30 | new run `20261019-224212-mapreduce-word-count`; copied the Gate 2 snapshot (no code); 5 `curate-mga` spawns, 5/5 passed strict stub tests on attempt 1; reducers 1000 each; stopped at Gate 3 |
+| B. `/curate-skills:curate --start-at emit --from-bundle …/mapreduce_word_count` | `8e5b89ee-e480-4e00-a625-5d1c03e316e5` | 0.264 | 11 | new run `20261019-224713-spec`; bundle validated (`faasr_py`) into `faasr_output/mapreduce_word_count-20261019-224713-spec`; warned that unverified code won't be saved; stopped at Gate 4 |
+| B, repeated after the summary changes (3×) | `1db359c8-8135-46fe-8549-9a2c1ad6d7b8`, `9dd15c24-3711-4c10-96d4-3b8cd5be45eb`, `f752e9f6-d094-4e3a-99c7-285f02350701` | 0.276 / 0.265 / 0.250 | 11 / 11 / 10 | same result each time; the "what will be used" summary was **not** printed (see below) |
+| C. plain request "I want to re-generate the code for run …" (3×), first description | `dff37b72-f7cc-4312-b1bf-de550c445768`, `ccef7125-2292-4505-82ee-0296ee356c43`, `938cef98-62a3-4653-98d5-341797a32f2e` | 0.114 / 0.050 / 0.052 | 1 each | safe option first and the revision-round cost stated, **but an invented stage name** (`--start-at codegen`, `curate-codegen`): wrong commands; read-only Glob/Grep/`find` calls; no changes |
+| C, after naming the stages in the description (3×) | `39ae04f5-dbf2-41a3-ba64-341b110dab69`, `ea72703f-4572-4115-a5b1-565f4f27216a`, `11b0933e-72a6-460a-9309-fae7a77aba87` | 0.075 / 0.010 / 0.010 | 1 each | **3/3 correct**: no tool calls; exact `/curate-skills:curate --start-at generate --from-run …` first; exact `/curate-skills:curate-generate --run …` second with "1 revision round"; no changes |
+
+- Source untouched: in every check the source run folder and the source bundle are byte-identical
+  afterwards (sha1 of every file); new bundles went to new per-run folders.
+- Stage order: A start → next → begin(generate) → 5 spawns → end; B start → next → begin(emit).
+  No Skill tool calls, no unprompted or wrong starts.
+- **Unmet: "print what will be used before starting".** `spec.py start` returns a ready-made
+  `summary` (markdown: source, snapshot/file, functions with code and stub-test results, what is
+  copied and redone, settings). In 4 headless attempts with three wordings (print after the dry
+  run; print as the next message after `start`; print as part of the loop's first `Stage:` line),
+  the session never printed it — it went from the tool call straight on, at most with its own
+  one-line "new run …" message. Interactive sessions not tested.
+- Tests: `tests/test_start.py`, 15 tests (each source and stage; dry run creates nothing; refusals
+  for a gate never approved, a superseded approval, v1, partial and unknown ids, bundle without
+  spec or code, wrong source for the stage, not exactly one source, `--existing-code` off
+  generate; source byte-identical; `copied` record; summary). Mutation check: ignoring superseded
+  approvals fails 1 test; copying the source's old code fails 5; writing to the source fails 5.
+
+## 23. U4 finish: confirmation before starting, resume commands, Gate 3 labels
+
+- **Confirmation (fixes #22's unmet item):** after `spec.py start`, `/curate` shows the returned
+  `summary` inside an AskUserQuestion "Start this run? Yes / Stop" — or, headless, prints the
+  summary and "Reply yes to start or stop to leave it." — and waits. Stop = `set-stage stopped` on
+  the new run: nothing is deleted, the source was never touched, the new run stays (stopped, no
+  stage work), and the resume command is given.
+
+| Session | Turn | Cost (USD) | Turns | Result |
+|---|---|---|---|---|
+| Y `a7fe0c67-9774-4d3e-8138-5d493ec2eb0e` | `/curate --start-at emit --from-bundle …` | 0.137 | 2 | summary **printed**, then "Reply yes to start or stop" |
+| Y | `yes` | 0.147 | 9 | emit ran; bundle valid (`faasr_py`) in a new per-run folder; Gate 4 |
+| N `49ab3074-e630-4c14-b705-fe9d3cb19570` | same | 0.134 | 2 | summary printed, asked |
+| N | `stop` | 0.056 | 3 | new run `20261019-225851-spec` marked stopped (from emit), nothing deleted; gave `/curate-skills:curate --resume …` and `/curate-skills:curate-emit --run …` |
+
+- Source run and source bundle byte-identical afterwards in both sessions.
+- **Bug found and fixed**: the summary of a real (not dry-run) start from a bundle or file showed
+  "Workflow: `None`, 0 functions" and an empty "Redoes" — the import path did not fill those
+  fields. Now filled; test `test_real_start_from_bundle_summary_is_complete`.
+- **Resume commands** (from the user's interactive U1 test): for a stopped run, `spec.py next`,
+  `status` and `set-stage stopped` return `resume_command` (`/curate-skills:curate --resume <id>`)
+  and `resume_stage_command` (the stage skill for where it stopped). Test
+  `test_stopped_run_names_the_resume_command`.
+- **Gate 3 labels for kept code** (from the same test): confirmed `kept: your code` after the full
+  generate stage (build → stub-test → record → end). The "Stub test" column now says
+  `passed (not regenerated)` / `FAILED (not regenerated)` instead of `reused` / `reused_failed`
+  (display only; state unchanged). Test `test_gate3_after_a_kept_import_says_kept_and_passed`.

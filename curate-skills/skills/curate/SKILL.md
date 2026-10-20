@@ -1,7 +1,7 @@
 ---
 name: curate
-description: Build a FaaSr serverless scientific workflow from a natural-language sketch with CURATE — skeleton, catalog reuse, code generation and a validated FaaSr bundle, with human approval gates. Use when the user asks to compose, build, generate or revise a FaaSr workflow or a multi-step serverless pipeline, or runs /curate. For a request to redo one stage of an existing CURATE run (e.g. "re-generate the code for run X"), do not run CURATE's scripts yourself: tell the user the stage command to type, such as /curate-skills:curate-generate --run <run_id>, which asks before going back.
-argument-hint: "<workflow sketch> | --resume <run_id> | --from <file> --stage <stage> [--catalog DIR] [--attach model.py] [--context FILE] [--mga-retries N] [--stubtest-mode strict|parity]"
+description: Build a FaaSr serverless scientific workflow from a natural-language sketch with CURATE — skeleton, catalog reuse, code generation and a validated FaaSr bundle, with human approval gates. Use when the user asks to compose, build, generate or revise a FaaSr workflow or a multi-step serverless pipeline, or runs /curate. For a request to redo a stage of an existing CURATE run, do not run CURATE's scripts or rewind yourself; tell the user the command to type and wait. The stages are skeleton, reuse, resolve, generate, emit, finalize (regenerating code = generate). Safe option first: /curate-skills:curate --start-at generate --from-run <run_id> (a new run from that run's approved results; the original is untouched; no revision round used). Then the alternative: /curate-skills:curate-generate --run <run_id> (goes back inside the same run, uses 1 revision round, asks before rewinding). For another stage, replace generate with that stage's name.
+argument-hint: "<workflow sketch> | --start-at <stage> (--from-run <run_id> | --from-bundle <folder> | --from-file <file> | --sketch \"<text>\" | --sketch-file <file>) | --resume <run_id> | --from <file> --stage <stage> [--catalog DIR] [--attach model.py] [--context FILE] [--mga-retries N] [--stubtest-mode strict|parity]"
 allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*), Agent(curate-skills:curate-mga)
 ---
 
@@ -20,6 +20,22 @@ Arguments: `$ARGUMENTS`
 
 ## Start
 
+- `--start-at <stage>` with exactly one source starts a **new** run; the source is never changed:
+  `--from-run <run_id>` (copies that run's gate-approved results), `--from-bundle <folder>`
+  (generate or emit), `--from-file <file>` (see `stage-io.md`), `--sketch "<text>"` (write it to
+  `.curate/sketches/<short-name>.txt` first) or `--sketch-file <file>`.
+  1. `spec.py start --at <stage> <source flag> [--existing-code …] [init flags]`. It only
+     creates the new run; nothing is done to the source. (`--dry-run` previews without creating.)
+  2. If it refused, show the `error` exactly and stop — never guess another source or stage.
+     A `needs_choice` gets the Keep / Rewrite / Ignore question below.
+  3. **Ask before any stage work.** Show the returned `summary` (markdown) inside an
+     AskUserQuestion — question "Start this run?", options **Yes** and **Stop** — with the summary
+     as the question's context. Without AskUserQuestion (e.g. headless), print the `summary`
+     exactly, then "Reply **yes** to start or **stop** to leave it." and end the turn. Wait.
+     - **Yes** → the loop.
+     - **Stop** → `spec.py set-stage --run <new run> --stage stopped`. Nothing is deleted: the
+       source was never touched, and the new run stays, marked stopped and unchanged otherwise.
+       Tell the user the `resume_command` it returns.
 - `--resume <run_id>`: find it with `spec.py runs`; also run `scratch.py unlock --run <run>`
   (clears this run's leftover subagent lock, if any).
 - `--from <file> --stage <stage>`: `spec.py import --stage <stage> --from <file> …` with the
@@ -27,7 +43,7 @@ Arguments: `$ARGUMENTS`
 - Otherwise the text is the sketch: write it verbatim to `.curate/sketches/<short-name>.txt`
   and `spec.py import --stage skeleton --from <that file>`.
 
-With `import`, always add `--config-catalog-dir '${user_config.catalog_dir}'
+With `import` or `start`, always add `--config-catalog-dir '${user_config.catalog_dir}'
 --config-mga-retries '${user_config.mga_retries}' --config-stubtest-mode '${user_config.stubtest_mode}'`
 in single quotes exactly as written, and map `--catalog` → `--catalog-dir`, `--attach` →
 `--user-model`, `--context` → `--context-file`. Tell the user the run id and the settings.
@@ -44,7 +60,7 @@ These hold until the run is done or stopped, including after the user answers a 
 later turn:
 
 1. `spec.py next --run <run>` → `next_skill`, e.g. `curate-skills:curate-reuse`. If it is none,
-   the run is done or stopped: summarize and stop.
+   the run is done or stopped: summarize and stop (for a stopped run, give its `resume_command`).
 2. Its stage is the part after `curate-` (`skeleton`, `reuse`, `resolve`, `generate`, `emit`);
    for `wda-finalize` it is `finalize`. Tell the user one line: `Stage: <stage>`.
 3. `spec.py begin --run <run> --stage <stage>`. If refused, show the `error` exactly and stop.

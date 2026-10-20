@@ -34,6 +34,8 @@ exit 0 ok, 1 check failed / needs attention, 2 bad input.
   spec.py set-stage       --run R --stage S        (low level: stop, tests)
   spec.py import          --stage S --from FILE [--candidates F] [--functions DIR]
                           [--existing-code keep|rewrite|ignore] [--review] [init flags]
+  spec.py start           --at S (--from-run ID | --from-bundle DIR | --from-file F | --sketch-file F)
+                          [--existing-code …] [--dry-run] [init flags]   (new run; source untouched)
   spec.py next            --run R
   spec.py require         --run R --stage S
   spec.py begin           --run R --stage S [--rewind --confirmed]
@@ -349,7 +351,8 @@ def cmd_status(args) -> dict:
             "mga": {k: v.get("status") for k, v in (s.get("mga") or {}).items()},
             "bundle_dir": s.get("bundle_dir"), "validation": s.get("validation"),
             "auto_emit_retries": auto_emit_retries(s), "next_skill": next_skill(s),
-            "stopped_from": s.get("stopped_from")}
+            "stopped_from": s.get("stopped_from"),
+            **(resume_commands(s) if s["stage"] == "stopped" else {})}
 
 
 def auto_emit_retries(s: dict) -> int:
@@ -1180,7 +1183,10 @@ def cmd_set_stage(args) -> dict:
     s["stage"] = args.stage
     s["begun"] = None
     save_state(run, s)
-    return {"ok": True, "stage": args.stage, "next_skill": next_skill(s)}
+    out = {"ok": True, "stage": args.stage, "next_skill": next_skill(s)}
+    if args.stage == "stopped":
+        out.update(resume_commands(s))
+    return out
 
 
 # ── import: start a stage from your own files ────────────────────────────────
@@ -1393,6 +1399,223 @@ def _import_into(run: Path, s: dict, stage: str, src: str, data, args, warnings:
             "existing_code": mode if found or inline else None}
 
 
+# ── start: /curate --start-at with typed sources ─────────────────────────────
+
+# Which gate's approval a start point builds on, and the stage that owns that gate.
+START_GATE = {"reuse": 1, "resolve": 2, "generate": 2, "emit": 3, "finalize": 4}
+GATE_OWNER = {1: "skeleton", 2: "resolve", 3: "generate", 4: "emit"}
+# Fields copied from the approval snapshot (besides spec), per start point.
+START_COPY = {
+    "reuse": (),
+    "resolve": ("enriched_spec", "enriched_basis", "spec_basis", "candidates"),
+    "generate": ("enriched_spec", "spec_basis"),
+    "emit": ("enriched_spec", "spec_basis", "mga"),
+    "finalize": ("enriched_spec", "spec_basis", "mga", "validation", "bundle_dir"),
+}
+INIT_FLAGS = ("user_model", "context_file", "catalog_dir", "config_catalog_dir", "mga_retries",
+              "config_mga_retries", "stubtest_mode", "config_stubtest_mode", "project_dir")
+
+
+def _find_run(ref: str, project: Path) -> Path:
+    p = Path(ref).expanduser()
+    if (p / "state.json").is_file():
+        return p.resolve()
+    runs = project / ".curate" / "runs"
+    if (runs / ref / "state.json").is_file():
+        return (runs / ref).resolve()
+    close = sorted(d.name for d in runs.iterdir() if d.is_dir() and ref in d.name) if runs.is_dir() else []
+    if close:
+        raise InputError(f"no run is exactly {ref!r}; did you mean one of: {', '.join(close)}? "
+                         "Give the full run id (or the run's folder)")
+    raise InputError(f"no run {ref!r} in {runs} (give a run id from this project, or a run folder)")
+
+
+def _superseded_by(history: list, approval_index: int, gate: int) -> Optional[dict]:
+    """A later change request or rewind that sent the run back before `gate`."""
+    owner = STAGE_NAMES.index(GATE_OWNER[gate])
+    for h in history[approval_index + 1:]:
+        target = None
+        if h.get("decision") == "revise":
+            target = "skeleton" if h.get("structural") else "reuse"
+        elif h.get("decision") == "rewind":
+            m = re.match(r"to (\w+)", h.get("text") or "")
+            target = m.group(1) if m else None
+        if target and STAGE_NAMES.index(target) <= owner:
+            return h
+    return None
+
+
+def _start_from_run(args, at: str) -> dict:
+    project = Path(args.project_dir or ".").resolve()
+    src = _find_run(args.from_run, project)
+    st = json.loads((src / "state.json").read_text())  # read only: no lock, nothing written
+    if st.get("schema_version", 1) < SCHEMA_VERSION:
+        raise InputError(f"run {st.get('run_id')} was made by curate-skills v1; start from it with the "
+                         "v1 plugin (the curate-v1 worktree)")
+    gate = START_GATE[at]
+    history = st.get("history") or []
+    approvals = [i for i, h in enumerate(history) if h.get("gate") == gate and h.get("decision") == "approve"]
+    if not approvals:
+        raise InputError(f"run {st['run_id']} never approved Gate {gate}, which starting at {at} builds on "
+                         f"(the run is at stage {st['stage']}); approve Gate {gate} in that run first, "
+                         "or start at an earlier stage")
+    sup = _superseded_by(history, approvals[-1], gate)
+    if sup:
+        raise InputError(f"run {st['run_id']}'s last Gate {gate} approval was superseded by a later "
+                         f"{sup['decision']} at gate {sup['gate']} ({(sup.get('text') or '')[:80]!r}) and "
+                         f"Gate {gate} was not approved again; finish that in run {st['run_id']}, or start "
+                         "at an earlier stage")
+    snaps = sorted((src / "history").glob(f"*-gate{gate}-approve.json"))
+    if not snaps:
+        raise InputError(f"run {st['run_id']} has no Gate {gate} approval snapshot in history/")
+    snap_path = snaps[-1]
+    snap = json.loads(snap_path.read_text())
+    if not snap.get("spec"):
+        raise InputError(f"{snap_path.name} has no approved spec")
+    spec = spec_of(snap["spec"])
+    copied = {f: snap.get(f) for f in START_COPY[at] if snap.get(f) not in (None, {}, [])}
+    preview = {
+        "source": {"kind": "run", "run_id": st["run_id"], "run_dir": str(src),
+                   "source_stage_now": st["stage"]},
+        "uses": f"history/{snap_path.name} (the latest Gate {gate} approval)",
+        "workflow": spec.name,
+        "functions": [{"name": n.name, "source": n.source, "has_code": bool(n.code),
+                       "stub_test": ((snap.get("mga") or {}).get(n.name) or {}).get("status")
+                       if at in ("emit", "finalize") else None} for n in spec.nodes],
+        "copies": ["approved spec"] + sorted(copied) + ["sketch, attachments and standing change requests"],
+        "redoes": list(STAGE_NAMES[STAGE_NAMES.index(at):]),
+        "settings": _preview_settings(args),
+    }
+    if args.dry_run:
+        return preview
+    run, s, out = _new_run(args, snap.get("user_request") or st.get("user_request") or spec.name,
+                           run_id_hint=spec.name)
+    s["user_models"] = snap.get("user_models") or []
+    s["context_files"] = snap.get("context_files") or []
+    s["revision_directives"] = list(snap.get("revision_directives") or [])
+    s["spec"] = snap["spec"]
+    s.update(copied)
+    s["stage"] = PIPELINE[STAGE_NAMES.index(at)][1][0]
+    s["begun"] = None
+    _record(s, gate, "copied", f"from run {st['run_id']}")
+    s["history"][-1].update(from_run=st["run_id"], snapshot=snap_path.name,
+                            sha256=hashlib.sha256(snap_path.read_bytes()).hexdigest())
+    save_state(run, s)
+    return {**out, **preview, "stage": s["stage"], "next_skill": next_skill(s)}
+
+
+def _preview_settings(args) -> dict:
+    cat, cat_src = catalog_mod.resolve_catalog_dir(args.catalog_dir, None, args.config_catalog_dir)
+    retries, r_src = resolve_setting(args.mga_retries, "CURATE_MGA_RETRIES", args.config_mga_retries,
+                                     DEFAULT_MGA_RETRIES, _retries)
+    mode, m_src = resolve_setting(args.stubtest_mode, "CURATE_STUBTEST_MODE", args.config_stubtest_mode,
+                                  DEFAULT_STUBTEST_MODE, _mode)
+    return {"catalog_dir": {"value": str(cat), "source": cat_src},
+            "mga_max_retries": {"value": retries, "source": r_src},
+            "stubtest_mode": {"value": mode, "source": m_src}}
+
+
+def _import_args(args, at: str, from_file: str):
+    ns = argparse.Namespace(stage=at, from_file=from_file, candidates=args.candidates,
+                            functions=args.functions, functions_as=None,
+                            existing_code=args.existing_code, review=False,
+                            request_file=args.request_file)
+    for f in INIT_FLAGS:
+        setattr(ns, f, getattr(args, f, None))
+    return ns
+
+
+def _start_via_import(args, at: str, from_file: str, kind: str, label: str) -> dict:
+    if not args.dry_run:
+        out = cmd_import(_import_args(args, at, from_file))
+        run = Path(out["run"])
+        s = load_state(run)
+        s["history"][-1].update(source_kind=kind, source=label)
+        save_state(run, s)
+        spec = spec_of(s.get("spec"))
+        return {**out, "source": {"kind": kind, "path": label}, "uses": from_file,
+                "workflow": spec.name if spec else None,
+                "functions": [{"name": n.name, "source": n.source, "has_code": bool(n.code)}
+                              for n in (spec.nodes if spec else [])],
+                "redoes": list(STAGE_NAMES[STAGE_NAMES.index(at):])}
+    # Dry run: do the same import in a throwaway project, report it, and remove it.
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        ns = _import_args(args, at, from_file)
+        ns.project_dir = tmp
+        out = cmd_import(ns)
+        s = load_state(Path(out["run"]))
+        spec = spec_of(s["spec"])
+        return {"source": {"kind": kind, "path": label}, "uses": from_file,
+                "workflow": spec.name if spec else None,
+                "functions": [{"name": n.name, "source": n.source, "has_code": bool(n.code)}
+                              for n in (spec.nodes if spec else [])],
+                "settings": out["settings"], "warnings": out.get("warnings", []),
+                "redoes": list(STAGE_NAMES[STAGE_NAMES.index(at):])}
+
+
+def cmd_start(args) -> dict:
+    """/curate --start-at: a NEW run from one typed source; the source is never changed."""
+    at = args.at
+    sources = [n for n, v in (("--from-run", args.from_run), ("--from-bundle", args.from_bundle),
+                              ("--from-file", args.from_file), ("--sketch-file", args.sketch_file)) if v]
+    if len(sources) != 1:
+        raise InputError("give exactly one source: --from-run <run_id>, --from-bundle <folder>, "
+                         f"--from-file <file> or --sketch-file <file> (got {sources or 'none'})")
+    if args.existing_code and at != "generate":
+        raise InputError("--existing-code only applies when starting at generate")
+    if args.sketch_file:
+        if at != "skeleton":
+            raise InputError(f"a sketch starts at skeleton, not {at}")
+        out = _start_via_import(args, "skeleton", args.sketch_file, "sketch", args.sketch_file)
+    elif args.from_file:
+        out = _start_via_import(args, at, args.from_file, "file", args.from_file)
+    elif args.from_bundle:
+        if at not in ("generate", "emit"):
+            raise InputError(f"a bundle can start generate or emit, not {at}: it has no gate history "
+                             "(start from the run that built it with --from-run instead)")
+        spec_file = Path(args.from_bundle) / "spec.json"
+        if not spec_file.is_file():
+            raise InputError(f"{args.from_bundle} is not a curate bundle (no spec.json)")
+        data = read_json_file(str(spec_file))
+        if not any(n.get("code") for n in data.get("nodes") or []):
+            raise InputError(f"the bundle's spec.json has no code; start from a spec with --from-file instead")
+        out = _start_via_import(args, at, str(spec_file), "bundle", str(Path(args.from_bundle).resolve()))
+    else:
+        if at == "skeleton":
+            raise InputError("starting at skeleton needs a sketch (--sketch or --sketch-file)")
+        out = _start_from_run(args, at)
+    if args.dry_run:
+        return {"ok": True, "dry_run": True, "start_at": at, **out, "summary": start_summary(at, out)}
+    return {"ok": True, "start_at": at, **out, "summary": start_summary(at, out)}
+
+
+def start_summary(at: str, p: dict) -> str:
+    """What `start` will use, as markdown for /curate to print before starting."""
+    src = p.get("source") or {}
+    if src.get("kind") == "run":
+        source = f"run `{src['run_id']}` (now at stage `{src['source_stage_now']}`; it will not be changed)"
+    else:
+        source = f"{src.get('kind')} `{src.get('path')}` (will not be changed)"
+    title = f"**Start at {at} — new run `{p['run_id']}`**" if p.get("run_id") else f"**Start at {at} — a new run**"
+    lines = [title, "", f"- Source: {source}", f"- Uses: {p.get('uses') or src.get('path')}"]
+    fns = p.get("functions") or []
+    with_code = [f["name"] for f in fns if f.get("has_code")]
+    tested = [f"{f['name']} ({f['stub_test']})" for f in fns if f.get("stub_test")]
+    lines.append(f"- Workflow: `{p.get('workflow')}`, {len(fns)} functions — "
+                 + (f"with code: {', '.join(with_code)}" if with_code else "no code (it will be generated)"))
+    if tested:
+        lines.append(f"- Stub-test results copied: {', '.join(tested)}")
+    if p.get("copies"):
+        lines.append(f"- Copies: {', '.join(p['copies'])}")
+    lines.append(f"- Redoes: {' → '.join(p.get('redoes') or [])}")
+    st = p.get("settings") or {}
+    if st:
+        lines.append("- Settings: " + ", ".join(f"{k} = {v['value']} ({v['source']})" for k, v in st.items()))
+    lines += [f"- Note: {w}" for w in p.get("warnings") or []]
+    return "\n".join(lines)
+
+
 # ── stages: next / require / begin / end ─────────────────────────────────────
 
 # Fields a stage (and everything after it) produces; cleared on a fresh entry.
@@ -1519,7 +1742,7 @@ def cmd_next(args) -> dict:
     out = {"ok": True, "stage": s["stage"], "next_skill": skill,
            "command": f"/{skill} --run {s['run_id']}" if skill else None}
     if s["stage"] == "stopped":
-        out["stopped_from"] = s.get("stopped_from")
+        out.update(resume_commands(s))
     return out
 
 
@@ -1669,6 +1892,22 @@ def _last_line(text: Optional[str], limit: int = 240) -> str:
     return line if len(line) <= limit else "…" + line[-limit:]
 
 
+# Plainer wording for the Gate 3 "Stub test" column (state keeps the short status).
+STATUS_LABELS = {"reused": "passed (not regenerated)", "reused_failed": "FAILED (not regenerated)",
+                 "external_only": "passed except an external fetch"}
+
+
+def resume_commands(s: dict) -> dict:
+    """How to pick a stopped run up again."""
+    stopped_from = s.get("stopped_from") or ""
+    i = stage_index(stopped_from)
+    out = {"resume_command": f"/curate-skills:curate --resume {s['run_id']}",
+           "stopped_from": stopped_from}
+    if i is not None and i < len(PIPELINE):
+        out["resume_stage_command"] = f"/{PLUGIN}:{PIPELINE[i][2]} --run {s['run_id']}"
+    return out
+
+
 def show_gate(s: dict, gate: int) -> str:
     out: list[str] = []
     if gate == 1:
@@ -1722,7 +1961,7 @@ def show_gate(s: dict, gate: int) -> str:
             m = mga.get(name, {})
             lines = len((n.code or "").splitlines())
             path = f"functions/{name}/{name}.py"
-            out.append(f"| `{name}` | {_origin(n)} | {m.get('status', 'pending')} | "
+            out.append(f"| `{name}` | {_origin(n)} | {STATUS_LABELS.get(m.get('status'), m.get('status') or 'pending')} | "
                        f"{m.get('attempts', 0)} | {lines} | `{path}` |")
         warn = [k for k, v in mga.items() if v.get("status") in ("failed", "external_only")]
         if warn:
@@ -1851,6 +2090,17 @@ def build_parser() -> argparse.ArgumentParser:
     with_run("set-stage").add_argument("--stage", required=True, choices=STAGES)
     with_run("show").add_argument("--gate", type=int, required=True, choices=[1, 2, 3, 4])
     with_run("summary")
+    sp = sub.add_parser("start")
+    sp.add_argument("--at", required=True, choices=STAGE_NAMES)
+    sp.add_argument("--from-run")
+    sp.add_argument("--from-bundle")
+    sp.add_argument("--from-file")
+    sp.add_argument("--sketch-file")
+    sp.add_argument("--candidates")
+    sp.add_argument("--functions")
+    sp.add_argument("--existing-code", choices=["keep", "rewrite", "ignore"])
+    sp.add_argument("--dry-run", action="store_true")
+    init_flags(sp, False)
     with_run("next")
     with_run("require").add_argument("--stage", required=True, choices=STAGE_NAMES)
     q = with_run("begin")
@@ -1868,7 +2118,7 @@ COMMANDS = {
     "merge-resolved": cmd_merge_resolved, "check": cmd_check, "toposort": cmd_toposort,
     "approve": cmd_approve, "directive": cmd_directive, "set-cap": cmd_set_cap,
     "set-stage": cmd_set_stage, "show": cmd_show, "summary": cmd_summary,
-    "import": cmd_import, "next": cmd_next, "require": cmd_require, "begin": cmd_begin,
+    "import": cmd_import, "start": cmd_start, "next": cmd_next, "require": cmd_require, "begin": cmd_begin,
     "end": cmd_end,
 }
 
