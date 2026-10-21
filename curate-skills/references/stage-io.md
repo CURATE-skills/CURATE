@@ -16,6 +16,33 @@ produces it.
 | emit | code for every function, generated for the current spec | curate-generate |
 | finalize | a validated bundle built from the current spec | curate-emit |
 
+## Start points (`/curate --start-at <stage>`)
+
+`spec.py start --at <stage>` creates a **new** run from exactly one source; the source is never
+written (it is read without the run lock). `/curate` then shows the returned `summary` and asks
+"Start this run? Yes / Stop"; Stop marks the new run stopped and deletes nothing.
+
+| Source | Allowed stages | What is used |
+|---|---|---|
+| `--from-run <run_id or folder>` | reuse, resolve, generate, emit, finalize | the latest approval snapshot `history/NNN-gateN-approve.json` of: Gate 1 (reuse), Gate 2 (resolve, generate), Gate 3 (emit), Gate 4 (finalize) |
+| `--from-bundle <folder>` | generate (needs `--existing-code`), emit | the bundle's `spec.json` with code |
+| `--from-file <file>` | as `--from` below | the file |
+| `--sketch-file <file>` | skeleton | the sketch |
+
+From a run, the new run gets the approved spec plus, by stage: the reuse decisions (resolve),
+the stub-test results (emit), the validation and bundle path (finalize); also the sketch,
+attachments and standing change requests. It does **not** get the source's old code
+(`prior_spec`) or its unapproved current state. History records `copied`, the source run, the
+snapshot file and its sha256.
+
+Refusals (nothing is created): no exactly-one source; a gate never approved; an approval
+superseded by a later change request or rewind that sent the run back before that gate (a
+structural change voids every gate; a functional one or the emit retry voids Gates 2–4; a
+rewind voids the gates from its target on); a run id that is not exact (close matches are
+listed) or unknown; a v1 run; a bundle without `spec.json` or without code; a source that does
+not fit the stage; `--existing-code` off generate. `--dry-run` reports the same summary without
+creating anything.
+
 ## Importing (`--from`)
 
 An imported file counts as approved (the history records `imported` with the file's sha256).

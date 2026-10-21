@@ -36,7 +36,9 @@ stops; anything else is a change request. Never approve on the user's behalf.
 - **Override a classification.** If the user disputes STRUCTURE/FUNCTION after it was recorded,
   go back with a rewind (below).
 - **Rewinding** (going back to an earlier stage of a run that is already past it) is always the
-  user's decision. Tell them what it costs — one revision round, and that stage plus every stage
+  user's decision. First mention the alternative that costs nothing: a new run from this run's
+  approved results, `/curate-skills:curate --start-at <stage> --from-run <run_id>` (the original
+  stays as it is). Tell them what the rewind costs — one revision round, and that stage plus every stage
   after it is redone (working code is kept for `[cached]` decisions; functions marked new are
   regenerated from scratch) — and ask. Only after a clear yes:
   `spec.py begin --run <run> --stage <S> --rewind --confirmed`. Never pass `--confirmed` without

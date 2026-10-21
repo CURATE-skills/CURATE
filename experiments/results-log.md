@@ -44,6 +44,7 @@ Claude Code 2.1.299 for every run.
 | 21 | 2026-10-19 | U1: missing `--existing-code` with a spec that has code (headless) | claude-opus-5-5 | headless, 2 sessions | generate import | 0.117 + 0.137 = 0.254 | 5 | — |
 | 22 | 2026-10-19 | U4: `/curate --start-at` from a run and from a bundle; plain request after the description change | claude-opus-5-5 | headless, 11 sessions | generate / emit | 2.925 | 85 | 0 |
 | 23 | 2026-10-19 | U4 finish: "Start this run?" confirmation (yes / stop), resume commands, Gate 3 kept labels | claude-opus-5-5 | headless, 2 sessions × 2 turns | emit (from bundle) | 0.284 + 0.190 = 0.474 | 16 | 0 |
+| 24 | 2026-10-20 | U5: docs; plain-request evidence summary and U2/U3 recommendation | — | — | — | 0 | — | — |
 
 ## Open items
 
@@ -529,3 +530,38 @@ Source for every check: a throwaway copy of run #14's project (`20261017-163538-
   generate stage (build → stub-test → record → end). The "Stub test" column now says
   `passed (not regenerated)` / `FAILED (not regenerated)` instead of `reused` / `reused_failed`
   (display only; state unchanged). Test `test_gate3_after_a_kept_import_says_kept_and_passed`.
+
+## 24. U5: docs, and the plain-request evidence behind the U2/U3 decision
+
+Docs: README "Start points" and "Redoing a stage" sections (new run first, rewind second with its
+cost); `references/stage-io.md` "Start points" (sources, which approval is used, what is and is
+not copied, refusals); `references/gates.md` "Rewinding" now offers the new-run alternative first.
+
+Plain request "I want to re-generate the code for run <id>" (no skill named), all evidence so far:
+
+| Entry | `/curate` description | Sessions | Ran CURATE scripts / changed the run | Named a correct command | Safe option first | Stated the cost |
+|---|---|---|---|---|---|---|
+| #18 | original (no guidance) | 1 (user, interactive) | **yes** — rewound the run, used round 1/5 | — | — | — |
+| #20 | "name the stage command; don't run scripts" | 3 (headless) | no (0 tool calls; files byte-identical) | 3/3 (`curate-generate --run`) | n/a (no new-run option yet) | 0/3 |
+| #22 | "+ safe option first", generic `<stage>` | 3 (headless) | no (read-only Glob/Grep/`find` only) | **0/3** (invented `codegen`) | 3/3 | 3/3 |
+| #22 | "+ stages named" (current) | 3 (headless) | no (0 tool calls; files byte-identical) | 3/3 (both exact) | 3/3 | 3/3 |
+
+Since the description changed: 9/9 sessions changed nothing; the last 3/3 gave exactly the right
+two commands in the right order with the cost. Limits: headless only, one phrasing, no session
+that already had /curate or a stage skill loaded.
+
+Recommendation:
+- **U3 (transcript-parsing guard): not needed now.** The failure it targets (#18) has not recurred
+  in 9 sessions, and the guard would depend on Claude Code's transcript format. Instead, keep a
+  cheap regression check: a few phrasings ("redo the resolve step for run X", "go back to Gate 2
+  in run X", "regenerate run X's code") in fresh headless sessions, about $0.05–0.10 each, run
+  before each release and logged here.
+- **U2 (enforced rewind confirmation): defer, but test the gap first.** Today `--confirmed` is
+  instruction-level: nothing stops a model from passing it without asking. Not yet tested: a user
+  inside a /curate or stage-skill session saying "go back and regenerate" — the case where the
+  model has the commands loaded. If that test shows a rewind without a user yes, the smallest
+  enforced version is: `begin --rewind` refuses with a short phrase (e.g. `rewind generate 3538`);
+  a `UserPromptSubmit` hook (standard library, ~40 lines) records a confirmation only when the
+  user's own message contains that phrase; `begin --rewind --confirmed` requires that record and
+  consumes it. No transcript parsing, no PostToolUse hook, no write guard (forging the record
+  would need a deliberate shell write, not an accident).

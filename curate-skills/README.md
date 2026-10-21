@@ -62,6 +62,8 @@ Open items.
 /curate-skills:curate <workflow sketch> [--catalog DIR] [--attach model.py] [--context FILE]
                       [--mga-retries N] [--stubtest-mode strict|parity]
 /curate-skills:curate --resume <run_id>
+/curate-skills:curate --start-at <stage> --from-run <run_id> | --from-bundle <folder>
+                      | --from-file <file> | --sketch "<text>" | --sketch-file <file>   [...]
 /curate-skills:curate --from <file> --stage <stage> [...]
 
 /curate-skills:curate-skeleton --from <sketch> | <sketch text> | --run <run_id>
@@ -79,21 +81,52 @@ as structural (back to the skeleton) or functional (back to reuse; working funct
 back as `[cached]`). Each change request counts as one revision round; at the cap (5) nothing
 is changed until you approve as-is, stop, or raise the cap.
 
-**Redoing a stage of an existing run.** Type the stage command yourself, e.g.
-`/curate-skills:curate-generate --run <run_id>` to regenerate the code. If the run is already
-past that stage, the command explains what going back costs (one revision round; that stage
-and all later ones are redone) and asks you before it rewinds. Claude is told not to run
-CURATE's scripts on its own for requests like "re-generate the code for run X", but to name the
-command; rewinds are refused unless you have confirmed. After a rewind to generate, functions
-marked new start from an empty folder (your old code stays available for `[cached]` decisions,
-not as a starting point); use a revision at Gate 3 instead if you want only some functions redone.
+### Start points
+
+`/curate-skills:curate --start-at <stage>` starts a **new run** from exactly one source. The
+source is never changed.
+
+| Source | What it gives the new run | Can start at |
+|---|---|---|
+| `--from-run <run_id>` | that run's **gate-approved** results: the latest approval of the gate before the stage (Gate 1 for reuse; Gate 2 for resolve and generate; Gate 3 for emit; Gate 4 for finalize), read from the run's approval snapshots in `history/` — never its current, possibly unapproved state, and never its old code | reuse, resolve, generate, emit, finalize |
+| `--from-bundle <folder>` | a `faasr_output/…` bundle's `spec.json` with its code | generate (with `--existing-code`), emit |
+| `--from-file <file>` | the import formats in `references/stage-io.md` | any but finalize |
+| `--sketch "<text>"` / `--sketch-file <file>` | a new sketch | skeleton |
+
+Before any stage work, /curate shows what will be used — source and snapshot or file, the
+workflow, which functions come with code and their stub-test results, what is copied and what
+is redone, and the settings — and asks **Start this run? Yes / Stop**. Stop leaves the new run in
+place, marked stopped, and deletes nothing. It refuses rather than guess: a gate that was never
+approved, an approval undone by a later change request or rewind, a partial or unknown run id,
+a v1 run, a bundle without code, or a source that does not fit the stage. The new run's
+history records where it came from (run, snapshot file and its sha256). Your sketch, attached
+files and standing change requests come along; settings come from your flags or defaults.
+
+### Redoing a stage
+
+To redo a stage of a run — e.g. regenerate its code — you have two options:
+
+- **New run (recommended):** `/curate-skills:curate --start-at generate --from-run <run_id>`.
+  It copies the approved results up to Gate 2 into a new run and generates the code again. The
+  original run stays as it is, and no revision round is used.
+- **Same run:** `/curate-skills:curate-generate --run <run_id>`. If the run is already past
+  generate, it goes back (a *rewind*): that costs one revision round, and generate and every
+  stage after it are redone. It asks you first and refuses without your yes. Functions marked
+  new start from an empty folder; your old code stays available only for `[cached]` decisions.
+  To redo just some functions, use a change request at Gate 3 instead.
+
+For another stage, replace `generate` with its name (skeleton, reuse, resolve, generate, emit,
+finalize). If you ask in plain words ("re-generate the code for run X"), Claude is told not to
+run CURATE's scripts or rewind on its own, but to give you these two commands — the new run
+first, then the rewind and its cost — and wait.
 
 **Running stages separately.** A stage skill stops after its gate and prints the next one to
 run, e.g. `Next: /curate-skills:curate-reuse --run <run_id>`; `/curate` instead carries on by
 itself. Every stage first checks what it needs and, if something is missing or out of date,
 says which earlier stage produces it — including "approve Gate N first" when the run is still
-waiting at an earlier gate. Going back to an earlier stage needs `--rewind` in the stage's
-`spec.py begin` (it counts as a revision round and keeps working code as `[cached]`).
+waiting at an earlier gate. Going back to an earlier stage is a rewind (see "Redoing a stage").
+A stopped run tells you how to continue: `/curate-skills:curate --resume <run_id>`, or the stage
+command for where it stopped.
 
 **Starting from your own files** (`--from`): an imported file counts as approved; add
 `--review` to see the gate before the stage first. Accepted formats per stage, and why a FaaSr
@@ -133,6 +166,13 @@ Plugin settings in skill text are not filled in when the plugin is loaded with `
 use the flag or the environment variable there.
 
 ## Open items
+
+- **Rewind confirmation is instruction-level.** `spec.py begin --rewind` refuses without
+  `--confirmed`, and the skills say to ask you first, but nothing technically stops a model from
+  passing the flag. Plain requests in fresh sessions have been handled correctly since the
+  description change (results log #20, #22); a session that already has /curate loaded has not
+  been tested. If that shows a problem, the planned fix is a typed confirmation phrase checked by
+  a `UserPromptSubmit` hook (results log #24).
 
 - **Marketplace install not tested.** Untested: installing from the local marketplace
   (`/plugin install curate-skills@curate-local`), and whether plugin settings (`catalog_dir`,
