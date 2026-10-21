@@ -88,7 +88,7 @@ source is never changed.
 
 | Source | What it gives the new run | Can start at |
 |---|---|---|
-| `--from-run <run_id>` | that run's **gate-approved** results: the latest approval of the gate before the stage (Gate 1 for reuse; Gate 2 for resolve and generate; Gate 3 for emit; Gate 4 for finalize), read from the run's approval snapshots in `history/` — never its current, possibly unapproved state, and never its old code | reuse, resolve, generate, emit, finalize |
+| `--from-run <run_id>` | that run's **gate-approved** results: the latest approval of the gate before the stage (Gate 1 for reuse; Gate 2 for resolve and generate; Gate 3 for emit; Gate 4 for finalize), read from the run's approval snapshots in `history/` — never its current, possibly unapproved state. At generate, code approved at Gate 3 comes along only with `--existing-code keep` or `rewrite` (it asks if you leave it out) | reuse, resolve, generate, emit, finalize |
 | `--from-bundle <folder>` | a `faasr_output/…` bundle's `spec.json` with its code | generate (with `--existing-code`), emit |
 | `--from-file <file>` | the import formats in `references/stage-io.md` | any but finalize |
 | `--sketch "<text>"` / `--sketch-file <file>` | a new sketch | skeleton |
@@ -104,11 +104,17 @@ files and standing change requests come along; settings come from your flags or 
 
 ### Redoing a stage
 
-To redo a stage of a run — e.g. regenerate its code — you have two options:
+**Change one function** of a run that got past Gate 3 (e.g. "make the plot use °F"):
+`/curate-skills:curate --start-at generate --from-run <run_id> --existing-code keep`. The new run
+keeps all the approved code (stub-tested only, no subagents); at Gate 3 ask for the change, and
+only the function it concerns is redone. `--from-bundle <bundle folder> --existing-code keep`
+does the same from a bundle.
 
-- **New run (recommended):** `/curate-skills:curate --start-at generate --from-run <run_id>`.
-  It copies the approved results up to Gate 2 into a new run and generates the code again. The
-  original run stays as it is, and no revision round is used.
+To redo a whole stage of a run — e.g. regenerate all its code — you have two options:
+
+- **New run (recommended):** `/curate-skills:curate --start-at generate --from-run <run_id>
+  --existing-code ignore`. It copies the approved results up to Gate 2 into a new run and
+  generates every function again. The original run stays as it is, and no revision round is used.
 - **Same run:** `/curate-skills:curate-generate --run <run_id>`. If the run is already past
   generate, it goes back (a *rewind*): that costs one revision round, and generate and every
   stage after it are redone. It asks you first and refuses without your yes. Functions marked
@@ -116,9 +122,11 @@ To redo a stage of a run — e.g. regenerate its code — you have two options:
   To redo just some functions, use a change request at Gate 3 instead.
 
 For another stage, replace `generate` with its name (skeleton, reuse, resolve, generate, emit,
-finalize). If you ask in plain words ("re-generate the code for run X"), Claude is told not to
-run CURATE's scripts or rewind on its own, but to give you these two commands — the new run
-first, then the rewind and its cost — and wait.
+finalize). If you ask in plain words ("re-generate the code for run X", "change only the plot
+of run X"), Claude is told not to run CURATE's scripts or rewind on its own: it names the
+fitting command — the new run first, then the rewind and its cost — and asks. If you say yes,
+it starts a `/curate-skills:curate …` command for you (you still see "Start this run?" before
+anything happens); a stage-skill command such as the rewind you type yourself.
 
 **Running stages separately.** A stage skill stops after its gate and prints the next one to
 run, e.g. `Next: /curate-skills:curate-reuse --run <run_id>`; `/curate` instead carries on by

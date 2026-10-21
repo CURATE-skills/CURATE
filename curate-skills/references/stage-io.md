@@ -43,6 +43,14 @@ listed) or unknown; a v1 run; a bundle without `spec.json` or without code; a so
 not fit the stage; `--existing-code` off generate. `--dry-run` reports the same summary without
 creating anything.
 
+**Generate from a run whose Gate 3 was approved** needs `--existing-code` (otherwise
+`needs_choice: "existing_code"`, nothing created). `keep` / `rewrite` put the code of the latest
+Gate 3 approval snapshot onto the Gate 2 spec by function name (`cached` / `adapt`, labelled
+"kept: your code" / "rewritten from your code"); `ignore` generates every function from scratch.
+History adds `code_snapshot`, `code_sha256` and `existing_code`. `keep` or `rewrite` without an
+approved, unsuperseded Gate 3 after the last Gate 2 approval is refused. The summary's
+"Generate:" line says which functions are kept and which get a subagent.
+
 ## Importing (`--from`)
 
 An imported file counts as approved (the history records `imported` with the file's sha256).

@@ -63,7 +63,8 @@ def start(capsys, run, at, *extra):
 def test_from_run_copies_the_approved_results_into_a_new_run(source_run, capsys, at, gate, stage):
     before = tree_hash(source_run)
     rid = state(source_run)["run_id"]
-    code, out = start(capsys, source_run, at, "--from-run", rid)
+    extra = ("--existing-code", "ignore") if at == "generate" else ()  # Gate 3 was approved: a choice
+    code, out = start(capsys, source_run, at, "--from-run", rid, *extra)
     assert code == 0, out
     new = Path(out["run"])
     assert new != source_run and tree_hash(source_run) == before          # source untouched
@@ -83,7 +84,8 @@ def test_from_run_copies_the_approved_results_into_a_new_run(source_run, capsys,
 
 def test_dry_run_prints_what_will_be_used_and_creates_nothing(source_run, capsys):
     runs = sorted((source_run.parent).iterdir())
-    code, out = start(capsys, source_run, "generate", "--from-run", state(source_run)["run_id"], "--dry-run")
+    code, out = start(capsys, source_run, "generate", "--from-run", state(source_run)["run_id"],
+                      "--existing-code", "ignore", "--dry-run")
     assert code == 0 and out["dry_run"] and sorted(source_run.parent.iterdir()) == runs
     assert out["uses"].startswith("history/") and "Gate 2" in out["uses"]
     assert out["redoes"] == ["generate", "emit", "finalize"]
@@ -187,7 +189,8 @@ def test_summary_is_ready_to_print(source_run, capsys):
 
 
 def test_real_start_returns_the_summary_with_the_new_run_id(source_run, capsys):
-    code, out = start(capsys, source_run, "generate", "--from-run", state(source_run)["run_id"])
+    code, out = start(capsys, source_run, "generate", "--from-run", state(source_run)["run_id"],
+                      "--existing-code", "ignore")
     assert code == 0 and out["summary"].startswith(f"**Start at generate — new run `{out['run_id']}`**")
 
 
@@ -198,3 +201,63 @@ def test_real_start_from_bundle_summary_is_complete(source_run, capsys):
     assert code == 0 and "`None`" not in md and "Workflow: `mapreduce_word_count`, 5 functions" in md
     assert "with code: generate_text, split, map, shuffle, reduce" in md
     assert "Redoes: emit → finalize" in md and "spec.json" in md
+
+
+# ── generate from a run with approved code (results log #27, bug 4) ──
+
+def test_from_run_at_generate_asks_about_the_approved_code(source_run, capsys):
+    runs = sorted(source_run.parent.iterdir())
+    code, out = start(capsys, source_run, "generate", "--from-run", state(source_run)["run_id"])
+    assert code == 2 and out["needs_choice"] == "existing_code" and out["flag"] == "--existing-code"
+    assert set(out["options"]) == {"keep", "rewrite", "ignore"} and len(out["functions"]) == 5
+    assert sorted(source_run.parent.iterdir()) == runs  # nothing created
+
+
+@pytest.mark.parametrize("mode,source,generated", [("keep", "cached", False), ("rewrite", "adapt", True)])
+def test_from_run_at_generate_carries_the_gate3_code(source_run, capsys, mode, source, generated):
+    import scratch
+    before = tree_hash(source_run)
+    code, out = start(capsys, source_run, "generate", "--from-run", state(source_run)["run_id"],
+                      "--existing-code", mode)
+    assert code == 0, out
+    new = Path(out["run"])
+    g3 = json.loads(next((source_run / "history").glob("*-gate3-approve.json")).read_text())
+    approved = {n["name"]: n["code"] for n in g3["spec"]["nodes"]}
+    nodes = state(new)["spec"]["nodes"]
+    assert {n["name"]: n["code"] for n in nodes} == approved and {n["source"] for n in nodes} == {source}
+    rec = state(new)["history"][-1]
+    assert rec["code_snapshot"].endswith("gate3-approve.json") and rec["existing_code"] == mode
+    assert ok(S, ["require", "--run", str(new), "--stage", "generate"], capsys)["problems"] == []
+    ok(S, ["begin", "--run", str(new), "--stage", "generate"], capsys)
+    built = ok(scratch, ["build", "--run", str(new)], capsys)
+    assert all(n["generate"] is generated for n in built["nodes"])  # keep → no subagents at all
+    if mode == "keep":
+        assert "keeps generate_text, split, map, shuffle, reduce (stub-tested only" in out["summary"]
+        assert "code from history/" in out["summary"]
+    else:
+        assert "writes generate_text, split, map, shuffle, reduce with a subagent each" in out["summary"]
+    assert tree_hash(source_run) == before
+
+
+def test_from_run_at_generate_ignore_says_everything_is_written(source_run, capsys):
+    code, out = start(capsys, source_run, "generate", "--from-run", state(source_run)["run_id"],
+                      "--existing-code", "ignore", "--dry-run")
+    assert code == 0 and {f["has_code"] for f in out["functions"]} == {False}
+    assert "writes generate_text, split, map, shuffle, reduce with a subagent each" in out["summary"]
+    assert "keeps" not in out["summary"]
+
+
+def test_keep_without_approved_code_is_refused(make_run, capsys):
+    run = make_run()
+    work = run / "work"
+    (work / "sk.json").write_text((FIX / "skeleton.json").read_text())
+    ok(S, ["skeleton", "--run", str(run), "--json", str(work / "sk.json")], capsys)
+    ok(S, ["approve", "--run", str(run), "--gate", "1"], capsys)
+    ok(S, ["apply-candidates", "--run", str(run), "--json", str(FIX / "candidates.json")], capsys)
+    ok(S, ["merge-resolved", "--run", str(run), "--json", str(FIX / "resolved.json")], capsys)
+    ok(S, ["approve", "--run", str(run), "--gate", "2"], capsys)
+    rid = state(run)["run_id"]
+    code, out = start(capsys, run, "generate", "--from-run", rid, "--existing-code", "keep")
+    assert code == 2 and "no approved code to keep" in out["error"] and "--from-bundle" in out["error"]
+    code, out = start(capsys, run, "generate", "--from-run", rid)  # no code: nothing to choose
+    assert code == 0 and "needs_choice" not in out

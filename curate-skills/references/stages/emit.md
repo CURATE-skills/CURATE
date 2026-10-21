@@ -18,8 +18,10 @@ step 3.
    `spec.py directive --run <run> --gate emit --text "FaaSr validation failed: <error>"` (the run
    goes back to `reuse`), then finish as `gates.md` "After the gate decision" says. Otherwise show
    the error at Gate 4 and ask.
-3. **Gate 4**: `spec.py show --run <run> --gate 4`, print its `markdown` exactly, and ask
-   (`<plugin>/references/gates.md`, "Asking at a gate").
+3. **Gate 4**: `spec.py show --run <run> --gate 4`, print its `markdown` verbatim as a message — never re-formatted (the user does not see tool results), then ask
+   with AskUserQuestion — the returned `question` and `header`, options Approve / Stop here, each
+   with the returned `compact` as `preview` — every time, also after a change request or a
+   question from the user (`<plugin>/references/gates.md`, "Asking at a gate").
    - Approve → `spec.py approve --run <run> --gate 4`; for each id in `reused_catalog_ids`,
      `catalog.py increment-usage --run <run> --id <id>`.
    - Changes → classify with `<plugin>/references/prompts/classify.md`, then

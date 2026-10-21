@@ -14,9 +14,29 @@ CURATE has five human gates. Each stage skill ends at its own gate (curate-reuse
 
 ## Asking at a gate
 
-Print the gate markdown (`spec.py show --run <run> --gate N`) exactly as returned. Then ask with
-AskUserQuestion — options **Approve** and **Stop here**, noting that typing in "Other" requests
-changes. Without AskUserQuestion, ask in chat: `approve` / `yes` / `y` / `lgtm` approve; `stop`
+Do all three, at every gate, every time — including after a change request, after the user
+asked to see something, and after the user answered in chat:
+
+1. `spec.py show --run <run> --gate N`. **Print its `markdown` exactly as a message** — the user
+   does not see tool results, so the table must be in your own message. Copy it verbatim: never
+   re-format, re-order, summarize or rebuild it (e.g. as one field per line), and add nothing
+   inside it. When the user asks to see a gate's table again, run `spec.py show` again and print
+   its `markdown` verbatim — not your own rendering of it.
+2. **Ask with AskUserQuestion whenever it is available** — never switch to plain chat because the
+   previous answer came in chat or through "Other". Use the returned `question` and `header`;
+   options **Approve** and **Stop here**, each with the returned `compact` as its `preview`, so
+   the table is in the question itself. Typing in "Other" requests changes.
+3. If the answer is not a decision (e.g. "show me the table", "show me the code"), show what was
+   asked and go back to step 2 — with AskUserQuestion again.
+
+**Gate decisions are always the user's.** Never approve, stop or submit a change request on the
+user's behalf — not even one the user described before the gate, or one you proposed the wording
+for. At a gate, show the display and wait; record only what the user types or chooses at that
+gate (`directive --text` is their answer verbatim). Don't say you will ask for a change at a
+gate ("at Gate 3 I'll ask for …"); say what the user can type there.
+
+Only when AskUserQuestion is not available (e.g. a headless run): end your message with the
+`compact` table and the question, in chat — `approve` / `yes` / `y` / `lgtm` approve; `stop`
 stops; anything else is a change request. Never approve on the user's behalf.
 
 ## Decisions
@@ -38,9 +58,11 @@ stops; anything else is a change request. Never approve on the user's behalf.
 - **Rewinding** (going back to an earlier stage of a run that is already past it) is always the
   user's decision. First mention the alternative that costs nothing: a new run from this run's
   approved results, `/curate-skills:curate --start-at <stage> --from-run <run_id>` (the original
-  stays as it is). Tell them what the rewind costs — one revision round, and that stage plus every stage
-  after it is redone (working code is kept for `[cached]` decisions; functions marked new are
-  regenerated from scratch) — and ask. Only after a clear yes:
+  stays as it is; to change only some functions, start at generate with `--existing-code keep`
+  and ask for the change at Gate 3). Tell them what the rewind costs — one revision round, and
+  that stage plus every stage after it is redone (working code is kept for `[cached]` decisions;
+  functions marked new are regenerated from scratch) — and ask with AskUserQuestion whenever it
+  is available (options **Yes, rewind** / **No**; chat only without the tool). Only after a clear yes:
   `spec.py begin --run <run> --stage <S> --rewind --confirmed`. Never pass `--confirmed` without
   asking; `begin` refuses a rewind without it.
 

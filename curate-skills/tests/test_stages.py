@@ -341,3 +341,85 @@ def test_gate3_after_a_kept_import_says_kept_and_passed(tmp_path, capsys, monkey
     md = ok(S, ["show", "--run", run, "--gate", "3"], capsys)["markdown"]
     for n in built["order"]:
         assert f"| `{n}` | kept: your code | passed (not regenerated) |" in md
+
+
+# ── from the user's weather run (results log #25) ──
+
+WEATHER = {"name": "weather", "description": "compare winter weather",
+           "nodes": [{"name": "download", "description": "Download the station CSV."},
+                     {"name": "process_variable", "rank": 3,
+                      "description": "Runs in parallel, one instance per variable, selected by rank."},
+                     {"name": "plot", "description": "Plot three panels."}],
+           "edges": [{"from_node": "download", "to_node": "process_variable"},
+                     {"from_node": "process_variable", "to_node": "plot"}]}
+
+
+@pytest.mark.parametrize("gate", [1, 2, 3, 4])
+def test_show_returns_question_header_and_compact_table(make_run, capsys, gate):
+    spec = coded_spec()
+    run = make_run(skeleton_draft={"spec": spec}, spec=spec, mga={"map": {"status": "reused"}},
+                   validation={"ok": True, "level": "faasr_py"}, bundle_dir="/b")
+    out = ok(S, ["show", "--run", str(run), "--gate", str(gate)], capsys)
+    assert out["header"] == f"Gate {gate}" and out["question"].endswith('(Type in "Other" to request changes.)')
+    assert out["markdown"].startswith(f"## Gate {gate}")
+    names = [n["name"] for n in spec["nodes"]]
+    if gate < 4:
+        assert all(n in out["compact"] for n in names)
+    else:
+        assert "validation: passed" in out["compact"]
+    if gate == 3:
+        assert "map | " in out["compact"] and "passed (not regenerated)" in out["compact"]
+
+
+def test_gate1_shows_each_rank_once(make_run, capsys):
+    """Bug report: 'Rank: 3' shown twice. The table has one Rank cell per function."""
+    run = make_run(skeleton_draft={"spec": WEATHER})
+    out = ok(S, ["show", "--run", str(run), "--gate", "1"], capsys)
+    rows = [l for l in out["markdown"].splitlines() if l.startswith("| ") and "`process_variable`" in l]
+    assert len(rows) == 1 and rows[0].split("|")[3].strip() == "3"
+    assert "Rank: 3" not in out["markdown"] and out["markdown"].count("process_variable ×3") == 2  # 2 DAG edges
+    compact = out["compact"]
+    assert compact.count("process_variable ×3 —") == 1
+
+
+def test_gate_procedures_always_print_then_ask_with_the_table():
+    """Bug report: tables not printed before the question; question tool dropped for chat."""
+    root = Path(__file__).resolve().parents[1] / "references"
+    gates = (root / "gates.md").read_text()
+    assert "Print its `markdown` exactly as a message" in gates
+    assert "Ask with AskUserQuestion whenever it is available" in gates and "never switch to plain chat" in gates
+    for stage in ("skeleton", "resolve", "generate", "emit"):
+        text = (root / "stages" / f"{stage}.md").read_text()
+        assert "print its `markdown` verbatim as a message — never re-formatted" in text, stage
+        assert "`compact` as `preview`" in text and "every time" in text, stage
+    assert "whenever it is available" in (root / "stages" / "finalize.md").read_text()
+
+
+def test_curate_advice_and_confirmations():
+    """Results log #27: single-function advice (bug 4), run after a yes (bug 5), question tool (bug 3)."""
+    root = Path(__file__).resolve().parents[1]
+    skill = (root / "skills" / "curate" / "SKILL.md").read_text()
+    desc = next(l for l in skill.splitlines() if l.startswith("description: "))[len("description: "):]
+    assert len(desc) <= 1024
+    assert "--start-at generate --from-run <run_id> --existing-code keep" in desc
+    assert "only that function is redone" in desc and "--existing-code ignore" in desc
+    assert "After an explicit yes" in desc and "invoke this skill" in desc
+    assert "never run CURATE's scripts or rewind yourself" in desc
+    assert "also when the user already said yes" in skill and "Use AskUserQuestion whenever it is available" in skill
+    gates = (root / "references" / "gates.md").read_text()
+    assert "--existing-code keep" in gates and "**Yes, rewind** / **No**" in gates
+
+
+def test_gates_are_the_users_and_displays_are_verbatim():
+    """Results log #28: Claude promised to submit a Gate 3 change; a re-rendered Gate 1 table."""
+    root = Path(__file__).resolve().parents[1]
+    gates = (root / "references" / "gates.md").read_text()
+    assert "**Gate decisions are always the user's.**" in gates
+    assert "or one you proposed the wording\nfor" in gates or "proposed the wording" in gates
+    assert "Copy it verbatim: never\n   re-format" in gates and "run `spec.py show` again" in gates
+    skill = (root / "skills" / "curate" / "SKILL.md").read_text()
+    desc = next(l for l in skill.splitlines() if l.startswith("description: "))
+    assert len(desc) - len("description: ") <= 1024
+    assert "Gate decisions are the user's: never approve or submit a change for them." in desc
+    assert "the user types the change at Gate 3" in desc
+    assert "don't say you will submit it" in skill

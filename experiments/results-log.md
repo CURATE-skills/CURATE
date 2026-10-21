@@ -45,6 +45,8 @@ Claude Code 2.1.299 for every run.
 | 22 | 2026-10-19 | U4: `/curate --start-at` from a run and from a bundle; plain request after the description change | claude-opus-5-5 | headless, 11 sessions | generate / emit | 2.925 | 85 | 0 |
 | 23 | 2026-10-19 | U4 finish: "Start this run?" confirmation (yes / stop), resume commands, Gate 3 kept labels | claude-opus-5-5 | headless, 2 sessions × 2 turns | emit (from bundle) | 0.284 + 0.190 = 0.474 | 16 | 0 |
 | 24 | 2026-10-20 | U5: docs; plain-request evidence summary and U2/U3 recommendation | — | — | — | 0 | — | — |
+| 25 | 2026-10-20 | User's interactive weather run (`20261020-215732-corvallis-winter-weather`): gate-display bugs, plus what worked | claude-opus-5-5 | interactive (user) | all six stages | not recorded | — | — |
+| 26 | 2026-10-20 | Fix check: every gate prints its display and asks with its table (headless, small squares workflow) | claude-opus-5-5 | headless, 6 turns | all six stages | 1.892 | 56 | 0 |
 
 ## Open items
 
@@ -565,3 +567,173 @@ Recommendation:
   user's own message contains that phrase; `begin --rewind --confirmed` requires that record and
   consumes it. No transcript parsing, no PostToolUse hook, no write guard (forging the record
   would need a deliberate shell write, not an accident).
+
+## 25. User's interactive weather run (v2-files, project `curate-tests/weather`)
+
+Run `20261020-215732-corvallis-winter-weather`; session `857857f4-20d4-4fcc-a81f-dedce2ffbb03`.
+A plain-language request ("Build me a FaaSr workflow that compares this winter's weather in
+Corvallis, Oregon with the past 10 years…"), 3 functions (`download_ghcn_station`,
+`process_weather_variable` ×3, `plot_weather_comparison`).
+
+**What worked**
+- The plain request started /curate without a slash command (its description triggered it).
+- The Gate 2 change ("only the 10-year baseline window is extended by 30 days …") was classified
+  FUNCTION and routed back through reuse → resolve; Gate 2 then showed iteration 1/5.
+- All 3 functions passed strict stub tests on the first attempt, using real NOAA GHCN-Daily data
+  (the download stub test fetched the real ~13 MB station CSV). Bundle passed FaaSr_py
+  validation; functions and workflow saved to the project catalog; run `done`.
+
+**Bugs (from the user and the transcript)**
+1. **Gate displays not printed before the question (Gates 1 and 2).** The session ran
+   `spec.py show`, then asked "Approve this skeleton?" with AskUserQuestion; the table was only in
+   the tool result, which the user does not see. The user had to ask for the table at both gates.
+2. **"Rank: 3" twice at Gate 1.** Not reproduced: neither `spec.py show --gate 1` for this run's
+   approved skeleton nor anything the session printed contains a duplicated "Rank: 3" (the rank
+   appears once in the Rank column and as "×3" in the diagram; a later message explains "rank 1 is
+   PRCP, rank 2 is TMIN, rank 3 is TMAX"). Asked the user where it appeared; a regression test
+   now pins one rank cell per function.
+3. **Question tool dropped.** After the user typed "show me the gate 2 table first" into the
+   question, the session switched to plain chat ("as a chat question this time") — and stayed in
+   chat for every later gate (Gates 2 again, 3, 4 and 5).
+
+**Fix**
+- `spec.py show` also returns `question`, `header` and `compact` (a short plain-text table).
+- `gates.md` "Asking at a gate" and every stage's gate step: (1) print the `markdown` as a message
+  (tool results are not visible); (2) ask with AskUserQuestion whenever it is available — every
+  time, also after a change request, a question or an answer in chat — with `compact` as the
+  options' `preview`; (3) if the answer is a request to see something, show it and ask again with
+  AskUserQuestion. Chat only without the tool, ending with the `compact` table and the question.
+  Gate 5 (finalize) gets the same "whenever it is available" rule.
+- Tests: `test_show_returns_question_header_and_compact_table` (Gates 1–4),
+  `test_gate1_shows_each_rank_once`, `test_gate_procedures_always_print_then_ask_with_the_table`.
+
+## 26. Fix check: tables printed and in the question at every gate (headless)
+
+Small workflow ("Squares": `make_numbers`, `square_part` ×2, `sum_squares`), empty catalog; turns:
+sketch, `approve` ×4, `Don't save`. Session `218dab58-f703-4548-959e-73a6d6eb19b5`, run `20261020-222644-squares`.
+Headless has no AskUserQuestion, so this checks the chat fallback.
+
+| Turn | Gate | Cost (USD) | Turns | Full display printed | Compact table + question at the end |
+|---|---|---|---|---|---|
+| 1 | 1 | 0.285 | 12 | yes | yes |
+| 2 | 2 | 0.334 | 14 | yes | yes |
+| 3 | 3 | 0.891 | 17 | yes | yes |
+| 4 | 4 | 0.159 | 6 | yes | yes |
+| 5 | 5 | 0.146 | 5 | yes | yes |
+| 6 | `Don't save` → done | 0.077 | 2 | — | — |
+| **Total** | | **1.892** | **56** | | |
+
+- Each gate message: the `## Gate N` display, then the `compact` table in a code block and the
+  question ("Approve the generated code? Reply approve … or stop …"). All functions passed on
+  attempt 1; run `done`.
+- Not covered here: the AskUserQuestion path (interactive only) — whether the preview shows the
+  table and whether the tool is kept after an "Other" answer needs an interactive re-test.
+
+## 27. User's run B (single-function change) and bugs 4–5
+
+Run B `20261020-223413-spec`, started from run A (`20261020-215732-corvallis-winter-weather`,
+#25) with `/curate-skills:curate --start-at generate --from-bundle <run A's bundle>
+--existing-code keep`, to change only the plot to °F. Run B's history: `imported` (Gate 2),
+`approve` 2, `revise` at Gate 3 "In plot_weather_comparison only, show max and min temperatures
+in °F …" (FUNCTION), `approve` 2, 3, 4; `done`. Neither run nor their bundles were modified;
+everything below used a copy of `.curate/`, `faasr_output/` and `catalog/` in the scratchpad.
+
+**What worked (run B)**
+- All 3 functions kept at the start: Gate 3 showed "kept: your code", 0 attempts, no subagents.
+- The Gate 3 change was announced as FUNCTION before it was recorded.
+- At reuse only `plot_weather_comparison` was marked `adapt`; the other two stayed `cached`
+  (final stub tests: `reused`, `reused`, `passed` in 1 attempt).
+- Exactly 1 subagent ran; the diff was minimal; the main session checked the figure.
+
+**Bug 3, continued (question style).** In run B, several prompts were plain chat ("Reply yes /
+approve / stop") although AskUserQuestion was available, including the "Start this run?"
+confirmation. Fix: /curate's start confirmation now says to print the summary, then ask with
+AskUserQuestion *whenever it is available, also when the user already said yes*, with the summary
+as `preview`; the Keep / Rewrite / Ignore question covers `start` as well as `import`; the
+rewind question in `gates.md` is an AskUserQuestion (**Yes, rewind** / **No**). Gates: #25's fix.
+
+**Bug 4: wrong advice for "change one function in a finished run".** Claude suggested
+`--start-at generate --from-run <run A>` or `curate-generate --run <run A>` saying only the plot
+would be regenerated, then that `--from-run … --existing-code keep` carries the code over.
+- Checked on the copy (dry run, before the fix): `uses history/003-gate2-approve.json`, all 3
+  functions `new`, no code — `--existing-code` was **silently ignored** with `--from-run`, and
+  both suggested commands regenerate all 3 functions. The advice was wrong.
+- Fix (supported, not just documented): starting generate from a run whose Gate 3 was approved
+  now needs `--existing-code`; without it, `needs_choice: "existing_code"` and nothing is
+  created. `keep` / `rewrite` put the code of the latest Gate 3 approval snapshot onto the Gate 2
+  spec by function name (`cached` / `adapt`); `ignore` generates everything (the old behaviour).
+  `keep`/`rewrite` without an approved, unsuperseded Gate 3 is refused and points to
+  `--from-bundle … --existing-code keep`. History adds `code_snapshot`, `code_sha256`,
+  `existing_code`. The start summary has a "Generate:" line naming the kept functions and the
+  ones that get a subagent.
+- On the copy after the fix: `--existing-code keep` → uses Gate 2 snapshot + code from
+  `004-gate3-approve.json`; `require` clean; `begin` fresh; `scratch.py build` → `generate`
+  false for all 3 (no subagents); source copy byte-identical (hash before/after, and `diff -rq`
+  against the original run).
+- Advice: /curate's description, README ("Change one function", "Redoing a stage"), `gates.md`
+  and `stage-io.md` now say: change some functions → `--start-at generate --from-run <id>
+  --existing-code keep`, then ask for the change at Gate 3; regenerate all → `--existing-code
+  ignore`; the rewind (`curate-generate --run`) regenerates the new functions and uses a round.
+- Behaviour change to note: `--start-at generate --from-run X` without the flag now asks (or,
+  headless, refuses) when X has approved code. Existing tests now pass `--existing-code ignore`.
+
+**Bug 5: Claude refused to run the command it named after "yes, start it".** /curate's
+description now says: never run scripts or rewind on a plain request; name the command, say what
+it redoes, and ask; *after an explicit yes to a `/curate-skills:curate` command you named, invoke
+this skill with its arguments*. "Start this run?" still follows. Stage-skill commands (the
+rewind) still have to be typed (they are not model-invocable). Description shortened to 994
+characters (≤ 1024 so the last rule isn't cut off in listings).
+
+**Headless check** (copy of the weather project; session `5c15440b-7cdf-4e59-8030-d89de2c5f128`)
+
+| Turn | Prompt | Cost (USD, cumulative) | What happened |
+|---|---|---|---|
+| 1 | "Run 20261020-215732-corvallis-winter-weather is finished. I only want the plot function changed to show temperatures in °F; leave the other functions as they are. How do I do that?" | 0.081 | no tool calls; named `--start-at generate --from-run … --existing-code keep`, said only the plot is redone after asking at Gate 3, gave the rewind alternative and its cost, asked "Should I start the new run?" |
+| 2 | "yes, start it" | 0.166 | `Skill(curate-skills:curate, "--start-at generate --from-run … --existing-code keep")` → one `spec.py start` → printed the summary ("Generate: keeps … all 3 … no subagent") and "Reply **yes** to start or **stop**" (headless fallback); no stage work |
+
+Source run copy unchanged. One wording to watch: turn 2 ended with "At Gate 3, I'll ask for
+`plot_weather_comparison` to show temperatures in °F" — it should present Gate 3 and let the user
+answer, not submit the change itself. Not run further (would cost a generate/emit round); worth
+checking in the next interactive test.
+
+**Bug 2 ("Rank: 3" twice):** still not reproduced in the script output or run A's transcript; the
+regression test from #25 stays. Need to know where it appeared (Gate 1 table, the diagram, or a
+message Claude wrote).
+
+**Tests:** 215 pass (209 → 215): `test_from_run_at_generate_asks_about_the_approved_code`,
+`test_from_run_at_generate_carries_the_gate3_code[keep|rewrite]`,
+`test_from_run_at_generate_ignore_says_everything_is_written`,
+`test_keep_without_approved_code_is_refused`, `test_curate_advice_and_confirmations`.
+`claude plugin validate --strict`: passes (only the existing icon warning). Not covered
+headlessly: the AskUserQuestion path (interactive only).
+
+## 28. Gate decisions are the user's; gate displays verbatim (bug 2 found)
+
+**Bug 2, explained by the user.** "Rank: 3" appeared twice in the Gate 1 table Claude showed
+*after the user asked to see it*, in a per-function layout ("Function: … / Rank: 3 / Rank: 3 /
+What it does: …") — not the script's table. So Claude re-rendered `spec.py show` output itself
+and duplicated a line; the script was never at fault (consistent with #25/#27).
+Fix: `gates.md` step 1 — copy the `markdown` verbatim; never re-format, re-order, summarize or
+rebuild it (e.g. one field per line), add nothing inside it; when the user asks to see a gate's
+table again, run `spec.py show` again and print its `markdown` verbatim. Every stage's gate step
+now says "print its `markdown` verbatim as a message — never re-formatted".
+
+**Gates are always the user's decision** (from #27's "At Gate 3, I'll ask for the plot change").
+`gates.md` gains "Gate decisions are always the user's": never approve, stop or submit a change
+request on the user's behalf — not even one described before the gate or one Claude worded; show
+the display and wait; record only what the user types or chooses there; say what the user can
+type, not that Claude will submit it. /curate's loop rules say the same, and its description ends
+"Gate decisions are the user's: never approve or submit a change for them." (description
+trimmed to 1001 characters; the trigger sentence is now "Use to build, generate or revise a
+FaaSr workflow or multi-step serverless pipeline.").
+
+**Headless re-check** (same two turns as #27, copy of the weather project; session
+`eaa55bdc-58de-4f2c-b1c1-d18e8556f1de`): turn 1 $0.062, no tool calls, named the `keep` command,
+"At Gate 3, you describe the change … Those decisions are yours, and I won't approve anything for
+you", asked. Turn 2 ("yes, start it") $0.148 cumulative: `Skill(curate-skills:curate, …)` → one
+`spec.py start` → summary, "At Gate 3 you can type your change, for example …", "Reply yes to
+start or stop". Run A copy identical to the original. Minor: turn 1 described the rewind as
+"allows only one revision round" (it *uses* one of the run's rounds) — wording only.
+
+Tests: 216 pass (+`test_gates_are_the_users_and_displays_are_verbatim`; the stage-file test now
+checks the "verbatim … never re-formatted" wording). `claude plugin validate --strict` passes.

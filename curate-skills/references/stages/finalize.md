@@ -15,8 +15,9 @@ bundle was validated and built from the current spec).
    Tell the user, briefly: the catalog folder; which functions would be stored, with their
    keywords; which would be skipped and why (`already in catalog`, `not verified`, `no code`);
    and whether the workflow entry would be new or would update one with the same name.
-3. **Gate 5 — ask** (AskUserQuestion; chat fallback): **Save functions**, **Save workflow**,
-   **Save both**, **Don't save**. Never save without an explicit answer.
+3. **Gate 5 — ask** with AskUserQuestion whenever it is available (also if the user first asked
+   something else): **Save functions**, **Save workflow**, **Save both**, **Don't save**, with the
+   preview from step 2 as context. Chat only without the tool. Never save without an explicit answer.
 4. **Save** what was chosen, with the same commands minus `--dry-run`. Only verified functions
    are saved: stub test `passed`, or `reused`.
 5. **Report** the ids stored and anything skipped, then

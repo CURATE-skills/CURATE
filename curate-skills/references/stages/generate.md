@@ -12,8 +12,10 @@ the spec and the foreground setting. If the run is already at `gate3`, skip to s
 3. Handle each node in the returned `order`, one at a time, as `mga-spawn.md` says (reused
    functions are only stub-tested; the rest get a `curate-mga` subagent each). Then
    `spec.py end --run <run> --stage generate`.
-4. **Gate 3**: `spec.py show --run <run> --gate 3`, print its `markdown` exactly, and ask
-   (`<plugin>/references/gates.md`, "Asking at a gate"). If the user wants to see code, Read
+4. **Gate 3**: `spec.py show --run <run> --gate 3`, print its `markdown` verbatim as a message — never re-formatted (the user does not see tool results), then ask
+   with AskUserQuestion — the returned `question` and `header`, options Approve / Stop here, each
+   with the returned `compact` as `preview` — every time, also after a change request or a
+   question from the user (`<plugin>/references/gates.md`, "Asking at a gate"). If the user wants to see code, Read
    `<run>/functions/<N>/<N>.py` and show it.
    - Approve → `spec.py approve --run <run> --gate 3`.
    - Changes → classify with `<plugin>/references/prompts/classify.md`, then

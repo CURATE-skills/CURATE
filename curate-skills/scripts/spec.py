@@ -1474,10 +1474,14 @@ def _start_from_run(args, at: str) -> dict:
         raise InputError(f"{snap_path.name} has no approved spec")
     spec = spec_of(snap["spec"])
     copied = {f: snap.get(f) for f in START_COPY[at] if snap.get(f) not in (None, {}, [])}
+    code_from = None
+    if at == "generate":
+        spec, code_from = _code_from_gate3(args, st, src, history, approvals[-1], spec)
     preview = {
         "source": {"kind": "run", "run_id": st["run_id"], "run_dir": str(src),
                    "source_stage_now": st["stage"]},
-        "uses": f"history/{snap_path.name} (the latest Gate {gate} approval)",
+        "uses": f"history/{snap_path.name} (the latest Gate {gate} approval)"
+                + (f"; code from history/{code_from.name} (the latest Gate 3 approval)" if code_from else ""),
         "workflow": spec.name,
         "functions": [{"name": n.name, "source": n.source, "has_code": bool(n.code),
                        "stub_test": ((snap.get("mga") or {}).get(n.name) or {}).get("status")
@@ -1493,15 +1497,53 @@ def _start_from_run(args, at: str) -> dict:
     s["user_models"] = snap.get("user_models") or []
     s["context_files"] = snap.get("context_files") or []
     s["revision_directives"] = list(snap.get("revision_directives") or [])
-    s["spec"] = snap["spec"]
+    s["spec"] = dump(spec)
     s.update(copied)
     s["stage"] = PIPELINE[STAGE_NAMES.index(at)][1][0]
     s["begun"] = None
     _record(s, gate, "copied", f"from run {st['run_id']}")
     s["history"][-1].update(from_run=st["run_id"], snapshot=snap_path.name,
                             sha256=hashlib.sha256(snap_path.read_bytes()).hexdigest())
+    if code_from:
+        s["history"][-1].update(code_snapshot=code_from.name, existing_code=args.existing_code,
+                                code_sha256=hashlib.sha256(code_from.read_bytes()).hexdigest())
     save_state(run, s)
     return {**out, **preview, "stage": s["stage"], "next_skill": next_skill(s)}
+
+
+def _code_from_gate3(args, st: dict, src: Path, history: list, gate2_index: int,
+                     spec: WorkflowSpec) -> tuple[WorkflowSpec, Optional[Path]]:
+    """Starting generate from a run whose Gate 3 was approved: its code needs a choice.
+
+    keep / rewrite put the code of the latest Gate 3 approval onto the Gate 2 spec (by function
+    name); ignore (or no approved code) generates every function from scratch. Never silent.
+    """
+    mode = args.existing_code
+    g3 = [i for i, h in enumerate(history) if h.get("gate") == 3 and h.get("decision") == "approve"
+          and i > gate2_index]
+    snaps = sorted((src / "history").glob("*-gate3-approve.json"))
+    usable = bool(g3) and not _superseded_by(history, g3[-1], 3) and bool(snaps)
+    if not usable:
+        if mode in ("keep", "rewrite"):
+            raise InputError(f"run {st['run_id']} has no approved code to {mode} (its Gate 3 was never "
+                             "approved after its last Gate 2 approval, or a later change superseded it); "
+                             "leave out --existing-code to generate every function, or start from a "
+                             "bundle with --from-bundle <folder> --existing-code keep")
+        return spec, None
+    code = {n.name: n.code for n in spec_of(json.loads(snaps[-1].read_text())["spec"]).nodes if n.code}
+    if mode is None:
+        names = [n.name for n in spec.nodes if code.get(n.name)]
+        raise NeedsChoice(
+            f"run {st['run_id']}'s approved Gate 3 has code for {', '.join(names)}. Say what to do with "
+            "it: --existing-code keep (keep it as is; stub-tested only, no subagents — then ask for a "
+            "change to one function at Gate 3), --existing-code rewrite (regenerate each function "
+            "starting from it) or --existing-code ignore (generate every function from scratch).",
+            "existing_code", EXISTING_CODE_OPTIONS, functions=names, flag="--existing-code")
+    if mode == "ignore":
+        return spec, None
+    nodes = [n.model_copy(update={"code": code[n.name]}) if code.get(n.name) else n for n in spec.nodes]
+    spec, _, _ = _apply_functions(spec.model_copy(update={"nodes": nodes}), None, mode, "generate")
+    return spec, snaps[-1]
 
 
 def _preview_settings(args) -> dict:
@@ -1606,6 +1648,13 @@ def start_summary(at: str, p: dict) -> str:
                  + (f"with code: {', '.join(with_code)}" if with_code else "no code (it will be generated)"))
     if tested:
         lines.append(f"- Stub-test results copied: {', '.join(tested)}")
+    if at == "generate" and fns:
+        kept = [f["name"] for f in fns if f.get("has_code") and f.get("source") in ("catalog", "cached")]
+        made = [f["name"] for f in fns if f["name"] not in kept]
+        lines.append("- Generate: " + "; ".join(x for x in (
+            f"keeps {', '.join(kept)} (stub-tested only, no subagent)" if kept else "",
+            (f"writes {', '.join(made)} with a subagent each" if made else "")) if x)
+            + (" — to change one kept function, ask for it at Gate 3" if kept else ""))
     if p.get("copies"):
         lines.append(f"- Copies: {', '.join(p['copies'])}")
     lines.append(f"- Redoes: {' → '.join(p.get('redoes') or [])}")
@@ -2031,9 +2080,61 @@ def cmd_summary(args) -> dict:
     return {"ok": True, "markdown": summary_md(load_state(args.run))}
 
 
+def _cut(text: str, n: int) -> str:
+    text = " ".join((text or "").split())
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def gate_compact(s: dict, gate: int) -> str:
+    """A short plain-text version of the gate display, for the question's preview."""
+    if gate == 1:
+        spec = spec_of((s.get("skeleton_draft") or {}).get("spec"))
+        if spec is None:
+            return "No valid skeleton yet."
+        lines = [f"{spec.name}"]
+        for i, name in enumerate(topo_order(spec), 1):
+            n = next(x for x in spec.nodes if x.name == name)
+            lines.append(f"{i}. {n.name}" + (f" ×{n.rank}" if n.rank > 1 else "") + f" — {_cut(n.description, 70)}")
+        return "\n".join(lines + ["", *[l.strip() for l in dag_lines(spec)]])
+    spec = spec_of(s.get("spec"))
+    if spec is None:
+        return "No spec yet."
+    order = [next(x for x in spec.nodes if x.name == nm) for nm in topo_order(spec)]
+    if gate == 2:
+        lines = [f"{spec.name} (revision {s['iteration']}/{s['max_iterations']})"]
+        for n in order:
+            io = f"{', '.join(i.name for i in n.inputs) or '—'} → {', '.join(o.name for o in n.outputs) or '—'}"
+            lines.append(f"{n.name}" + (f" ×{n.rank}" if n.rank > 1 else "") + f" | {_origin(n)} | {io}")
+        errors = sum(p["severity"] == "error" for p in check_spec(spec))
+        return "\n".join(lines + ([f"! {errors} check error(s)"] if errors else []))
+    if gate == 3:
+        mga = s.get("mga") or {}
+        lines = [f"{spec.name} (revision {s['iteration']}/{s['max_iterations']})"]
+        for n in order:
+            m = mga.get(n.name, {})
+            status = STATUS_LABELS.get(m.get("status"), m.get("status") or "pending")
+            lines.append(f"{n.name} | {_origin(n)} | {status} | attempts {m.get('attempts', 0)}")
+        return "\n".join(lines)
+    if gate == 4:
+        v = s.get("validation") or {}
+        missing = [n.name for n in spec.nodes if not n.code]
+        return "\n".join([f"{spec.name}", f"bundle: {s.get('bundle_dir')}",
+                          f"validation: {'passed' if v.get('ok') else 'FAILED'} ({v.get('level')})"]
+                         + ([f"no code: {', '.join(missing)}"] if missing else []))
+    raise InputError("--gate must be 1-4")
+
+
+GATE_QUESTION = {1: "Approve this skeleton (the steps and their order)?",
+                 2: "Approve the reuse decisions, files and data flow?",
+                 3: "Approve the generated code?",
+                 4: "Approve this FaaSr bundle?"}
+
+
 def cmd_show(args) -> dict:
     s = load_state(args.run)
-    return {"ok": True, "markdown": show_gate(s, args.gate)}
+    return {"ok": True, "markdown": show_gate(s, args.gate), "compact": gate_compact(s, args.gate),
+            "question": GATE_QUESTION[args.gate] + ' (Type in "Other" to request changes.)',
+            "header": f"Gate {args.gate}"}
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
