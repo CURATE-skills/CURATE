@@ -60,7 +60,9 @@ def start(capsys, run, at, *extra):
 @pytest.mark.parametrize("at,gate,stage", [("reuse", 1, "reuse"), ("resolve", 2, "resolve"),
                                            ("generate", 2, "generate"), ("emit", 3, "emit"),
                                            ("finalize", 4, "finalize")])
-def test_from_run_copies_the_approved_results_into_a_new_run(source_run, capsys, at, gate, stage):
+def test_from_run_copies_the_approved_results_into_a_new_run(source_run, capsys, monkeypatch,
+                                                             at, gate, stage):
+    monkeypatch.setenv("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "1")  # generate requires it
     before = tree_hash(source_run)
     rid = state(source_run)["run_id"]
     extra = ("--existing-code", "ignore") if at == "generate" else ()  # Gate 3 was approved: a choice
@@ -214,8 +216,10 @@ def test_from_run_at_generate_asks_about_the_approved_code(source_run, capsys):
 
 
 @pytest.mark.parametrize("mode,source,generated", [("keep", "cached", False), ("rewrite", "adapt", True)])
-def test_from_run_at_generate_carries_the_gate3_code(source_run, capsys, mode, source, generated):
+def test_from_run_at_generate_carries_the_gate3_code(source_run, capsys, monkeypatch,
+                                                     mode, source, generated):
     import scratch
+    monkeypatch.setenv("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "1")  # rewrite generates
     before = tree_hash(source_run)
     code, out = start(capsys, source_run, "generate", "--from-run", state(source_run)["run_id"],
                       "--existing-code", mode)
@@ -237,6 +241,15 @@ def test_from_run_at_generate_carries_the_gate3_code(source_run, capsys, mode, s
     else:
         assert "writes generate_text, split, map, shuffle, reduce with a subagent each" in out["summary"]
     assert tree_hash(source_run) == before
+
+
+def test_from_run_at_generate_refuses_without_the_foreground_variable(source_run, capsys, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", raising=False)
+    code, out = start(capsys, source_run, "generate", "--from-run", state(source_run)["run_id"],
+                      "--existing-code", "rewrite")
+    assert code == 0, out
+    code, out = call(S, ["require", "--run", out["run"], "--stage", "generate"], capsys)
+    assert code == 1 and "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS" in out["problems"][0]
 
 
 def test_from_run_at_generate_ignore_says_everything_is_written(source_run, capsys):
