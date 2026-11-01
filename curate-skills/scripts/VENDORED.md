@@ -19,6 +19,20 @@ Status: `planned` until the file exists; then `vendored`.
 | `faasr_stubs.py` | `faasr/context_dir.py` (`_STUBS_CODE`) | 19-69 | Per-node layout: own `test_output` → own `test_data` → `$CURATE_UPSTREAM_DIRS`; warning on stderr when a file is missing (still created empty, as in the original) | vendored |
 | `stubtest.py` | `agents/fga.py` (`_run_stub_test`); `faasr/context_dir.py` (`signature_and_test_call`) | 239-286; 234-248 | Two modes: `strict` (default: every rank, isolated `uv run --with-requirements` env, faasr-import and declared-output checks, `test_output/` cleared first) and `parity` (original: rank 1 only, no dep install, `ModuleNotFoundError` with declared deps passes); deployment/provider credentials removed from the env; writes `stubtest.log` | vendored |
 
+## Vendored deploy and runtime code (`scripts/vendor/`, D0; used from D1 on)
+
+Copied whole so they stay diffable against the original; `tests/test_deploy.py` checks that each file differs from its source only by the edits listed here. Each `.py` starts with a 3-line MIT/`Vendored from` header. Their packages (`pygithub`, `FaaSr_py==0.1.13`, `boto3`, `requests`) are declared by the scripts that import them, not by the test env. Platforms other than GitHub Actions stay in `register_workflow.py` but are unreachable, as in the original (emit always writes `GitHubActions`).
+
+| Vendored file | Source file | Lines | Edits | Status |
+|---|---|---|---|---|
+| `vendor/curate_deploy/register_workflow.py` | `deploy/register_workflow.py` | 1-1022 | import `validate_faasr_json` from `faasr_validate` (the plugin's vendored `faasr/validate.py`); import-time `logging.basicConfig(..., stream=sys.stderr)` instead of stdout, so the scripts' stdout stays JSON | vendored |
+| `vendor/curate_deploy/invoke_workflow.py` | `deploy/invoke_workflow.py` | 1-192 | logging to stderr (as above) | vendored |
+| `vendor/curate_deploy/native_containers.txt` | `deploy/native_containers.txt` | 1-5 | none | vendored |
+| `vendor/faasr_runtime/{enums,utils,s3_client,faasr_function,faasr_function_logger,workflow_runner}.py` | `faasr/runtime/*.py` | all (1,356) | `faasr_agents.faasr.runtime.` imports made relative; signal handlers and root-logger reset kept (monitor.py runs the runner in the main thread) | vendored |
+| `vendor/faasr_runtime/artifacts.py` | `faasr/artifacts.py` | 1-91 | relative import of `s3_client` | vendored |
+
+Not used: `tui/deploy_tracker.py` and `tui/output_review.py` (Rich live views and the Gate 5 REPL), replaced by stage files and AskUserQuestion.
+
 ## Ported and new code
 
 `spec.py`, `scratch.py` and the hook are not wholesale copies, but parts of the first two are adapted copies of the original (MIT notice in their headers). Relation: **copy** = same logic, edited only for I/O (logging instead of `print`, plain dicts or names instead of LangGraph state); **adapted** = original logic with listed changes; **follows** = reimplemented to reproduce the original's behaviour; **new** = no counterpart.
@@ -64,6 +78,19 @@ Replaces the FGA's single temporary context directory with one folder per node, 
 | `cmd_harvest` | Put generated code, secrets and deps back into the spec | `agents/fga.py` 927-947 | follows |
 | `cmd_record` | Record MGA status, attempts and the stub-test tail | — | new |
 
+### `scripts/deploy.py` — curate-deploy (D0: `preflight` only)
+
+| Part | Purpose | Original | Relation |
+|---|---|---|---|
+| `get_token` | `GH_PAT` (CURATE's variable), else `gh auth token` read inside the script; never printed or written | `agents/wda.py` 59-62 (`GH_PAT` only) | adapted |
+| `required_secret_names` | GitHub secret names the generated Actions YAML imports | `deploy/register_workflow.py` 88-172 | follows (GitHub Actions only; a test compares with the vendored functions) |
+| `deploy_copy`, `name_problems` | The workflow renamed `<Name>-cs` with `FunctionGitRepo` → `functions/<Name>-cs/<fn>.py`, and every path a deploy writes | `agents/wda.py` 56-132 (paths `functions/<fn>.py`, `workflows/<Name>.json`); `register_workflow.py` 300-345 (`.github/workflows/<Name>-<action>.yml`) | adapted (suffix and per-workflow folder) |
+| `preflight`, `_owner_of`, `preflight_summary` | Read-only: run/Gate 4/bundle checks, placeholders, native containers, env, token scopes, repo push + default branch, secret names, existing targets and their owner, CURATE's own files | `register_workflow.py` 49-85 (`verify_containers`); `cli.py` 368-382 (secret hints) | new |
+
+### `scripts/leakcheck.py`
+
+`find_leaks` / `redact`: secret env values by name (as `emit.find_leaked_secrets`), extra values such as a `gh auth token`, and token/key patterns (`ghp_`…, `github_pat_`…, `AKIA`/`ASIA`…, `aws_secret_access_key=`). New.
+
 ### `scripts/runstate.py` (v2)
 
 Run lock (`fcntl.flock` on `<run>/state.lock`), atomic JSON writes, and the input hashes stages record (`spec_hash`, `node_basis`). New; no counterpart in the original.
@@ -99,3 +126,4 @@ PreToolUse write-scope guard for `curate-mga` subagents. New; no counterpart in 
 - The MCA decides all nodes in one Claude turn, each node judged on its own fields (original: one LLM call per node, `agents/wca.py` 664-689). The user-model verbatim/adapt choice is made in the same turn (original: a separate call, `agents/fca.py` 59).
 - The resolve step may not rename nodes: `merge-resolved` requires the candidate names (original: the resolve LLM could rename a node whose meaning changed). A rename is handled as a structural change at Gate 2.
 - The revision classifier is applied by Claude in the main session using `classify.md`; mixed requests count as STRUCTURE (original: separate LLM call, ambiguous answers default to FUNCTION, no mixed-request rule).
+- Deployments are named `<WorkflowName><suffix>` (`deploy_name_suffix`, default `-cs`, never empty) with function files in `functions/<Name>-cs/`, so a curate-skills deployment never writes CURATE's `functions/<fn>.py`, `workflows/<Name>.json` or `.github/workflows/<Name>-<action>.yml`; the preflight refuses any target that exists and is not a curate-skills file of the same deployment. The approved bundle itself is unchanged.

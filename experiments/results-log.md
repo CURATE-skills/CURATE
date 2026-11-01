@@ -737,3 +737,46 @@ start or stop". Run A copy identical to the original. Minor: turn 1 described th
 
 Tests: 216 pass (+`test_gates_are_the_users_and_displays_are_verbatim`; the stage-file test now
 checks the "verbatim … never re-formatted" wording). `claude plugin validate --strict` passes.
+
+## 29. D0: vendored deploy/runtime code and a read-only deploy preflight
+
+Plan: deploy, monitor and a CURATE-style Gate 5 review (D0–D4). D0 writes nothing to GitHub.
+
+**Vendored** (`scripts/vendor/`, 2,696 lines with headers): CURATE's `deploy/register_workflow.py`,
+`invoke_workflow.py`, `native_containers.txt`, `faasr/runtime/*` and `faasr/artifacts.py`. A test
+diffs each against `ref/curate`: the only differences are the 3-line header, relative imports,
+`faasr_validate` for `validate_faasr_json`, and import-time logging to stderr instead of stdout.
+
+**New:** `scripts/leakcheck.py` (49 lines: by-value, as emit, plus token/key patterns and
+`redact`); `scripts/deploy.py` (391 lines, `preflight` only, stdlib, read-only GitHub GETs);
+`tests/test_deploy.py` (299 lines, 26 tests). Suite 242 passed; plugin validates.
+
+**How FaaSr finds function code** (asked before choosing the deploy layout):
+- Local FaaSr_py 0.1.13 (used by CURATE's invoke) and FaaSr-Backend `main` (installed in the
+  `ghcr.io/faasr/github-actions-python` image, built by FaaSr-Docker
+  `faas_specific/github-actions.Dockerfile` with `FAASR_INSTALL_REPO=FaaSr/FaaSr-Backend` at a
+  release tag; latest tag 2.1.0): a `FunctionGitRepo` entry ending in `.py` fetches only that one
+  file (contents API, `ref` = branch); FaaSr-Backend writes it to `/tmp/functions/<InvocationID>/`
+  and `faasr_import_function_walk` imports every `.py` in that folder (stem = module name) and
+  returns the first that defines `FunctionName`. Non-`.py` entries download a repo/subfolder.
+- So folders are never loaded wholesale for curate-skills' single-file entries, and each action's
+  container sees only its own file. The per-workflow folder `functions/<Name>-cs/<fn>.py` keeps
+  CURATE's `functions/*.py` untouched and the module name valid (a `<fn>-cs.py` stem would not be).
+  The preflight refuses any `FunctionGitRepo` entry that is not a `.py` under that folder.
+- Note: in 0.1.13 the raw file goes to `/tmp/functions/` but the walk searches
+  `/tmp/functions/<InvocationID>`; only the container's version matters at run time.
+
+**Preflight on a copy of run A** (`20261020-215732-corvallis-winter-weather`, copied with its
+bundle into the scratchpad; the copy's `bundle_dir` points at the copied bundle). Offline: no
+GitHub token or `FAASR_*`/`S3_*` variables in this session's environment, no `gh`, no `.env`.
+- Deploy name `corvallis-winter-weather-comparison-cs`; targets
+  `functions/corvallis-winter-weather-comparison-cs/{download_ghcn_station,process_weather_variable,plot_weather_comparison}.py`,
+  `workflows/corvallis-winter-weather-comparison-cs.json`,
+  `.github/workflows/corvallis-winter-weather-comparison-cs-{download-ghcn-station,process-weather-variable,plot-weather-comparison}.yml`.
+- Secrets the YAML will import: `GH_PAT`, `S3_AccessKey`, `S3_SecretKey`.
+- **Not ready:** run A's bundle still has emit placeholders in `ComputeServers.GH.UserName`,
+  `.ActionRepoName`, `DataStores.S3.{Endpoint,Bucket,Region}` and `FunctionGitRepo.*` — it was
+  emitted without the `FAASR_*` variables, so it could not be deployed by hand either. Plus no
+  token / env here (GitHub checks skipped).
+- Open decision for D1: fill exactly those `<FAASR_…>` placeholders from the environment in the
+  deploy copy (non-secret values, shown in the preflight), or require re-emitting the bundle.
