@@ -352,6 +352,13 @@ def test_preflight_repo_problems(run, env, capsys, kw, needle):
     assert code == 1 and any(needle in p for p in out["problems"]), out["problems"]
 
 
+def test_secret_names_match_without_regard_to_case(run, env, capsys):
+    # GitHub lists secret names in upper case; ${{ secrets.S3_AccessKey }} resolves to S3_ACCESSKEY.
+    code, out = pre(capsys, run, FakeGitHub(secrets=("GH_PAT", "S3_ACCESSKEY", "S3_SECRETKEY")))
+    assert out["ok"], out["problems"]
+    assert out["secrets"]["present"] == ["GH_PAT", "S3_AccessKey", "S3_SecretKey"] and out["secrets"]["missing"] == []
+
+
 def test_fine_grained_token_is_reported_not_refused(run, env, capsys):
     code, out = pre(capsys, run, FakeGitHub(scopes=None))
     assert out["ok"] and out["token_scopes"].startswith("fine-grained")

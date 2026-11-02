@@ -536,9 +536,11 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
                                 "make them the same")
             st, _, sec = gh.get(f"/repos/{user}/{repo}/actions/secrets", per_page=100)
             if st == 200:
-                have = sorted(x["name"] for x in (sec or {}).get("secrets", []))
-                out["secrets"].update(present=[n for n in req_secrets if n in have],
-                                      missing=[n for n in req_secrets if n not in have])
+                # GitHub stores secret names in upper case and resolves ${{ secrets.X }} without regard
+                # to case, so the YAML's S3_AccessKey is the repo's S3_ACCESSKEY.
+                have = {x["name"].upper() for x in (sec or {}).get("secrets", [])}
+                out["secrets"].update(present=[n for n in req_secrets if n.upper() in have],
+                                      missing=[n for n in req_secrets if n.upper() not in have])
                 if out["secrets"]["missing"]:
                     problems.append(f"GitHub secrets missing in {user}/{repo}: "
                                     f"{', '.join(out['secrets']['missing'])} (add with `gh secret set NAME`)")

@@ -780,3 +780,48 @@ GitHub token or `FAASR_*`/`S3_*` variables in this session's environment, no `gh
   token / env here (GitHub checks skipped).
 - Open decision for D1: fill exactly those `<FAASR_…>` placeholders from the environment in the
   deploy copy (non-secret values, shown in the preflight), or require re-emitting the bundle.
+
+## 30. Preflight before D1: deploy-copy rule, S3 check, retrying a partial deploy
+
+**Decisions (user):** the action repo is `laurakuo1006/CURATE-test`, shared with CURATE (its
+state tagged `curate-baseline-weather` by the user); `FAASR_ACTION_REPO=CURATE-test` (CURATE
+joins `FAASR_GH_USERNAME/FAASR_ACTION_REPO`). Run A deploys as
+`corvallis-winter-weather-comparison-cs`; its `<FAASR_…>` placeholders are filled from the
+environment in the deploy copy only, never in the approved bundle.
+
+**Finding:** run A's functions write S3 outputs to the folder argument `corvallis_winter_weather`,
+the same folder CURATE's run used; renaming only the workflow would have let the `-cs` run
+overwrite CURATE's S3 outputs (FaaSr logs were already separate: `FaaSrLog/<WorkflowName>/…`).
+
+**The deploy-copy rule** (enforced by `deploy.py preflight`, recorded in `scripts/VENDORED.md`):
+- The deploy copy may differ from the Gate 4-approved bundle only in `WorkflowName` (+ suffix),
+  each action's `Arguments.folder` (+ suffix), `FunctionGitRepo.*` (per-deployment folder
+  `functions/<Name>-cs/`), and fields that held an emit `<FAASR_…>` placeholder. Any other
+  difference is refused.
+- The preflight summary shows a field-by-field table (field, approved value, deploy-copy value,
+  reason) plus the locations that change only through the name: S3 log prefix, workflow JSON,
+  function files and Actions files in the repo.
+- Every path the deploy writes (repo and S3) must carry the suffix and must not exist yet;
+  existing paths are listed (`refused_paths`). A workflow with external S3 inputs, or an action
+  without a `folder` argument, is refused.
+- Read-only S3 check: `head_bucket`, one-key listings of each prefix the run writes and of
+  CURATE's own prefixes (reported, never touched).
+
+**Retrying a partial deploy:** `--overwrite-own-deploy` (not the default) allows an existing path
+only if this run's deploy log (`<run>/deploy/deploy-log.jsonl`, written by D1's steps) records it
+for the same run id, deploy name and repo/branch (or bucket), and, in the repo, the file still
+carries curate-skills' mark (commit tag / WorkflowName / YAML name). Everything else is still
+refused; CURATE's paths are never targets.
+
+Tests: 259 passed (without `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` set); `claude plugin validate
+--strict` passes. Offline check on the run-A copy (`~/curate-tests/weather-deploy`, dummy values):
+the table lists 12 changed fields (3 folders, 5 placeholders, 3 FunctionGitRepo, WorkflowName)
+and 4 derived locations.
+
+**Real preflight (user's `.env`, read-only):** not ready only because the secret check missed
+`S3_AccessKey`/`S3_SecretKey`; the repo has them as `S3_ACCESSKEY`/`S3_SECRETKEY`. GitHub stores
+secret names in upper case and resolves `${{ secrets.S3_AccessKey }}` without regard to case,
+so the names were fine and the check was wrong; it now compares names case-insensitively (test
+added; 260 passed). Everything else passed: token, push, default branch `main`, all 8 repo
+paths and both S3 prefixes new, bucket `test-curate` reachable, diff within the allowed fields.
+No CURATE files or S3 data exist under run A's names (CURATE's own run used its own names).
