@@ -382,12 +382,10 @@ def secret_names(spec: WorkflowSpec) -> list[str]:
 
 def find_leaked_secrets(text: str, names) -> list[str]:
     """Names of env secrets whose *values* occur in text. Values never returned."""
-    leaked = []
-    for name in names:
-        value = os.environ.get(name, "")
-        if len(value) >= 6 and value in text:
-            leaked.append(name)
-    return leaked
+    # Matched without regard to case: S3_ACCESSKEY (GitHub's spelling) is S3_AccessKey.
+    want = {n.upper() for n in names}
+    return [k for k, v in sorted(os.environ.items())
+            if k.upper() in want and len(v) >= 6 and v in text]
 
 
 # ── bundle (from agents/wda.py) ──────────────────────────────────────────────

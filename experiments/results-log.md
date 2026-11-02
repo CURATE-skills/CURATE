@@ -825,3 +825,11 @@ so the names were fine and the check was wrong; it now compares names case-insen
 added; 260 passed). Everything else passed: token, push, default branch `main`, all 8 repo
 paths and both S3 prefixes new, bucket `test-curate` reachable, diff within the allowed fields.
 No CURATE files or S3 data exist under run A's names (CURATE's own run used its own names).
+
+**Local S3 key spelling:** the local environment may now hold `S3_AccessKey` or GitHub's
+`S3_ACCESSKEY` (same for `S3_SecretKey`); both set with different values is refused, naming the
+two variables only. One reader (`deploy.env_key` / `s3_keys`) serves every S3 client deploy.py
+builds and will serve curate-monitor's; the preflight summary says which spelling it read. The
+leak checks (`leakcheck`, `emit.find_leaked_secrets`) and the stub-test env scrub now match secret
+names without regard to case, so an upper-case spelling is never missed. Tests: camel only, upper
+only, both equal, both different, plus leak/scrub of the upper-case name; 265 passed.

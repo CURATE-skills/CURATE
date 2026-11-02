@@ -27,8 +27,15 @@ PATTERNS = {
 }
 
 
+def env_values(names) -> dict[str, str]:
+    """Values of the named env vars, matched without regard to case (GitHub's S3_ACCESSKEY is
+    S3_AccessKey), labelled by the variable actually set."""
+    want = {n.upper() for n in names}
+    return {k: v for k, v in os.environ.items() if k.upper() in want}
+
+
 def _values(names, extra_values: dict | None) -> dict[str, str]:
-    vals = {n: os.environ.get(n, "") for n in names}
+    vals = env_values(names)
     vals.update(extra_values or {})
     return {k: v for k, v in vals.items() if v and len(v) >= MIN_VALUE_LEN}
 

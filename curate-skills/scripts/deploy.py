@@ -317,6 +317,35 @@ def name_problems(copy_wf: dict, targets: list[dict], s3_targets: list[dict], su
 
 # ── S3 (read-only) ───────────────────────────────────────────────────────────
 
+def env_key(name: str) -> tuple[str | None, str | None, str | None]:
+    """(value, which variable it came from, problem) for a credential such as S3_AccessKey.
+    The name or its upper-case spelling is accepted (GitHub stores S3_AccessKey as
+    S3_ACCESSKEY); both set with different values is refused. Messages never hold values."""
+    found = [(n, os.environ[n]) for n in dict.fromkeys([name, name.upper()]) if os.environ.get(n)]
+    if not found:
+        return None, None, None
+    if len({v for _, v in found}) > 1:
+        return None, None, (f"{found[0][0]} and {found[1][0]} are both set, with different values; "
+                            "unset one (values not shown)")
+    spelling = found[0][0] if len(found) == 1 else f"{found[0][0]} and {found[1][0]} (same value)"
+    return found[0][1], spelling, None
+
+
+def s3_keys(cfg: dict) -> tuple[tuple[str, str] | None, dict, list[str]]:
+    """The data store's (access key, secret key) from the environment, which spelling each came
+    from, and problems. Used for every S3 client this script (and curate-monitor) builds."""
+    names = (cfg.get("AccessKey") or "S3_AccessKey", cfg.get("SecretKey") or "S3_SecretKey")
+    got = [env_key(n) for n in names]
+    problems = [err for _, _, err in got if err]
+    spellings = {n: frm for n, (_, frm, _) in zip(names, got) if frm}
+    if problems:
+        return None, spellings, problems
+    if not all(v for v, _, _ in got):
+        return None, spellings, [f"{names[0]} / {names[1]} (or {names[0].upper()} / {names[1].upper()}) "
+                                 "not set here"]
+    return (got[0][0], got[1][0]), spellings, []
+
+
 def boto3_s3(cfg: dict, access_key: str, secret_key: str):
     """An S3 client built the way the vendored faasr_runtime/s3_client.py builds it."""
     import boto3
@@ -343,14 +372,14 @@ def s3_check(wf: dict, s3_targets: list[dict], curate_prefixes: list[str], facto
         store = t["store"]
         if store not in clients:
             cfg = (wf.get("DataStores") or {}).get(store) or {}
-            ak = os.environ.get(cfg.get("AccessKey") or "S3_AccessKey", "")
-            sk = os.environ.get(cfg.get("SecretKey") or "S3_SecretKey", "")
-            if not (ak and sk):
-                problems.append(f"S3 not checked: {cfg.get('AccessKey') or 'S3_AccessKey'} / "
-                                f"{cfg.get('SecretKey') or 'S3_SecretKey'} not set here, so the bucket and "
-                                "existing S3 paths could not be checked")
+            keys, spellings, key_problems = s3_keys(cfg)
+            info.setdefault("key_vars", {}).update(spellings)
+            if not keys:
+                problems += [f"S3 not checked: {x}, so the bucket and existing S3 paths could not be checked"
+                             for x in key_problems]
                 clients[store] = None
                 continue
+            ak, sk = keys
             try:
                 c = factory(cfg, ak, sk)
                 c.head_bucket(Bucket=cfg.get("Bucket"))
@@ -460,10 +489,10 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
             if want and cs.get(field) not in (want, None) and "<FAASR_" not in str(cs.get(field)):
                 problems.append(f"bundle ComputeServers.{sname}.{field} = {cs.get(field)!r} but the "
                                 f"deploy target is {want!r}")
-    local_s3 = [n for n in ("S3_AccessKey", "S3_SecretKey") if not os.environ.get(n)]
+    local_s3 = [n for n in ("S3_AccessKey", "S3_SecretKey") if not env_key(n)[0] and not env_key(n)[2]]
     if local_s3:
-        warnings.append(f"{', '.join(local_s3)} not set here: deploying works, but curate-monitor "
-                        "needs them to read the run's logs from S3")
+        warnings.append(f"{', '.join(local_s3)} (or the upper-case spelling) not set here: deploying works, "
+                        "but curate-monitor needs them to read the run's logs from S3")
 
     copy_wf, targets, s3_targets = deploy_copy(filled_wf, suffix, user or "<user>", repo or "<repo>", branch)
     problems += name_problems(copy_wf, targets, s3_targets, suffix, user or "<user>", repo or "<repo>", branch)
@@ -626,6 +655,8 @@ def preflight_summary(p: dict) -> str:
                  "exists, in this run's deploy log — will be overwritten (--overwrite-own-deploy)"
                  if t.get("overwrite") else "EXISTS — refused")
         lines.append(f"- S3 ({t['kind']}, written by the run): `s3://{t['bucket']}/{t['prefix']}` ({state})")
+    if s3.get("key_vars"):
+        lines.append("- S3 keys read from: " + ", ".join(f"`{v}`" for v in s3["key_vars"].values()))
     if p["curate_files"]:
         lines.append(f"- CURATE's own files found and left untouched: {', '.join(p['curate_files'])}")
     if s3.get("curate_prefixes"):

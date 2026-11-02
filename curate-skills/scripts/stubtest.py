@@ -119,7 +119,8 @@ def _uv_cmd(deps_file: Path, with_deps: bool) -> list[str]:
 
 
 def _env(rank: int | None, max_rank: int | None, upstream: list[str]) -> dict:
-    env = {k: v for k, v in os.environ.items() if k not in SCRUBBED_ENV}
+    scrubbed = {n.upper() for n in SCRUBBED_ENV}  # any spelling: S3_ACCESSKEY too
+    env = {k: v for k, v in os.environ.items() if k.upper() not in scrubbed}
     env.pop("FAASR_RANK", None)
     env.pop("FAASR_MAX_RANK", None)
     if rank is not None:

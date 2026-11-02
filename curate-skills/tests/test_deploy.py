@@ -508,3 +508,50 @@ def test_overwrite_own_never_allows_curates_files(run, env, capsys):
     code, out = pre(capsys, run, FakeGitHub(files={"workflows/weather.json": "{}"}), "--overwrite-own-deploy")
     assert out["ok"] and "workflows/weather.json" not in [t["path"] for t in out["targets"]]
     assert out["overwrite_paths"] == []
+
+
+# ── S3 keys: S3_AccessKey or GitHub's S3_ACCESSKEY ──
+
+@pytest.mark.parametrize("camel,upper,spelling", [
+    (True, False, "S3_AccessKey"),
+    (False, True, "S3_ACCESSKEY"),
+    (True, True, "S3_AccessKey and S3_ACCESSKEY (same value)"),
+])
+def test_s3_keys_accept_either_spelling(run, env, capsys, monkeypatch, camel, upper, spelling):
+    for name in ("S3_AccessKey", "S3_SecretKey"):
+        if not camel:
+            monkeypatch.delenv(name)
+        if upper:
+            monkeypatch.setenv(name.upper(), FAKE[name])
+    s3 = FakeS3()
+    code, out = pre(capsys, run, FakeGitHub(), s3=s3)
+    assert out["ok"], out["problems"]
+    assert s3.made_with[1:] == (FAKE["S3_AccessKey"], FAKE["S3_SecretKey"])
+    assert out["s3"]["key_vars"]["S3_AccessKey"] == spelling
+    assert f"- S3 keys read from: `{spelling}`, `{spelling.replace('AccessKey', 'SecretKey').replace('ACCESSKEY', 'SECRETKEY')}`" \
+        in out["summary"]
+    assert all(v not in json.dumps(out) for v in FAKE.values())
+
+
+def test_s3_keys_set_twice_with_different_values_are_refused(run, env, capsys, monkeypatch):
+    monkeypatch.setenv("S3_ACCESSKEY", "AKIA" + "D" * 16)  # differs from S3_AccessKey
+    monkeypatch.setenv("S3_SECRETKEY", FAKE["S3_SecretKey"])  # same: fine on its own
+    s3 = FakeS3()
+    code, out = pre(capsys, run, FakeGitHub(), s3=s3)
+    assert code == 1 and s3.made_with is None  # no S3 client built
+    msg = [p for p in out["problems"] if "both set" in p]
+    assert msg == ["S3 not checked: S3_AccessKey and S3_ACCESSKEY are both set, with different values; "
+                   "unset one (values not shown), so the bucket and existing S3 paths could not be checked"]
+    text = json.dumps(out)
+    assert "D" * 16 not in text and all(v not in text for v in FAKE.values())
+
+
+def test_uppercase_spellings_are_leak_checked_and_scrubbed(monkeypatch):
+    import emit
+    import stubtest
+    monkeypatch.setenv("S3_SECRETKEY", "upper-" + "e" * 30)
+    text = "x upper-" + "e" * 30
+    assert L.find_leaks(text) == ["S3_SECRETKEY"]
+    assert "[REDACTED:S3_SECRETKEY]" in L.redact(text)
+    assert emit.find_leaked_secrets(text, emit.BASE_SECRET_NAMES) == ["S3_SECRETKEY"]
+    assert "S3_SECRETKEY" not in stubtest._env(None, None, [])
