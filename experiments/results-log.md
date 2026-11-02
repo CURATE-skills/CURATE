@@ -1089,3 +1089,23 @@ only the invoke in this run's log); refusals for an edited function file, an edi
 a missing deployed file, a non-deterministic generator, an unfinished source, a run that started
 its own steps; `reuse_possible`; interim stale → present; `--minutes` on resume; download with
 manifest, run untouched, unsafe targets refused, a secret-holding output skipped.
+
+## 37. Backup of run 20261101-172823's outputs (before the live test)
+
+User ran `monitor.py download-outputs --run …/20261101-172823-corvallis-winter-weather-comparison
+--to ~/curate-tests/backup/20261101-172823-outputs` (read-only S3 get; at `badcd6e`), before the
+live test's new invocation rewrites `s3://test-curate/corvallis_winter_weather-cs/`.
+
+| File | Bytes | LastModified (S3) | sha256 |
+|---|---|---|---|
+| `USC00351862_daily.csv` | 13,127,314 | 2026-11-02T01:33:57Z | `f22b868dff9d…` |
+| `winter_comparison_1.csv` | 2,239 | 2026-11-02T01:34:51Z | `1120afd8d4f7…` |
+| `winter_comparison_2.csv` | 2,732 | 2026-11-02T01:34:47Z | `257fcbf2a027…` |
+| `winter_comparison_3.csv` | 2,640 | 2026-11-02T01:34:57Z | `bea5ea7155c4…` |
+| `corvallis_winter_comparison.png` | 297,097 | 2026-11-02T01:35:47Z | `464cd23d3bfb…` |
+
+All 5 saved (none skipped), byte counts equal the S3 sizes; `manifest.json` records invocation
+`2026-11-01-17-33-10`, bucket `test-curate`, downloaded 2026-11-02T02:49:46Z. The backup is outside
+the run folder; run 172823's `state.json` (`b14b985e…`) and folder hash (`671fd39d…`) are unchanged.
+The invocation ran from dispatch (01:33:09Z) to the plot (01:35:47Z) in about 2.6 minutes, so a
+1-minute monitor budget should time out mid-run as intended.
