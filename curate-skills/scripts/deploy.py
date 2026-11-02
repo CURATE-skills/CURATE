@@ -1,21 +1,25 @@
 # /// script
 # requires-python = "==3.13.*"
-# dependencies = []
+# dependencies = ["boto3>=1.39"]
 # ///
 # Copyright (c) 2026 Nolan Cutler. MIT License; see NOTICE.
 # The deploy steps follow CURATE-prototype src/faasr_agents/agents/wda.py 56-157 and the
 # vendored deploy/ modules (commit 3fd5c16092ddf97a28bc3b83088e23e7f1b0f140). See scripts/VENDORED.md.
 """curate-deploy: put an approved bundle on FaaSr (GitHub Actions) the way CURATE does.
 
-D0 has only `preflight`, which is read-only: it reads the run, its bundle and (with a token)
-the GitHub repo, and reports what deploying would write. Nothing is written anywhere.
+D0 has only `preflight`, which is read-only: it reads the run, its bundle, (with a token) the
+GitHub repo and (with S3 keys) the S3 bucket, and reports what deploying would write. Nothing is
+written anywhere. Every path deploying would write must carry the suffix and must not exist yet.
 
 Every curate-skills deployment gets its own name, WorkflowName + suffix (default "-cs"), so
 CURATE's deployment of the same workflow is never touched:
   functions/<Name>-cs/<function>.py        (FunctionGitRepo points only there)
   workflows/<Name>-cs.json
   .github/workflows/<Name>-cs-<action>.yml
-The approved bundle is not changed; the renamed copy exists only in the deploy step.
+  S3: <folder>-cs/... (each action's "folder" argument) and FaaSrLog/<Name>-cs/...
+The deploy copy also fills emit's <FAASR_...> placeholders from the environment (non-secret
+values: user, repo, S3 endpoint/bucket/region). The approved bundle is not changed; the renamed,
+filled copy exists only in the deploy step.
 
 Credentials come only from environment variables (CURATE's names) or `gh auth token`, read
 inside this script; they are never printed, written or passed on a command line.
@@ -136,6 +140,32 @@ def placeholders(obj, path="") -> list[str]:
     return [path] if isinstance(obj, str) and "<FAASR_" in obj else []
 
 
+PLACEHOLDER_RX = re.compile(r"<(FAASR_[A-Z0-9_]+)>")
+
+
+def fill_placeholders(obj, path="", filled=None, missing=None):
+    """A copy with every <FAASR_X> replaced by $FAASR_X; also {json path: var} filled and the
+    unset vars. Only emit's non-secret placeholders exist (user, repo, S3 endpoint/bucket/region)."""
+    filled = {} if filled is None else filled
+    missing = [] if missing is None else missing
+    if isinstance(obj, dict):
+        out = {k: fill_placeholders(v, f"{path}.{k}" if path else k, filled, missing)[0] for k, v in obj.items()}
+    elif isinstance(obj, list):
+        out = [fill_placeholders(v, f"{path}[{i}]", filled, missing)[0] for i, v in enumerate(obj)]
+    elif isinstance(obj, str) and PLACEHOLDER_RX.search(obj):
+        def sub(m):
+            val = os.environ.get(m.group(1), "").strip()
+            if not val:
+                missing.append(m.group(1))
+                return m.group(0)
+            filled[path] = m.group(1)
+            return val
+        out = PLACEHOLDER_RX.sub(sub, obj)
+    else:
+        out = obj
+    return out, filled, sorted(set(missing))
+
+
 def required_secret_names(wf: dict) -> list[str]:
     """GitHub secret names the generated Actions YAML imports (vendored register_workflow.py
     generate_github_secret_imports + generate_user_defined_secret_imports; GitHub Actions only)."""
@@ -149,12 +179,30 @@ def required_secret_names(wf: dict) -> list[str]:
 
 # ── the renamed deploy copy ──────────────────────────────────────────────────
 
-def deploy_copy(wf: dict, suffix: str, user: str, repo: str, branch: str) -> tuple[dict, list[dict]]:
-    """The workflow as curate-deploy would upload it, and every repo path it would write."""
+def deploy_copy(wf: dict, suffix: str, user: str, repo: str, branch: str
+                ) -> tuple[dict, list[dict], list[dict]]:
+    """The workflow as curate-deploy would upload it, every repo path it would write, and every
+    S3 prefix the invoked run would write (outputs under each renamed folder, and its logs)."""
     name = wf["WorkflowName"]
     new = name + suffix
     out = copy.deepcopy(wf)
     out["WorkflowName"] = new
+    default_store = wf.get("DefaultDataStore") or "S3"
+    s3_targets, folders = [], []
+    for action, a in sorted((out.get("ActionList") or {}).items()):
+        args = a.get("Arguments") or {}
+        if not args.get("folder"):
+            s3_targets.append({"store": default_store, "prefix": None, "kind": "outputs", "action": action})
+            continue
+        if not args["folder"].endswith(suffix):
+            args["folder"] += suffix
+        if args["folder"] not in folders:
+            folders.append(args["folder"])
+            s3_targets.append({"store": default_store, "prefix": args["folder"] + "/", "kind": "outputs"})
+    s3_targets.append({"store": wf.get("LoggingDataStore") or default_store,
+                       "prefix": f"{wf.get('FaaSrLog') or 'FaaSrLog'}/{new}/", "kind": "logs"})
+    for t in s3_targets:
+        t["bucket"] = ((wf.get("DataStores") or {}).get(t["store"]) or {}).get("Bucket")
     folder = f"functions/{new}"
     fns = sorted({a["FunctionName"] for a in (wf.get("ActionList") or {}).values()})
     out["FunctionGitRepo"] = {fn: f"{user}/{repo}/{branch}/{folder}/{fn}.py" for fn in fns}
@@ -165,14 +213,22 @@ def deploy_copy(wf: dict, suffix: str, user: str, repo: str, branch: str) -> tup
         if (servers.get(a.get("FaaSServer")) or {}).get("FaaSType") == "GitHubActions":
             targets.append({"step": "register", "path": f".github/workflows/{new}-{action}.yml",
                             "kind": "actions", "action": action})
-    return out, targets
+    return out, targets, s3_targets
 
 
-def name_problems(copy_wf: dict, targets: list[dict], suffix: str, user: str, repo: str,
-                  branch: str) -> list[str]:
-    """Every written path and every FunctionGitRepo entry must belong to the suffixed name."""
+def name_problems(copy_wf: dict, targets: list[dict], s3_targets: list[dict], suffix: str,
+                  user: str, repo: str, branch: str) -> list[str]:
+    """Every written path (repo and S3) and every FunctionGitRepo entry must carry the suffix."""
     new = copy_wf["WorkflowName"]
     out = []
+    for t in s3_targets:
+        if t["prefix"] is None:
+            out.append(f"action {t['action']} has no \"folder\" argument, so its S3 outputs cannot be "
+                       f"given the {suffix!r} suffix")
+        elif t["kind"] == "outputs" and not t["prefix"].rstrip("/").endswith(suffix):
+            out.append(f"S3 folder {t['prefix']} does not end with {suffix!r}")
+        elif t["kind"] == "logs" and f"/{new}/" not in f"/{t['prefix']}":
+            out.append(f"S3 log prefix {t['prefix']} is not under the deploy name {new!r}")
     if not new.endswith(suffix):
         out.append(f"deploy name {new!r} does not end with {suffix!r}")
     for t in targets:
@@ -184,6 +240,76 @@ def name_problems(copy_wf: dict, targets: list[dict], suffix: str, user: str, re
             if not (one.startswith(prefix) and one.endswith(".py")):
                 out.append(f"FunctionGitRepo[{fn}] = {one!r} is not a .py file under {prefix}")
     return out
+
+
+# ── S3 (read-only) ───────────────────────────────────────────────────────────
+
+def boto3_s3(cfg: dict, access_key: str, secret_key: str):
+    """An S3 client built the way the vendored faasr_runtime/s3_client.py builds it."""
+    import boto3
+    kw = {"aws_access_key_id": access_key, "aws_secret_access_key": secret_key,
+          "region_name": cfg.get("Region")}
+    if cfg.get("Endpoint"):
+        kw["endpoint_url"] = cfg["Endpoint"]
+    return boto3.client("s3", **kw)
+
+
+def _s3_error(e: Exception) -> str:
+    code = (getattr(e, "response", None) or {}).get("Error", {}).get("Code")
+    return f"{type(e).__name__}{f' {code}' if code else ''}"
+
+
+def s3_check(wf: dict, s3_targets: list[dict], curate_prefixes: list[str], factory) -> tuple[dict, list[str]]:
+    """head_bucket and one-key listings only (no writes): is the bucket reachable, and does any
+    prefix the run would write already hold objects? CURATE's own prefixes are listed as info."""
+    info, problems = {"checked": False, "buckets": {}, "curate_prefixes": []}, []
+    clients = {}
+    for t in s3_targets:
+        if t["prefix"] is None:
+            continue
+        store = t["store"]
+        if store not in clients:
+            cfg = (wf.get("DataStores") or {}).get(store) or {}
+            ak = os.environ.get(cfg.get("AccessKey") or "S3_AccessKey", "")
+            sk = os.environ.get(cfg.get("SecretKey") or "S3_SecretKey", "")
+            if not (ak and sk):
+                problems.append(f"S3 not checked: {cfg.get('AccessKey') or 'S3_AccessKey'} / "
+                                f"{cfg.get('SecretKey') or 'S3_SecretKey'} not set here, so the bucket and "
+                                "existing S3 paths could not be checked")
+                clients[store] = None
+                continue
+            try:
+                c = factory(cfg, ak, sk)
+                c.head_bucket(Bucket=cfg.get("Bucket"))
+                info["buckets"][store] = {"bucket": cfg.get("Bucket"), "endpoint": cfg.get("Endpoint"),
+                                          "region": cfg.get("Region"), "reachable": True}
+                clients[store] = (c, cfg.get("Bucket"))
+                info["checked"] = True
+            except Exception as e:  # noqa: BLE001 — reported by type/code only
+                problems.append(f"S3 bucket {cfg.get('Bucket')!r} ({store}) not reachable with these keys: "
+                                f"{_s3_error(e)}")
+                clients[store] = None
+        if not clients[store]:
+            t["exists"] = None
+            continue
+        c, bucket = clients[store]
+        try:
+            r = c.list_objects_v2(Bucket=bucket, Prefix=t["prefix"], MaxKeys=1)
+            t["exists"] = bool(r.get("KeyCount") or r.get("Contents"))
+        except Exception as e:  # noqa: BLE001
+            t["exists"] = None
+            problems.append(f"could not list s3://{bucket}/{t['prefix']}: {_s3_error(e)}")
+    store = next((t["store"] for t in s3_targets if clients.get(t["store"])), None)
+    if store:
+        c, bucket = clients[store]
+        for pfx in curate_prefixes:
+            try:
+                r = c.list_objects_v2(Bucket=bucket, Prefix=pfx, MaxKeys=1)
+                if r.get("KeyCount") or r.get("Contents"):
+                    info["curate_prefixes"].append(pfx)
+            except Exception:  # noqa: BLE001 — informational only
+                pass
+    return info, problems
 
 
 # ── preflight ────────────────────────────────────────────────────────────────
@@ -212,7 +338,8 @@ def _owner_of(gh: GitHub, user: str, repo: str, branch: str, t: dict, new: str) 
             if msg else "last commit unknown"}
 
 
-def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str = "none") -> dict:
+def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str = "none",
+              s3_factory=boto3_s3) -> dict:
     if not suffix or not SUFFIX_RX.match(suffix):
         raise InputError(f"deploy name suffix {suffix!r} must be non-empty letters, digits, '-' or '_'")
     s, bundle = load_run(run)
@@ -226,9 +353,18 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
     elif not s.get("bundle_hash"):
         warnings.append("this run has no recorded bundle hash (approved before deploy existed); "
                         "the bundle is checked as it is now")
-    if (ph := placeholders(wf)):
-        problems.append("the bundle still has placeholders (set the FAASR_* variables and re-run "
-                        "curate-emit): " + ", ".join(ph))
+    filled_wf, filled, unset = fill_placeholders(wf)
+    if unset:
+        problems.append(f"the bundle's placeholders cannot be filled in the deploy copy: {', '.join(unset)} "
+                        "not set (at " + ", ".join(placeholders(filled_wf)) + ")")
+    try:
+        ext = json.loads((bundle / "external_inputs.json").read_text())
+    except (OSError, ValueError):
+        ext = []
+    if ext:
+        problems.append("the workflow reads files that must already be in S3 ("
+                        + ", ".join(str(e.get("s3_path") or e.get("file")) for e in ext)
+                        + f"); the deploy copy's renamed {suffix!r} folder would not have them")
     servers = wf.get("ComputeServers") or {}
     other = sorted({cs.get("FaaSType") for cs in servers.values()} - {"GitHubActions"})
     if other:
@@ -246,7 +382,7 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
     missing_env = [n for n, v in (("FAASR_GH_USERNAME", user), ("FAASR_ACTION_REPO", repo)) if not v]
     if missing_env:
         problems.append(f"environment variables not set: {', '.join(missing_env)}")
-    for sname, cs in servers.items():
+    for sname, cs in (filled_wf.get("ComputeServers") or {}).items():
         for field, want in (("UserName", user), ("ActionRepoName", repo), ("Branch", branch)):
             if want and cs.get(field) not in (want, None) and "<FAASR_" not in str(cs.get(field)):
                 problems.append(f"bundle ComputeServers.{sname}.{field} = {cs.get(field)!r} but the "
@@ -256,14 +392,30 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
         warnings.append(f"{', '.join(local_s3)} not set here: deploying works, but curate-monitor "
                         "needs them to read the run's logs from S3")
 
-    copy_wf, targets = deploy_copy(wf, suffix, user or "<user>", repo or "<repo>", branch)
-    problems += name_problems(copy_wf, targets, suffix, user or "<user>", repo or "<repo>", branch)
+    copy_wf, targets, s3_targets = deploy_copy(filled_wf, suffix, user or "<user>", repo or "<repo>", branch)
+    problems += name_problems(copy_wf, targets, s3_targets, suffix, user or "<user>", repo or "<repo>", branch)
     req_secrets = required_secret_names(wf)
     out = {"run": str(Path(run).resolve()), "bundle": str(bundle), "bundle_hash": bhash,
            "approved_name": wf.get("WorkflowName"), "deploy_name": copy_wf["WorkflowName"],
            "suffix": suffix, "repo": f"{user}/{repo}" if user and repo else None, "branch": branch,
            "token_source": token_source, "targets": targets, "function_git_repo": copy_wf["FunctionGitRepo"],
-           "secrets": {"required": req_secrets}, "curate_files": [], "github_checked": False}
+           "filled_placeholders": {k: f"${v} = {_dig(copy_wf, k)}" for k, v in filled.items()
+                                   if not k.startswith("FunctionGitRepo")},
+           "s3_targets": s3_targets, "secrets": {"required": req_secrets}, "curate_files": [],
+           "github_checked": False}
+
+    if unset:
+        out["s3"] = {"checked": False, "buckets": {}, "curate_prefixes": []}
+    else:
+        old_folders = sorted({(a.get("Arguments") or {}).get("folder") for a in (wf.get("ActionList") or {}).values()}
+                             - {None, ""})
+        curate_prefixes = [f + "/" for f in old_folders] + [f"{wf.get('FaaSrLog') or 'FaaSrLog'}/{wf['WorkflowName']}/"]
+        out["s3"], s3_problems = s3_check(copy_wf, s3_targets, curate_prefixes, s3_factory)
+        problems += s3_problems
+        for t in s3_targets:
+            if t.get("exists"):
+                problems.append(f"S3 path s3://{t['bucket']}/{t['prefix']} "
+                                "already holds objects; refusing — every path the deploy writes must be new")
 
     if gh is None:
         problems.append("no GitHub token: set GH_PAT (as for CURATE) or log in with `gh auth login`; "
@@ -310,18 +462,28 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
             new = copy_wf["WorkflowName"]
             for t in targets:
                 t.update(_owner_of(gh, user, repo, branch, t, new))
-                if t.get("exists") and not t.get("ours"):
-                    problems.append(f"{t['path']} already exists and does not belong to a curate-skills "
-                                    f"deployment named {new!r} ({t.get('why')}); refusing to overwrite it")
+                if t.get("exists"):
+                    whose = (f"from an earlier curate-skills deployment named {new!r}" if t.get("ours")
+                             else f"does not belong to a curate-skills deployment named {new!r}")
+                    problems.append(f"{t['path']} already exists ({whose}; {t.get('why')}); refusing — "
+                                    "every path the deploy writes must be new")
             name = wf["WorkflowName"]
             for p in [f"workflows/{name}.json"] + [f"functions/{fn}.py" for fn in sorted(copy_wf["FunctionGitRepo"])] \
                      + [f".github/workflows/{name}-{a}.yml" for a in sorted(wf.get("ActionList") or {})]:
                 st, _, _ = gh.get(f"/repos/{user}/{repo}/contents/{p}", ref=branch)
                 if st == 200:
                     out["curate_files"].append(p)
+    out["existing_paths"] = [t["path"] for t in targets if t.get("exists")] + \
+        [f"s3://{t['bucket']}/{t['prefix']}" for t in s3_targets if t.get("exists")]
     out.update(ok=not problems, problems=problems, warnings=warnings)
     out["summary"] = preflight_summary(out)
     return out
+
+
+def _dig(obj, path: str):
+    for part in re.findall(r"[^.\[\]]+|\[\d+\]", path):
+        obj = obj[int(part[1:-1])] if part.startswith("[") else obj[part]
+    return obj
 
 
 def preflight_summary(p: dict) -> str:
@@ -336,14 +498,28 @@ def preflight_summary(p: dict) -> str:
         elif not t["exists"]:
             state = "new"
         else:
-            state = "exists, ours — overwritten" if t.get("ours") else "EXISTS, NOT OURS — refused"
+            state = "EXISTS (earlier curate-skills deploy) — refused" if t.get("ours") else \
+                "EXISTS, NOT OURS — refused"
         by_step.setdefault(t["step"], []).append(f"`{t['path']}` ({state})")
     for step in ("publish", "upload", "register"):
         if step in by_step:
             lines.append(f"- {step}: " + "; ".join(by_step[step]))
     lines.append("- invoke: workflow_dispatch of the entry action (FaaSr Scheduler), as CURATE")
+    s3 = p.get("s3") or {}
+    for t in p.get("s3_targets") or []:
+        if t["prefix"] is None:
+            continue
+        state = ("not checked" if t.get("exists") is None else "EXISTS — refused" if t["exists"] else "new")
+        lines.append(f"- S3 ({t['kind']}, written by the run): `s3://{t['bucket']}/{t['prefix']}` ({state})")
+    if p.get("filled_placeholders"):
+        lines.append("- Placeholders filled in the deploy copy only: "
+                     + "; ".join(f"`{k}` ← {v}" for k, v in p["filled_placeholders"].items()))
     if p["curate_files"]:
         lines.append(f"- CURATE's own files found and left untouched: {', '.join(p['curate_files'])}")
+    if s3.get("curate_prefixes"):
+        lines.append(f"- CURATE's own S3 data found and left untouched: {', '.join(s3['curate_prefixes'])}")
+    if p.get("existing_paths"):
+        lines.append("- **Paths that already exist (refused):** " + ", ".join(f"`{x}`" for x in p["existing_paths"]))
     sec = p["secrets"]
     lines.append(f"- GitHub secrets needed: {', '.join(sec['required'])}"
                  + (f" — missing: {', '.join(sec['missing'])}" if sec.get("missing") else
@@ -367,7 +543,7 @@ def _print(obj: dict, extra_values: dict | None = None) -> int:
     return 0 if obj.get("ok") else 1
 
 
-def main(argv=None, opener=None) -> int:
+def main(argv=None, opener=None, s3_factory=boto3_s3) -> int:
     p = argparse.ArgumentParser(prog="deploy.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     pf = sub.add_parser("preflight", help="read-only check of what deploying would do")
@@ -381,7 +557,7 @@ def main(argv=None, opener=None) -> int:
     extra = {"gh_token": token} if token else None
     try:
         gh = GitHub(token, opener) if token else None
-        return _print(preflight(args.run, suffix, gh, source), extra)
+        return _print(preflight(args.run, suffix, gh, source, s3_factory), extra)
     except InputError as e:
         print(json.dumps({"ok": False, "error": str(e)}))
         return 2
