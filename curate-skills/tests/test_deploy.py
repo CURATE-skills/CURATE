@@ -263,7 +263,7 @@ def test_preflight_fills_placeholders_in_the_deploy_copy_only(run, env, capsys, 
                                           "DataStores.S3.Bucket": "$FAASR_S3_BUCKET = b"}
     assert s3.made_with[0]["Bucket"] == "b" and s3.made_with[1:] == (FAKE["S3_AccessKey"], FAKE["S3_SecretKey"])
     assert "<FAASR_S3_BUCKET>" in wf_path.read_text()  # the approved bundle is unchanged
-    assert "Placeholders filled in the deploy copy only" in out["summary"]
+    assert "| `DataStores.S3.Bucket` | `<FAASR_S3_BUCKET>` | `b` | placeholder $FAASR_S3_BUCKET |" in out["summary"]
 
 
 def test_preflight_refuses_existing_s3_paths_and_reports_curates(run, env, capsys):
@@ -396,3 +396,108 @@ def test_output_with_a_leaked_token_is_withheld(run, env, capsys, monkeypatch):
     code, out = pre(capsys, run, FakeGitHub())
     assert code == 1 and out == {"ok": False, "error": "output withheld: contains secret values",
                                  "leaked_secret_names": ["S3_SecretKey"]}
+
+
+# ── deploy copy vs approved bundle ──
+
+def test_summary_diffs_the_deploy_copy_field_by_field(run, env, capsys, monkeypatch):
+    wf = workflow()
+    wf["DataStores"]["S3"]["Bucket"] = "<FAASR_S3_BUCKET>"
+    wf["FunctionGitRepo"]["plot_weather"] = "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/plot_weather.py"
+    Path(json.loads((run / "state.json").read_text())["bundle_dir"], "workflow.json").write_text(json.dumps(wf))
+    monkeypatch.setenv("FAASR_S3_BUCKET", "b")
+    code, out = pre(capsys, run, FakeGitHub())
+    assert out["ok"], out["problems"]
+    rows = {r["field"]: r for r in out["deploy_diff"]}
+    assert rows["FunctionGitRepo.plot_weather"]["reason"] == \
+        "placeholder $FAASR_GH_USERNAME, $FAASR_ACTION_REPO; per-deployment function folder"
+    assert set(rows) == {"WorkflowName", "ActionList.download.Arguments.folder", "ActionList.plot.Arguments.folder",
+                         "FunctionGitRepo.download_station", "FunctionGitRepo.plot_weather", "DataStores.S3.Bucket"}
+    assert rows["WorkflowName"]["approved"] == "weather" and rows["WorkflowName"]["deploy"] == "weather-cs"
+    assert rows["DataStores.S3.Bucket"]["reason"] == "placeholder $FAASR_S3_BUCKET"
+    assert rows["ActionList.plot.Arguments.folder"]["reason"] == "suffix (S3 folder)"
+    assert {d["what"]: d["deploy"] for d in out["derived_changes"]}["S3 log prefix (FaaSr)"] == "FaaSrLog/weather-cs/"
+    summary = out["summary"]
+    assert "**Deploy copy vs approved bundle**" in summary
+    assert "| `ActionList.plot.Arguments.folder` | `weather_data` | `weather_data-cs` | suffix (S3 folder) |" in summary
+    assert "| S3 log prefix (FaaSr) (derived from the name) | `FaaSrLog/weather/` | `FaaSrLog/weather-cs/` |" in summary
+
+
+def test_a_diff_outside_the_allowed_fields_is_refused(run, env, capsys, monkeypatch):
+    real = D.deploy_copy
+
+    def tampered(*a, **kw):
+        wf, targets, s3 = real(*a, **kw)
+        wf["ActionList"]["plot"]["Arguments"]["output1"] = "other.png"
+        return wf, targets, s3
+    monkeypatch.setattr(D, "deploy_copy", tampered)
+    code, out = pre(capsys, run, FakeGitHub())
+    assert code == 1 and any("ActionList.plot.Arguments.output1, which is not an allowed" in p
+                             for p in out["problems"])
+    assert {r["field"]: r["reason"] for r in out["deploy_diff"]}["ActionList.plot.Arguments.output1"] == "NOT ALLOWED"
+
+
+# ── retrying a partial deploy: --overwrite-own-deploy ──
+
+OWN_FILES = {"workflows/weather-cs.json": json.dumps({"WorkflowName": "weather-cs"}),
+             "functions/weather-cs/plot_weather.py": "x"}
+OWN_COMMITS = {"functions/weather-cs/plot_weather.py": "Add/update plot_weather (curate-skills)"}
+
+
+def write_log(run, *entries):
+    (run / "deploy").mkdir(exist_ok=True)
+    (run / "deploy" / "deploy-log.jsonl").write_text("".join(json.dumps(e) + "\n" for e in entries))
+
+
+def logged(path=None, **kw):
+    base = {"run_id": "r1", "deploy_name": "weather-cs", "step": "publish"}
+    if path:
+        base.update(path=path, repo="alice/faasr-actions", branch="main")
+    return {**base, **kw}
+
+
+def test_overwrite_own_is_off_by_default(run, env, capsys):
+    write_log(run, *(logged(p) for p in OWN_FILES))
+    code, out = pre(capsys, run, FakeGitHub(files=OWN_FILES, commits=OWN_COMMITS))
+    assert code == 1 and sorted(out["refused_paths"]) == sorted(OWN_FILES) and out["overwrite_paths"] == []
+    assert any("--overwrite-own-deploy" in p for p in out["problems"])
+
+
+def test_overwrite_own_allows_only_logged_paths_of_this_run(run, env, capsys):
+    write_log(run, *(logged(p) for p in OWN_FILES),
+              logged(step="invoke", bucket="b", prefix="weather_data-cs/"))
+    s3 = FakeS3(objects={"weather_data-cs/station.csv", "FaaSrLog/weather-cs/x.txt"})
+    code, out = pre(capsys, run, FakeGitHub(files=OWN_FILES, commits=OWN_COMMITS), "--overwrite-own-deploy", s3=s3)
+    assert sorted(out["overwrite_paths"]) == sorted([*OWN_FILES, "s3://b/weather_data-cs/"])
+    assert out["refused_paths"] == ["s3://b/FaaSrLog/weather-cs/"]  # not in the log → still refused
+    assert code == 1 and "will be overwritten (--overwrite-own-deploy)" in out["summary"]
+
+
+@pytest.mark.parametrize("entry", [
+    logged("functions/weather-cs/plot_weather.py", run_id="other-run"),       # another run's log line
+    logged("functions/weather-cs/plot_weather.py", deploy_name="weather-x"),  # another deployment
+    logged("functions/weather-cs/plot_weather.py", repo="bob/faasr-actions"), # another repo
+])
+def test_overwrite_own_ignores_log_lines_that_are_not_this_deploy(run, env, capsys, entry):
+    write_log(run, entry)
+    code, out = pre(capsys, run, FakeGitHub(files={"functions/weather-cs/plot_weather.py": "x"},
+                                            commits=OWN_COMMITS), "--overwrite-own-deploy")
+    assert code == 1 and out["refused_paths"] == ["functions/weather-cs/plot_weather.py"]
+
+
+def test_overwrite_own_refuses_a_logged_path_someone_else_changed(run, env, capsys):
+    write_log(run, logged("functions/weather-cs/plot_weather.py"), "not json")
+    code, out = pre(capsys, run, FakeGitHub(files={"functions/weather-cs/plot_weather.py": "x"},
+                                            commits={"functions/weather-cs/plot_weather.py": "hand edit"}),
+                    "--overwrite-own-deploy")
+    assert code == 1 and out["refused_paths"] == ["functions/weather-cs/plot_weather.py"]
+    assert any("no longer carries its mark" in p for p in out["problems"])
+    assert any("line 2 is not a JSON object" in w for w in out["warnings"])
+
+
+def test_overwrite_own_never_allows_curates_files(run, env, capsys):
+    # CURATE's paths are never targets, so even a forged log line cannot make them writable.
+    write_log(run, logged("workflows/weather.json"), logged("functions/plot_weather.py"))
+    code, out = pre(capsys, run, FakeGitHub(files={"workflows/weather.json": "{}"}), "--overwrite-own-deploy")
+    assert out["ok"] and "workflows/weather.json" not in [t["path"] for t in out["targets"]]
+    assert out["overwrite_paths"] == []

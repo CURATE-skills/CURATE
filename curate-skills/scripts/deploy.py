@@ -9,7 +9,10 @@
 
 D0 has only `preflight`, which is read-only: it reads the run, its bundle, (with a token) the
 GitHub repo and (with S3 keys) the S3 bucket, and reports what deploying would write. Nothing is
-written anywhere. Every path deploying would write must carry the suffix and must not exist yet.
+written anywhere. Every path deploying would write must carry the suffix and must not exist yet
+(--overwrite-own-deploy also allows paths this run's own deploy log recorded, to retry a partial
+deploy). The deploy copy may differ from the approved bundle only in ALLOWED_DIFF fields and
+placeholder fields; the summary shows the difference field by field.
 
 Every curate-skills deployment gets its own name, WorkflowName + suffix (default "-cs"), so
 CURATE's deployment of the same workflow is never touched:
@@ -50,6 +53,12 @@ NATIVE_CONTAINERS = SCRIPT_DIR / "vendor" / "curate_deploy" / "native_containers
 DEFAULT_SUFFIX = "-cs"
 SUFFIX_RX = re.compile(r"^[-_A-Za-z0-9]+$")
 COMMIT_TAG = "(curate-skills)"  # in every commit message curate-deploy makes
+DEPLOY_LOG = Path("deploy") / "deploy-log.jsonl"  # in the run; one JSON line per path a deploy step wrote
+# The only fields in which the deploy copy may differ from the approved bundle (besides fields that
+# held an emit placeholder). Anything else is refused: the deploy must run what Gate 4 approved.
+ALLOWED_DIFF = [("WorkflowName", "suffix"),
+                (r"ActionList\.[^.]+\.Arguments\.folder", "suffix (S3 folder)"),
+                (r"FunctionGitRepo\.[^.]+(\[\d+\])?", "per-deployment function folder")]
 API = "https://api.github.com"
 
 
@@ -145,7 +154,7 @@ PLACEHOLDER_RX = re.compile(r"<(FAASR_[A-Z0-9_]+)>")
 
 def fill_placeholders(obj, path="", filled=None, missing=None):
     """A copy with every <FAASR_X> replaced by $FAASR_X; also {json path: var} filled and the
-    unset vars. Only emit's non-secret placeholders exist (user, repo, S3 endpoint/bucket/region)."""
+    unset vars ({path: [vars]}). Only emit's non-secret placeholders exist (user, repo, S3 endpoint/bucket/region)."""
     filled = {} if filled is None else filled
     missing = [] if missing is None else missing
     if isinstance(obj, dict):
@@ -158,7 +167,7 @@ def fill_placeholders(obj, path="", filled=None, missing=None):
             if not val:
                 missing.append(m.group(1))
                 return m.group(0)
-            filled[path] = m.group(1)
+            filled.setdefault(path, []).append(m.group(1))
             return val
         out = PLACEHOLDER_RX.sub(sub, obj)
     else:
@@ -214,6 +223,70 @@ def deploy_copy(wf: dict, suffix: str, user: str, repo: str, branch: str
             targets.append({"step": "register", "path": f".github/workflows/{new}-{action}.yml",
                             "kind": "actions", "action": action})
     return out, targets, s3_targets
+
+
+def field_diff(a, b, path="") -> list[tuple[str, object, object]]:
+    """(json path, approved value, deploy-copy value) for every leaf that differs."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        return [d for k in sorted(set(a) | set(b), key=str)
+                for d in field_diff(a.get(k), b.get(k), f"{path}.{k}" if path else str(k))]
+    if isinstance(a, list) and isinstance(b, list) and len(a) == len(b):
+        return [d for i, (x, y) in enumerate(zip(a, b)) for d in field_diff(x, y, f"{path}[{i}]")]
+    return [] if a == b else [(path, a, b)]
+
+
+def deploy_diff(wf: dict, copy_wf: dict, filled: dict) -> tuple[list[dict], list[str]]:
+    """Field-by-field diff of the deploy copy against the approved bundle, each with its reason,
+    and a problem for any field outside ALLOWED_DIFF that did not hold a placeholder."""
+    rows, problems = [], []
+    for path, old, new in field_diff(wf, copy_wf):
+        reason = next((why for rx, why in ALLOWED_DIFF if re.fullmatch(rx, path)), None)
+        if path in filled:
+            reason = "placeholder " + ", ".join(f"${v}" for v in filled[path]) + (f"; {reason}" if reason else "")
+        if reason is None:
+            problems.append(f"the deploy copy differs from the approved bundle at {path}, which is not an "
+                            "allowed deploy change (refusing: the deploy must run what Gate 4 approved)")
+        rows.append({"field": path, "approved": old, "deploy": new, "reason": reason or "NOT ALLOWED"})
+    return rows, problems
+
+
+def derived_changes(wf: dict, copy_wf: dict) -> list[dict]:
+    """Locations that change only because the name changes (not fields of workflow.json)."""
+    old, new = wf["WorkflowName"], copy_wf["WorkflowName"]
+    log = wf.get("FaaSrLog") or "FaaSrLog"
+    return [{"what": "S3 log prefix (FaaSr)", "approved": f"{log}/{old}/", "deploy": f"{log}/{new}/"},
+            {"what": "workflow JSON in the repo", "approved": f"workflows/{old}.json", "deploy": f"workflows/{new}.json"},
+            {"what": "function files in the repo", "approved": "functions/<fn>.py", "deploy": f"functions/{new}/<fn>.py"},
+            {"what": "Actions files in the repo", "approved": f".github/workflows/{old}-<action>.yml",
+             "deploy": f".github/workflows/{new}-<action>.yml"}]
+
+
+def read_deploy_log(run: str) -> tuple[list[dict], list[str]]:
+    """This run's own deploy log: lines curate-deploy appended for each path a step wrote.
+    Repo lines: {run_id, deploy_name, step, repo, branch, path}; S3 lines (written at invoke for
+    the prefixes the run writes): {run_id, deploy_name, step, bucket, prefix}."""
+    path = Path(run) / DEPLOY_LOG
+    entries, bad = [], []
+    if path.is_file():
+        for i, line in enumerate(path.read_text().splitlines(), 1):
+            try:
+                e = json.loads(line)
+                if isinstance(e, dict):
+                    entries.append(e)
+                    continue
+            except ValueError:
+                pass
+            bad.append(f"{DEPLOY_LOG} line {i} is not a JSON object; ignored")
+    return entries, bad
+
+
+def own_paths(entries: list[dict], run_id: str, deploy_name: str, repo: str, branch: str
+              ) -> tuple[set[str], set[tuple[str, str]]]:
+    """Repo paths and (bucket, prefix) pairs this run's deploy log says it wrote under this name."""
+    mine = [e for e in entries if e.get("run_id") == run_id and e.get("deploy_name") == deploy_name]
+    files = {e["path"] for e in mine if e.get("path") and e.get("repo") == repo and e.get("branch") == branch}
+    s3 = {(e["bucket"], e["prefix"]) for e in mine if e.get("bucket") and e.get("prefix")}
+    return files, s3
 
 
 def name_problems(copy_wf: dict, targets: list[dict], s3_targets: list[dict], suffix: str,
@@ -339,7 +412,7 @@ def _owner_of(gh: GitHub, user: str, repo: str, branch: str, t: dict, new: str) 
 
 
 def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str = "none",
-              s3_factory=boto3_s3) -> dict:
+              s3_factory=boto3_s3, overwrite_own: bool = False) -> dict:
     if not suffix or not SUFFIX_RX.match(suffix):
         raise InputError(f"deploy name suffix {suffix!r} must be non-empty letters, digits, '-' or '_'")
     s, bundle = load_run(run)
@@ -395,14 +468,23 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
     copy_wf, targets, s3_targets = deploy_copy(filled_wf, suffix, user or "<user>", repo or "<repo>", branch)
     problems += name_problems(copy_wf, targets, s3_targets, suffix, user or "<user>", repo or "<repo>", branch)
     req_secrets = required_secret_names(wf)
+    diff_rows, diff_problems = deploy_diff(wf, copy_wf, filled)
+    problems += diff_problems
+    log_entries, bad_lines = read_deploy_log(run)
+    warnings += bad_lines
+    own_files, own_s3 = own_paths(log_entries, s.get("run_id"), copy_wf["WorkflowName"],
+                                  f"{user}/{repo}", branch)
     out = {"run": str(Path(run).resolve()), "bundle": str(bundle), "bundle_hash": bhash,
            "approved_name": wf.get("WorkflowName"), "deploy_name": copy_wf["WorkflowName"],
            "suffix": suffix, "repo": f"{user}/{repo}" if user and repo else None, "branch": branch,
            "token_source": token_source, "targets": targets, "function_git_repo": copy_wf["FunctionGitRepo"],
-           "filled_placeholders": {k: f"${v} = {_dig(copy_wf, k)}" for k, v in filled.items()
+           "filled_placeholders": {k: ", ".join(f"${x}" for x in v) + f" = {_dig(copy_wf, k)}" for k, v in filled.items()
                                    if not k.startswith("FunctionGitRepo")},
            "s3_targets": s3_targets, "secrets": {"required": req_secrets}, "curate_files": [],
-           "github_checked": False}
+           "github_checked": False, "deploy_diff": diff_rows,
+           "derived_changes": derived_changes(wf, copy_wf), "overwrite_own": overwrite_own,
+           "deploy_log": {"path": str(DEPLOY_LOG), "repo_paths": sorted(own_files),
+                          "s3_prefixes": sorted(f"s3://{b}/{x}" for b, x in own_s3)}}
 
     if unset:
         out["s3"] = {"checked": False, "buckets": {}, "curate_prefixes": []}
@@ -413,9 +495,13 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
         out["s3"], s3_problems = s3_check(copy_wf, s3_targets, curate_prefixes, s3_factory)
         problems += s3_problems
         for t in s3_targets:
-            if t.get("exists"):
-                problems.append(f"S3 path s3://{t['bucket']}/{t['prefix']} "
-                                "already holds objects; refusing — every path the deploy writes must be new")
+            if not t.get("exists"):
+                continue
+            if overwrite_own and (t["bucket"], t["prefix"]) in own_s3:
+                t["overwrite"] = True
+            else:
+                problems.append(f"S3 path s3://{t['bucket']}/{t['prefix']} already holds objects; refusing — "
+                                + _new_or_own(overwrite_own))
 
     if gh is None:
         problems.append("no GitHub token: set GH_PAT (as for CURATE) or log in with `gh auth login`; "
@@ -462,11 +548,17 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
             new = copy_wf["WorkflowName"]
             for t in targets:
                 t.update(_owner_of(gh, user, repo, branch, t, new))
-                if t.get("exists"):
-                    whose = (f"from an earlier curate-skills deployment named {new!r}" if t.get("ours")
-                             else f"does not belong to a curate-skills deployment named {new!r}")
-                    problems.append(f"{t['path']} already exists ({whose}; {t.get('why')}); refusing — "
-                                    "every path the deploy writes must be new")
+                if not t.get("exists"):
+                    continue
+                if overwrite_own and t.get("ours") and t["path"] in own_files:
+                    t["overwrite"] = True
+                    continue
+                whose = (f"from an earlier curate-skills deployment named {new!r}" if t.get("ours")
+                         else f"does not belong to a curate-skills deployment named {new!r}")
+                if overwrite_own and t["path"] in own_files and not t.get("ours"):
+                    whose = "listed in this run's deploy log, but no longer carries its mark — changed since"
+                problems.append(f"{t['path']} already exists ({whose}; {t.get('why')}); refusing — "
+                                + _new_or_own(overwrite_own))
             name = wf["WorkflowName"]
             for p in [f"workflows/{name}.json"] + [f"functions/{fn}.py" for fn in sorted(copy_wf["FunctionGitRepo"])] \
                      + [f".github/workflows/{name}-{a}.yml" for a in sorted(wf.get("ActionList") or {})]:
@@ -475,9 +567,26 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
                     out["curate_files"].append(p)
     out["existing_paths"] = [t["path"] for t in targets if t.get("exists")] + \
         [f"s3://{t['bucket']}/{t['prefix']}" for t in s3_targets if t.get("exists")]
+    out["refused_paths"] = [t["path"] for t in targets if t.get("exists") and not t.get("overwrite")] + \
+        [f"s3://{t['bucket']}/{t['prefix']}" for t in s3_targets if t.get("exists") and not t.get("overwrite")]
+    out["overwrite_paths"] = [t["path"] for t in targets if t.get("overwrite")] + \
+        [f"s3://{t['bucket']}/{t['prefix']}" for t in s3_targets if t.get("overwrite")]
     out.update(ok=not problems, problems=problems, warnings=warnings)
     out["summary"] = preflight_summary(out)
     return out
+
+
+def _new_or_own(overwrite_own: bool) -> str:
+    if overwrite_own:
+        return ("only paths this run's own deploy log records (and that still carry its mark) may be "
+                "overwritten")
+    return ("every path the deploy writes must be new (to retry this run's own partial deploy, "
+            "use --overwrite-own-deploy)")
+
+
+def _cell(v) -> str:
+    text = "(absent)" if v is None else v if isinstance(v, str) else json.dumps(v)
+    return "`" + text.replace("|", "\\|").replace("`", "'") + "`"
 
 
 def _dig(obj, path: str):
@@ -497,6 +606,8 @@ def preflight_summary(p: dict) -> str:
             state = "not checked"
         elif not t["exists"]:
             state = "new"
+        elif t.get("overwrite"):
+            state = "exists, in this run's deploy log — will be overwritten (--overwrite-own-deploy)"
         else:
             state = "EXISTS (earlier curate-skills deploy) — refused" if t.get("ours") else \
                 "EXISTS, NOT OURS — refused"
@@ -509,23 +620,32 @@ def preflight_summary(p: dict) -> str:
     for t in p.get("s3_targets") or []:
         if t["prefix"] is None:
             continue
-        state = ("not checked" if t.get("exists") is None else "EXISTS — refused" if t["exists"] else "new")
+        state = ("not checked" if t.get("exists") is None else "new" if not t["exists"] else
+                 "exists, in this run's deploy log — will be overwritten (--overwrite-own-deploy)"
+                 if t.get("overwrite") else "EXISTS — refused")
         lines.append(f"- S3 ({t['kind']}, written by the run): `s3://{t['bucket']}/{t['prefix']}` ({state})")
-    if p.get("filled_placeholders"):
-        lines.append("- Placeholders filled in the deploy copy only: "
-                     + "; ".join(f"`{k}` ← {v}" for k, v in p["filled_placeholders"].items()))
     if p["curate_files"]:
         lines.append(f"- CURATE's own files found and left untouched: {', '.join(p['curate_files'])}")
     if s3.get("curate_prefixes"):
         lines.append(f"- CURATE's own S3 data found and left untouched: {', '.join(s3['curate_prefixes'])}")
-    if p.get("existing_paths"):
-        lines.append("- **Paths that already exist (refused):** " + ", ".join(f"`{x}`" for x in p["existing_paths"]))
+    if p.get("refused_paths"):
+        lines.append("- **Paths that already exist (refused):** " + ", ".join(f"`{x}`" for x in p["refused_paths"]))
+    if p.get("overwrite_paths"):
+        lines.append("- Paths from this run's own deploy log that will be overwritten: "
+                     + ", ".join(f"`{x}`" for x in p["overwrite_paths"]))
     sec = p["secrets"]
     lines.append(f"- GitHub secrets needed: {', '.join(sec['required'])}"
                  + (f" — missing: {', '.join(sec['missing'])}" if sec.get("missing") else
                     " — all present" if "present" in sec else " — not checked"))
     lines += [f"- **Problem:** {x}" for x in p["problems"]]
     lines += [f"- Note: {x}" for x in p["warnings"]]
+    if p.get("deploy_diff"):
+        lines += ["", "**Deploy copy vs approved bundle** (the approved bundle is not changed)", "",
+                  "| Field | Approved bundle | Deploy copy | Why |", "|---|---|---|---|"]
+        lines += [f"| `{r['field']}` | {_cell(r['approved'])} | {_cell(r['deploy'])} | {r['reason']} |"
+                  for r in p["deploy_diff"]]
+        lines += [f"| {d['what']} (derived from the name) | `{d['approved']}` | `{d['deploy']}` | suffix |"
+                  for d in p.get("derived_changes") or []]
     return "\n".join(lines)
 
 
@@ -550,6 +670,9 @@ def main(argv=None, opener=None, s3_factory=boto3_s3) -> int:
     pf.add_argument("--run", required=True)
     pf.add_argument("--name-suffix", default=None,
                     help=f"deploy name suffix (default: $CURATE_DEPLOY_NAME_SUFFIX or {DEFAULT_SUFFIX!r})")
+    pf.add_argument("--overwrite-own-deploy", action="store_true",
+                    help="allow existing paths only if this run's own deploy log records them (and, in "
+                         "the repo, they still carry its mark); everything else is still refused")
     args = p.parse_args(argv)
     suffix = args.name_suffix if args.name_suffix is not None else \
         (os.environ.get("CURATE_DEPLOY_NAME_SUFFIX") or DEFAULT_SUFFIX)
@@ -557,7 +680,7 @@ def main(argv=None, opener=None, s3_factory=boto3_s3) -> int:
     extra = {"gh_token": token} if token else None
     try:
         gh = GitHub(token, opener) if token else None
-        return _print(preflight(args.run, suffix, gh, source, s3_factory), extra)
+        return _print(preflight(args.run, suffix, gh, source, s3_factory, args.overwrite_own_deploy), extra)
     except InputError as e:
         print(json.dumps({"ok": False, "error": str(e)}))
         return 2
