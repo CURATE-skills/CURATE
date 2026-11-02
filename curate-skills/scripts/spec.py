@@ -73,6 +73,7 @@ from curate_models import (
 )
 from emit import external_inputs
 from runstate import node_basis, obj_hash, run_lock, spec_hash, write_json_atomic
+from deploy import tree_hash
 
 SCHEMA_VERSION = 2
 DEFAULT_MGA_RETRIES = 3
@@ -80,7 +81,7 @@ DEFAULT_STUBTEST_MODE = "strict"
 STUBTEST_MODES = ("strict", "parity")
 DEFAULT_MAX_ITERATIONS = 5
 STAGES = ("skeleton", "gate1", "reuse", "resolve", "gate2", "generate", "gate3",
-          "emit", "gate4", "finalize", "done", "stopped")
+          "emit", "gate4", "deploy", "finalize", "done", "stopped")
 # Stage skills, in pipeline order, with the run `stage` values each one owns.
 PIPELINE = (
     ("skeleton", ("skeleton", "gate1"), "curate-skeleton"),
@@ -88,6 +89,7 @@ PIPELINE = (
     ("resolve", ("resolve", "gate2"), "curate-resolve"),
     ("generate", ("generate", "gate3"), "curate-generate"),
     ("emit", ("emit", "gate4"), "curate-emit"),
+    ("deploy", ("deploy",), "curate-deploy"),
     ("finalize", ("finalize",), "wda-finalize"),
 )
 STAGE_NAMES = tuple(p[0] for p in PIPELINE)
@@ -1052,6 +1054,8 @@ def cmd_approve(args) -> dict:
     run = Path(args.run)
     s = load_state(run)
     g = args.gate
+    if getattr(args, "deploy", None) and g != 4:
+        raise InputError("--deploy only applies to Gate 4")
     if g == 1:
         draft = s.get("skeleton_draft") or {}
         spec = draft.get("spec")
@@ -1081,14 +1085,27 @@ def cmd_approve(args) -> dict:
         if v.get("spec_hash") != spec_hash(s.get("spec")):
             raise InputError("the bundle was built from a different version of the spec; run "
                              f"/{PLUGIN}:curate-emit --run {s['run_id']} again before approving Gate 4")
-        s.update(feedback=None, stage="finalize")
+        choice = getattr(args, "deploy", None) or "no"
+        bundle = Path(s["bundle_dir"]) if s.get("bundle_dir") else None
+        has_bundle = bool(bundle and (bundle / "workflow.json").is_file())
+        if choice == "yes" and not has_bundle:
+            raise InputError(f"the bundle {bundle} is missing, so it cannot be deployed; run "
+                             f"/{PLUGIN}:curate-emit --run {s['run_id']} again")
+        # The approved bundle's hash: curate-deploy refuses to deploy a bundle that changed since.
+        s.update(feedback=None, bundle_hash=tree_hash(bundle) if has_bundle else None,
+                 deploy_choice=choice, deploy=None,
+                 stage="deploy" if choice == "yes" else "finalize")
     s["begun"] = None
     _record(s, g, "approve")
+    if g == 4:
+        s["history"][-1]["deploy"] = s["deploy_choice"]
     snapshot_history(run, s, f"gate{g}-approve")
     save_state(run, s)
     out = {"ok": True, "stage": s["stage"]}
     if g == 4:
         spec = spec_of(s["spec"])
+        out["deploy"] = s["deploy_choice"]
+        out["next_skill"] = next_skill(s)
         out["reused_catalog_ids"] = sorted({n.catalog_id for n in spec.nodes
                                             if n.catalog_id and n.source in ("catalog", "adapt")})
     return out
@@ -1295,6 +1312,9 @@ def _apply_functions(spec: WorkflowSpec, directory: Optional[str], mode: Optiona
 
 def cmd_import(args) -> dict:
     stage = args.stage
+    if stage == "deploy":
+        raise InputError("deploying needs a bundle approved at Gate 4 in a run: start from that run "
+                         "with --start-at deploy --from-run <run_id>, or import at emit and approve Gate 4")
     if stage == "finalize":
         raise InputError("starting at finalize from files is not supported: a bundle has no stub-test "
                          "results, so nothing could be saved as verified. Use --run on the run that "
@@ -1402,7 +1422,7 @@ def _import_into(run: Path, s: dict, stage: str, src: str, data, args, warnings:
 # ── start: /curate --start-at with typed sources ─────────────────────────────
 
 # Which gate's approval a start point builds on, and the stage that owns that gate.
-START_GATE = {"reuse": 1, "resolve": 2, "generate": 2, "emit": 3, "finalize": 4}
+START_GATE = {"reuse": 1, "resolve": 2, "generate": 2, "emit": 3, "deploy": 4, "finalize": 4}
 GATE_OWNER = {1: "skeleton", 2: "resolve", 3: "generate", 4: "emit"}
 # Fields copied from the approval snapshot (besides spec), per start point.
 START_COPY = {
@@ -1410,6 +1430,7 @@ START_COPY = {
     "resolve": ("enriched_spec", "enriched_basis", "spec_basis", "candidates"),
     "generate": ("enriched_spec", "spec_basis"),
     "emit": ("enriched_spec", "spec_basis", "mga"),
+    "deploy": ("enriched_spec", "spec_basis", "mga", "validation", "bundle_dir", "bundle_hash"),
     "finalize": ("enriched_spec", "spec_basis", "mga", "validation", "bundle_dir"),
 }
 INIT_FLAGS = ("user_model", "context_file", "catalog_dir", "config_catalog_dir", "mga_retries",
@@ -1445,6 +1466,12 @@ def _superseded_by(history: list, approval_index: int, gate: int) -> Optional[di
     return None
 
 
+def _redoes(at: str) -> list[str]:
+    """The stages a run started at `at` goes through; deploy only if chosen at Gate 4."""
+    return [n if n != "deploy" or at == "deploy" else "deploy (if chosen at Gate 4)"
+            for n in STAGE_NAMES[STAGE_NAMES.index(at):]]
+
+
 def _start_from_run(args, at: str) -> dict:
     project = Path(args.project_dir or ".").resolve()
     src = _find_run(args.from_run, project)
@@ -1474,6 +1501,12 @@ def _start_from_run(args, at: str) -> dict:
         raise InputError(f"{snap_path.name} has no approved spec")
     spec = spec_of(snap["spec"])
     copied = {f: snap.get(f) for f in START_COPY[at] if snap.get(f) not in (None, {}, [])}
+    moved_from = None
+    if copied.get("bundle_dir"):
+        copied["bundle_dir"], moved_from = _approved_bundle_dir(st, snap)
+    hash_from = None
+    if at == "deploy":
+        copied, hash_from = _deploy_bundle_hash(st, snap, copied)
     code_from = None
     if at == "generate":
         spec, code_from = _code_from_gate3(args, st, src, history, approvals[-1], spec)
@@ -1487,7 +1520,9 @@ def _start_from_run(args, at: str) -> dict:
                        "stub_test": ((snap.get("mga") or {}).get(n.name) or {}).get("status")
                        if at in ("emit", "finalize") else None} for n in spec.nodes],
         "copies": ["approved spec"] + sorted(copied) + ["sketch, attachments and standing change requests"],
-        "redoes": list(STAGE_NAMES[STAGE_NAMES.index(at):]),
+        **({"bundle_hash_from": hash_from} if hash_from else {}),
+        **({"bundle_dir_moved_from": moved_from} if moved_from else {}),
+        "redoes": _redoes(at),
         "settings": _preview_settings(args),
     }
     if args.dry_run:
@@ -1499,16 +1534,70 @@ def _start_from_run(args, at: str) -> dict:
     s["revision_directives"] = list(snap.get("revision_directives") or [])
     s["spec"] = dump(spec)
     s.update(copied)
+    if at == "deploy":
+        s["deploy_choice"] = "yes"
     s["stage"] = PIPELINE[STAGE_NAMES.index(at)][1][0]
     s["begun"] = None
     _record(s, gate, "copied", f"from run {st['run_id']}")
     s["history"][-1].update(from_run=st["run_id"], snapshot=snap_path.name,
                             sha256=hashlib.sha256(snap_path.read_bytes()).hexdigest())
+    if hash_from:
+        s["history"][-1].update(bundle_hash_from=hash_from)
+    if moved_from:
+        s["history"][-1].update(bundle_dir_moved_from=moved_from)
     if code_from:
         s["history"][-1].update(code_snapshot=code_from.name, existing_code=args.existing_code,
                                 code_sha256=hashlib.sha256(code_from.read_bytes()).hexdigest())
     save_state(run, s)
     return {**out, **preview, "stage": s["stage"], "next_skill": next_skill(s)}
+
+
+def _approved_bundle_dir(st: dict, snap: dict) -> tuple[str, Optional[str]]:
+    """The approved bundle's folder. A run that was copied or moved keeps the old path in its
+    approval snapshots; when the source's state.json points at an existing bundle folder of the
+    same name, that one is used — only if it matches a recorded bundle hash (snapshot or state)."""
+    snap_dir, state_dir = snap.get("bundle_dir"), st.get("bundle_dir")
+    if not state_dir or state_dir == snap_dir:
+        return snap_dir, None
+    if not (Path(state_dir).name == Path(snap_dir).name and (Path(state_dir) / "workflow.json").is_file()):
+        return snap_dir, None
+    # Never by folder name alone: the moved folder must match a recorded hash of the approved bundle.
+    expected = snap.get("bundle_hash") or st.get("bundle_hash")
+    if not expected:
+        raise InputError(
+            f"run {st['run_id']}'s Gate 4 approval points at {snap_dir}, but its state.json points at "
+            f"{state_dir} (was the run copied or moved?). Neither records a bundle hash, so that folder cannot "
+            "be confirmed to be the approved bundle by its name alone. To go on: approve Gate 4 again in that "
+            f"run (it records the hash), or put the approved bundle back at {snap_dir}, or check the bundle "
+            "by hand and record its hash in that run's state.json as bundle_hash (with a bundle_hash_recorded "
+            "note saying how)")
+    if tree_hash(Path(state_dir)) != expected:
+        raise InputError(f"the bundle at {state_dir} (the run's copied or moved bundle) does not match the hash "
+                         "recorded for the approved bundle; it was changed after Gate 4 was approved")
+    return state_dir, snap_dir
+
+
+def _deploy_bundle_hash(st: dict, snap: dict, copied: dict) -> tuple[dict, str]:
+    """Starting at deploy: the approved bundle and its hash. The hash comes from the Gate 4
+    snapshot; runs approved before Gate 4 recorded one may carry it in state.json instead
+    (recorded later, with `bundle_hash_recorded` saying how), for the same bundle folder only."""
+    bundle = Path(copied.get("bundle_dir") or "")
+    if not (bundle / "workflow.json").is_file():
+        raise InputError(f"the approved bundle {bundle} is missing (no workflow.json)")
+    if copied.get("bundle_hash"):
+        how = "the Gate 4 approval snapshot"
+    elif st.get("bundle_hash") and st.get("bundle_dir") == copied.get("bundle_dir"):
+        copied["bundle_hash"] = st["bundle_hash"]
+        how = ("the source run's state.json (recorded after approval: "
+               + ((st.get("bundle_hash_recorded") or {}).get("how") or "no note") + ")")
+    else:
+        raise InputError(f"run {st['run_id']}'s Gate 4 approval has no recorded bundle hash, so a changed "
+                         "bundle could not be detected; approve Gate 4 again in that run (or record the "
+                         "hash of the approved bundle in its state.json as bundle_hash)")
+    if tree_hash(bundle) != copied["bundle_hash"]:
+        raise InputError(f"the bundle {bundle} changed after Gate 4 was approved (its hash differs from "
+                         f"the one recorded in {how.split(' (')[0]}); it cannot be deployed")
+    return copied, how
 
 
 def _code_from_gate3(args, st: dict, src: Path, history: list, gate2_index: int,
@@ -1579,7 +1668,7 @@ def _start_via_import(args, at: str, from_file: str, kind: str, label: str) -> d
                 "workflow": spec.name if spec else None,
                 "functions": [{"name": n.name, "source": n.source, "has_code": bool(n.code)}
                               for n in (spec.nodes if spec else [])],
-                "redoes": list(STAGE_NAMES[STAGE_NAMES.index(at):])}
+                "redoes": _redoes(at)}
     # Dry run: do the same import in a throwaway project, report it, and remove it.
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
@@ -1593,7 +1682,7 @@ def _start_via_import(args, at: str, from_file: str, kind: str, label: str) -> d
                 "functions": [{"name": n.name, "source": n.source, "has_code": bool(n.code)}
                               for n in (spec.nodes if spec else [])],
                 "settings": out["settings"], "warnings": out.get("warnings", []),
-                "redoes": list(STAGE_NAMES[STAGE_NAMES.index(at):])}
+                "redoes": _redoes(at)}
 
 
 def cmd_start(args) -> dict:
@@ -1612,6 +1701,9 @@ def cmd_start(args) -> dict:
         out = _start_via_import(args, "skeleton", args.sketch_file, "sketch", args.sketch_file)
     elif args.from_file:
         out = _start_via_import(args, at, args.from_file, "file", args.from_file)
+    elif at == "deploy" and not args.from_run:
+        raise InputError("deploying starts from a run whose Gate 4 was approved: --start-at deploy "
+                         "--from-run <run_id> (a bundle or file has no Gate 4 approval)")
     elif args.from_bundle:
         if at not in ("generate", "emit"):
             raise InputError(f"a bundle can start generate or emit, not {at}: it has no gate history "
@@ -1657,6 +1749,11 @@ def start_summary(at: str, p: dict) -> str:
             + (" — to change one kept function, ask for it at Gate 3" if kept else ""))
     if p.get("copies"):
         lines.append(f"- Copies: {', '.join(p['copies'])}")
+    if p.get("bundle_dir_moved_from"):
+        lines.append(f"- Bundle: the source run's state.json points at a copied or moved bundle folder of the "
+                     f"same name; using it (the approval snapshot says {p['bundle_dir_moved_from']})")
+    if p.get("bundle_hash_from"):
+        lines.append(f"- Bundle hash (checked against the bundle now): from {p['bundle_hash_from']}")
     lines.append(f"- Redoes: {' → '.join(p.get('redoes') or [])}")
     st = p.get("settings") or {}
     if st:
@@ -1668,14 +1765,16 @@ def start_summary(at: str, p: dict) -> str:
 # ── stages: next / require / begin / end ─────────────────────────────────────
 
 # Fields a stage (and everything after it) produces; cleared on a fresh entry.
+DEPLOY_OUTPUTS = ("bundle_hash", "deploy_choice", "deploy")
 STAGE_OUTPUTS = {
     "skeleton": ("enriched_spec", "enriched_basis", "spec_basis", "candidates", "mga",
-                 "validation", "bundle_dir"),
+                 "validation", "bundle_dir") + DEPLOY_OUTPUTS,
     "reuse": ("enriched_spec", "enriched_basis", "spec_basis", "candidates", "mga",
-              "validation", "bundle_dir"),
-    "resolve": ("spec_basis", "mga", "validation", "bundle_dir"),
-    "generate": ("mga", "validation", "bundle_dir"),
-    "emit": ("validation", "bundle_dir"),
+              "validation", "bundle_dir") + DEPLOY_OUTPUTS,
+    "resolve": ("spec_basis", "mga", "validation", "bundle_dir") + DEPLOY_OUTPUTS,
+    "generate": ("mga", "validation", "bundle_dir") + DEPLOY_OUTPUTS,
+    "emit": ("validation", "bundle_dir") + DEPLOY_OUTPUTS,
+    "deploy": (),  # what was deployed stays recorded (the deploy log is in <run>/deploy/)
     "finalize": (),
 }
 _EMPTY = {"mga": {}, "candidates": []}
@@ -1767,6 +1866,20 @@ def require_problems(s: dict, name: str, env=None) -> list[str]:
         if stale:
             out.append(f"function(s) {', '.join(stale)} were generated for an older version of the "
                        f"spec — run {_run_cmd(s, 'generate')} again")
+        return out
+    if name == "deploy":
+        hist = s.get("history") or []
+        approvals = [i for i, h in enumerate(hist) if h.get("gate") == 4 and h.get("decision") in ("approve", "copied")]
+        if not approvals or _superseded_by(hist, approvals[-1], 4):
+            out.append(f"Gate 4 has not been approved for the current bundle — run {_run_cmd(s, 'emit')}")
+        elif s.get("deploy_choice") != "yes":
+            out.append("Gate 4 was approved without deploying; to deploy this bundle, start a new run "
+                       f"from it: /{PLUGIN}:curate --start-at deploy --from-run {s['run_id']}")
+        v = s.get("validation") or {}
+        if not v.get("ok") or v.get("spec_hash") != spec_hash(s["spec"]):
+            out.append(f"no validated bundle for the current spec — run {_run_cmd(s, 'emit')}")
+        if not s.get("bundle_hash"):
+            out.append(f"no bundle hash was recorded at Gate 4 — approve Gate 4 again ({_run_cmd(s, 'emit')})")
         return out
     if name == "finalize":
         v = s.get("validation") or {}
@@ -2127,7 +2240,7 @@ def gate_compact(s: dict, gate: int) -> str:
 GATE_QUESTION = {1: "Approve this skeleton (the steps and their order)?",
                  2: "Approve the reuse decisions, files and data flow?",
                  3: "Approve the generated code?",
-                 4: "Approve this FaaSr bundle?"}
+                 4: "Approve this FaaSr bundle, and deploy it?"}
 
 
 def cmd_show(args) -> dict:
@@ -2182,7 +2295,10 @@ def build_parser() -> argparse.ArgumentParser:
         with_run(name).add_argument("--json", required=True)
     with_run("check")
     with_run("toposort")
-    with_run("approve").add_argument("--gate", type=int, required=True, choices=[1, 2, 3, 4])
+    q = with_run("approve")
+    q.add_argument("--gate", type=int, required=True, choices=[1, 2, 3, 4])
+    q.add_argument("--deploy", choices=["yes", "no"],
+                   help="Gate 4 only: the user chose Approve & deploy (yes) or Approve, no deploy (no; default)")
     q = with_run("directive")
     q.add_argument("--gate", required=True, choices=["1", "2", "3", "4", "emit"])
     q.add_argument("--text", required=True)

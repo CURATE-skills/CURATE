@@ -14,6 +14,7 @@ produces it.
 | resolve | reuse decisions made for the current spec | curate-reuse |
 | generate | a resolved spec: inputs/outputs on every node, no `check` errors, a description for every function to generate, resolved from the current reuse decisions; plus the foreground setting when anything is generated | curate-resolve |
 | emit | code for every function, generated for the current spec | curate-generate |
+| deploy | Gate 4 approved with Approve & deploy, a validated bundle for the current spec, its recorded hash | curate-emit |
 | finalize | a validated bundle built from the current spec | curate-emit |
 
 ## Start points (`/curate --start-at <stage>`)
@@ -24,7 +25,7 @@ written (it is read without the run lock). `/curate` then shows the returned `su
 
 | Source | Allowed stages | What is used |
 |---|---|---|
-| `--from-run <run_id or folder>` | reuse, resolve, generate, emit, finalize | the latest approval snapshot `history/NNN-gateN-approve.json` of: Gate 1 (reuse), Gate 2 (resolve, generate), Gate 3 (emit), Gate 4 (finalize) |
+| `--from-run <run_id or folder>` | reuse, resolve, generate, emit, deploy, finalize | the latest approval snapshot `history/NNN-gateN-approve.json` of: Gate 1 (reuse), Gate 2 (resolve, generate), Gate 3 (emit), Gate 4 (deploy, finalize). Deploy also needs the bundle's hash (from the snapshot, or for runs approved before hashes existed, `bundle_hash` in the source's state.json for the same bundle) and refuses a bundle that changed |
 | `--from-bundle <folder>` | generate (needs `--existing-code`), emit | the bundle's `spec.json` with code |
 | `--from-file <file>` | as `--from` below | the file |
 | `--sketch-file <file>` | skeleton | the sketch |

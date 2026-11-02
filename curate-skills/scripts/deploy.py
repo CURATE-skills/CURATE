@@ -1,15 +1,17 @@
 # /// script
 # requires-python = "==3.13.*"
-# dependencies = ["boto3>=1.39"]
+# dependencies = ["FaaSr_py==0.1.13", "PyGithub>=2.8.1", "requests"]  # FaaSr_py pins boto3
 # ///
 # Copyright (c) 2026 Nolan Cutler. MIT License; see NOTICE.
 # The deploy steps follow CURATE-prototype src/faasr_agents/agents/wda.py 56-157 and the
 # vendored deploy/ modules (commit 3fd5c16092ddf97a28bc3b83088e23e7f1b0f140). See scripts/VENDORED.md.
 """curate-deploy: put an approved bundle on FaaSr (GitHub Actions) the way CURATE does.
 
-D0 has only `preflight`, which is read-only: it reads the run, its bundle, (with a token) the
-GitHub repo and (with S3 keys) the S3 bucket, and reports what deploying would write. Nothing is
-written anywhere. Every path deploying would write must carry the suffix and must not exist yet
+`preflight` is read-only: it reads the run, its bundle, (with a token) the GitHub repo and (with
+S3 keys) the S3 bucket, and reports what deploying would write. Nothing is written anywhere.
+The four steps — publish, upload, register, invoke (CURATE's order) — each write only with
+--confirmed, which the stage file passes after the user said yes to that step; each re-runs the
+preflight first and records every path it writes in <run>/deploy/deploy-log.jsonl. Every path deploying would write must carry the suffix and must not exist yet
 (--overwrite-own-deploy also allows paths this run's own deploy log recorded, to retry a partial
 deploy). The deploy copy may differ from the approved bundle only in ALLOWED_DIFF fields and
 placeholder fields; the summary shows the difference field by field.
@@ -32,9 +34,13 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import copy
+import fcntl
 import hashlib
+import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -43,6 +49,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -85,17 +92,26 @@ def get_token() -> tuple[str | None, str]:
 
 
 class GitHub:
-    """Read-only GitHub REST calls. `get` returns (status, headers, parsed body or None)."""
+    """GitHub REST calls. `get`/`put` return (status, headers, parsed body or None). Only the
+    publish and upload steps call `put`; the preflight only reads."""
 
     def __init__(self, token: str, opener=None):
         self._token = token
         self._open = opener or urllib.request.urlopen
 
     def get(self, api_path: str, **params):
+        return self._request("GET", api_path, None, params)
+
+    def put(self, api_path: str, body: dict):
+        return self._request("PUT", api_path, body, {})
+
+    def _request(self, method: str, api_path: str, body, params):
         url = API + api_path + ("?" + urllib.parse.urlencode(params) if params else "")
-        req = urllib.request.Request(url, headers={
+        req = urllib.request.Request(url, method=method, data=json.dumps(body).encode() if body else None,
+                                     headers={
             "Authorization": f"Bearer {self._token}", "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "curate-skills"})
+            "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "curate-skills",
+            **({"Content-Type": "application/json"} if body else {})})
         try:
             with self._open(req, timeout=30) as r:
                 return r.status, dict(r.headers), json.loads(r.read() or b"null")
@@ -105,10 +121,15 @@ class GitHub:
 
 # ── the run and its bundle ───────────────────────────────────────────────────
 
+# Files the OS or Python leave in a folder when someone browses or imports it; not bundle content.
+OS_METADATA = re.compile(r"(^|/)(\.DS_Store|Thumbs\.db|desktop\.ini|\._[^/]*|__pycache__/.*)$")
+
+
 def tree_hash(folder: Path) -> str:
+    """sha256 over the bundle's files (relative path + bytes), ignoring OS_METADATA."""
     h = hashlib.sha256()
     for p in sorted(folder.rglob("*")):
-        if p.is_file():
+        if p.is_file() and not OS_METADATA.search(p.relative_to(folder).as_posix()):
             h.update(str(p.relative_to(folder)).encode() + b"\0" + p.read_bytes())
     return h.hexdigest()
 
@@ -441,7 +462,11 @@ def _owner_of(gh: GitHub, user: str, repo: str, branch: str, t: dict, new: str) 
 
 
 def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str = "none",
-              s3_factory=boto3_s3, overwrite_own: bool = False) -> dict:
+              s3_factory=boto3_s3, overwrite_own: bool = False, done_steps=(),
+              require_hash: bool = False) -> dict:
+    """Read-only. done_steps: deploy steps this run already finished; their paths must exist,
+    carry curate-skills' mark and be in this run's deploy log (they are not written again).
+    require_hash: refuse without a bundle hash recorded at Gate 4 (every deploy step does)."""
     if not suffix or not SUFFIX_RX.match(suffix):
         raise InputError(f"deploy name suffix {suffix!r} must be non-empty letters, digits, '-' or '_'")
     s, bundle = load_run(run)
@@ -452,6 +477,9 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
     bhash = tree_hash(bundle)
     if s.get("bundle_hash") and s["bundle_hash"] != bhash:
         problems.append("the bundle folder changed after Gate 4 approval; re-run curate-emit")
+    elif require_hash and not s.get("bundle_hash"):
+        problems.append("no bundle hash was recorded when Gate 4 was approved, so a changed bundle could "
+                        "not be detected; approve Gate 4 again")
     elif not s.get("bundle_hash"):
         warnings.append("this run has no recorded bundle hash (approved before deploy existed); "
                         "the bundle is checked as it is now")
@@ -482,6 +510,10 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
     repo = os.environ.get("FAASR_ACTION_REPO", "").strip()
     branch = os.environ.get("FAASR_ACTION_BRANCH", "").strip() or "main"
     missing_env = [n for n, v in (("FAASR_GH_USERNAME", user), ("FAASR_ACTION_REPO", repo)) if not v]
+    for n in ("GITHUB_REPOSITORY", "GITHUB_REF_NAME"):
+        if os.environ.get(n):  # only set inside an Actions runner; CURATE's code would deploy there instead
+            problems.append(f"{n} is set here; CURATE's register and invoke code would use it instead of "
+                            "FAASR_GH_USERNAME/FAASR_ACTION_REPO/FAASR_ACTION_BRANCH — unset it")
     if missing_env:
         problems.append(f"environment variables not set: {', '.join(missing_env)}")
     for sname, cs in (filled_wf.get("ComputeServers") or {}).items():
@@ -579,6 +611,13 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
             new = copy_wf["WorkflowName"]
             for t in targets:
                 t.update(_owner_of(gh, user, repo, branch, t, new))
+                if t["step"] in done_steps:
+                    t["written"] = True
+                    if not (t.get("exists") and t.get("ours") and t["path"] in own_files):
+                        problems.append(f"{t['path']} was written by this deploy's {t['step']} step but is "
+                                        f"{'gone' if not t.get('exists') else 'no longer ours (' + str(t.get('why')) + ')'}"
+                                        "; refusing to continue")
+                    continue
                 if not t.get("exists"):
                     continue
                 if overwrite_own and t.get("ours") and t["path"] in own_files:
@@ -596,14 +635,16 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
                 st, _, _ = gh.get(f"/repos/{user}/{repo}/contents/{p}", ref=branch)
                 if st == 200:
                     out["curate_files"].append(p)
-    out["existing_paths"] = [t["path"] for t in targets if t.get("exists")] + \
+    out["existing_paths"] = [t["path"] for t in targets if t.get("exists") and not t.get("written")] + \
         [f"s3://{t['bucket']}/{t['prefix']}" for t in s3_targets if t.get("exists")]
-    out["refused_paths"] = [t["path"] for t in targets if t.get("exists") and not t.get("overwrite")] + \
+    out["refused_paths"] = [t["path"] for t in targets
+                            if t.get("exists") and not t.get("overwrite") and not t.get("written")] + \
         [f"s3://{t['bucket']}/{t['prefix']}" for t in s3_targets if t.get("exists") and not t.get("overwrite")]
     out["overwrite_paths"] = [t["path"] for t in targets if t.get("overwrite")] + \
         [f"s3://{t['bucket']}/{t['prefix']}" for t in s3_targets if t.get("overwrite")]
     out.update(ok=not problems, problems=problems, warnings=warnings)
     out["summary"] = preflight_summary(out)
+    out["_copy_wf"] = copy_wf  # for the deploy steps; never printed
     return out
 
 
@@ -633,7 +674,9 @@ def preflight_summary(p: dict) -> str:
              f"(token: {p['token_source']}; GitHub {'checked' if p['github_checked'] else 'not checked'})"]
     by_step: dict[str, list[str]] = {}
     for t in p["targets"]:
-        if t.get("exists") is None:
+        if t.get("written"):
+            state = "written by this deploy"
+        elif t.get("exists") is None:
             state = "not checked"
         elif not t["exists"]:
             state = "new"
@@ -682,6 +725,286 @@ def preflight_summary(p: dict) -> str:
     return "\n".join(lines)
 
 
+# ── the four deploy steps ────────────────────────────────────────────────────
+# Each one writes only after the user said yes to it (--confirmed), re-runs the preflight first
+# (bundle hash, deploy-copy rule, names, existing paths), records each path it wrote in the deploy
+# log as soon as it is written, and records the step in state.json. A finished step is skipped.
+
+STEPS = ("publish", "upload", "register", "invoke")
+STEP_WHAT = {
+    "publish": "write the function files to the action repo",
+    "upload": "write the deploy copy of workflow.json to the action repo",
+    "register": "write the GitHub Actions files (CURATE's register_workflow)",
+    "invoke": "start the workflow: a workflow_dispatch of the entry action (CURATE's invoke_workflow)",
+}
+
+
+class StepError(Exception):
+    pass
+
+
+@contextlib.contextmanager
+def _state_lock(run: Path):
+    """The same lock spec.py holds (<run>/state.lock) around every state.json change."""
+    with open(run / "state.lock", "a") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def _update_state(run: Path, change) -> dict:
+    with _state_lock(run):
+        path = run / "state.json"
+        s = json.loads(path.read_text())
+        change(s)
+        text = json.dumps(s, indent=2) + "\n"
+        if leakcheck.find_leaks(text):
+            raise StepError("refusing to write state.json: it would contain a secret value")
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(text)
+        tmp.replace(path)
+        return s
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _log_written(run: Path, entry: dict) -> None:
+    """Append one line to <run>/deploy/deploy-log.jsonl (what --overwrite-own-deploy trusts)."""
+    (run / DEPLOY_LOG).parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps({"ts": _now_iso(), **entry})
+    if leakcheck.find_leaks(line):
+        raise StepError("refusing to write the deploy log: the entry would contain a secret value")
+    with open(run / DEPLOY_LOG, "a") as fh:
+        fh.write(line + "\n")
+
+
+def _checked(content: str, what: str, extra: dict | None) -> str:
+    leaked = leakcheck.find_leaks(content, extra_values=extra)
+    if leaked:
+        raise StepError(f"refusing to push {what}: it contains secret values ({', '.join(leaked)})")
+    return content
+
+
+def put_file(gh: GitHub, user: str, repo: str, path: str, content: str, message: str, branch: str) -> int:
+    """Create or update one file, as PyGithub's create_file/update_file do for CURATE."""
+    st, _, cur = gh.get(f"/repos/{user}/{repo}/contents/{path}", ref=branch)
+    body = {"message": message, "content": base64.b64encode(content.encode()).decode(), "branch": branch}
+    if st == 200 and isinstance(cur, dict) and cur.get("sha"):
+        body["sha"] = cur["sha"]
+    elif st != 404:
+        raise StepError(f"could not read {path} before writing it (HTTP {st})")
+    st, _, _ = gh.put(f"/repos/{user}/{repo}/contents/{path}", body)
+    if st not in (200, 201):
+        raise StepError(f"GitHub refused to write {path} (HTTP {st})")
+    return st
+
+
+@contextlib.contextmanager
+def _vendored_env(token: str):
+    """CURATE's register/invoke code reads GH_PAT from the environment; when the token came from
+    `gh auth token`, provide it to this process only, and capture their log lines (redacted)."""
+    old = os.environ.get("GH_PAT")
+    os.environ["GH_PAT"] = token
+    buf = io.StringIO()
+    root = logging.getLogger()
+    saved = [(h, h.stream) for h in root.handlers if isinstance(h, logging.StreamHandler)]
+    handler = logging.StreamHandler(buf)
+    root.addHandler(handler)
+    for h, _ in saved:
+        h.setStream(buf)
+    try:
+        yield buf
+    finally:
+        root.removeHandler(handler)
+        for h, stream in saved:
+            h.setStream(stream)
+        if old is None:
+            os.environ.pop("GH_PAT", None)
+        else:
+            os.environ["GH_PAT"] = old
+
+
+def _log_tail(buf: io.StringIO, extra: dict | None, n: int = 15) -> list[str]:
+    return leakcheck.redact(buf.getvalue(), extra_values=extra).splitlines()[-n:]
+
+
+def run_register(copy_wf: dict, token: str, extra: dict | None) -> list[str]:
+    """CURATE's register_workflow.main on the deploy copy; the YAML is leak-checked first."""
+    from vendor.curate_deploy import register_workflow as rw
+    secrets = rw.generate_github_secret_imports(copy_wf)
+    user_secrets = rw.generate_user_defined_secret_imports(copy_wf)
+    if user_secrets:
+        secrets += "\n" + user_secrets
+    for action in copy_wf["ActionList"]:
+        _checked(rw.generate_serverless_yaml(f"{copy_wf['WorkflowName']}-{action}",
+                                             copy_wf["ActionContainers"][action], secrets),
+                 f"the Actions file for {action}", extra)
+    with _vendored_env(token) as buf:
+        try:
+            rw.main(workflow_data=copy.deepcopy(copy_wf))
+        except (SystemExit, Exception) as e:  # noqa: BLE001 — CURATE's code exits on errors
+            raise StepError(f"register failed ({type(e).__name__}); its log: "
+                            + " | ".join(_log_tail(buf, extra))) from None
+    return _log_tail(buf, extra)
+
+
+def run_invoke(workflow_path: str, token: str, extra: dict | None) -> dict:
+    """CURATE's invoke_workflow.main: FaaSr's Scheduler dispatches the entry action."""
+    from vendor.curate_deploy import invoke_workflow as iw
+    with _vendored_env(token) as buf:
+        try:
+            payload = iw.main(workflow_path=workflow_path)
+        except (SystemExit, Exception) as e:  # noqa: BLE001
+            raise StepError(f"invoke failed ({type(e).__name__}); its log: "
+                            + " | ".join(_log_tail(buf, extra))) from None
+    # The payload holds the token (FaaSr adds it to the server entry); keep only the ids.
+    return {"invocation_id": payload.get("InvocationID"),
+            "invocation_timestamp": payload.get("InvocationTimestamp"), "log": _log_tail(buf, extra)}
+
+
+RUNNERS = {"register": run_register, "invoke": run_invoke}
+
+
+def _resume_cmd(s: dict) -> str:
+    return f"/curate-skills:curate-deploy --run {s['run_id']}"
+
+
+def deploy_step(run: str, step: str, suffix: str, gh: GitHub | None, token: str | None,
+                token_source: str, s3_factory=boto3_s3, confirmed: bool = False,
+                overwrite_own: bool = False) -> dict:
+    run_p = Path(run)
+    s, bundle = load_run(run)
+    rec = s.get("deploy") or {}
+    done = [x for x in STEPS if (rec.get("steps") or {}).get(x, {}).get("ok")]
+    base = {"run": str(run_p.resolve()), "step": step, "done": done}
+    if s.get("stage") != "deploy":
+        return {**base, "ok": False, "error": f"the run is at stage {s.get('stage')!r}, not deploy; "
+                f"curate-deploy runs after Gate 4 is approved with Approve & deploy"}
+    if s.get("deploy_choice") != "yes":
+        return {**base, "ok": False, "error": "Gate 4 was approved without deploying"}
+    if rec.get("suffix") and rec["suffix"] != suffix:
+        return {**base, "ok": False, "error": f"this deploy started with suffix {rec['suffix']!r}; "
+                f"keep it (got {suffix!r})"}
+    if step in done:
+        return {**base, "ok": True, "skipped": True, "detail": f"{step} already done in this run",
+                "next_step": next((x for x in STEPS if x not in done), None)}
+    missing = [x for x in STEPS[:STEPS.index(step)] if x not in done]
+    if missing:
+        return {**base, "ok": False, "error": f"run {missing[0]} first (steps go publish → upload → "
+                f"register → invoke)", "next_step": missing[0]}
+
+    pf = preflight(run, suffix, gh, token_source, s3_factory, overwrite_own, done_steps=done, require_hash=True)
+    copy_wf = pf.pop("_copy_wf")
+    user, repo, branch = (os.environ.get("FAASR_GH_USERNAME", "").strip(),
+                          os.environ.get("FAASR_ACTION_REPO", "").strip(),
+                          os.environ.get("FAASR_ACTION_BRANCH", "").strip() or "main")
+    new = copy_wf["WorkflowName"]
+    paths = [t["path"] for t in pf["targets"] if t["step"] == step]
+    if step == "invoke":
+        paths = [f"s3://{t['bucket']}/{t['prefix']}" for t in pf["s3_targets"] if t["prefix"]]
+    plan = {"what": STEP_WHAT[step], "repo": pf["repo"], "branch": branch, "deploy_name": new,
+            "paths": paths}
+    base.update(plan=plan, preflight_summary=pf["summary"])
+    if not pf["ok"]:
+        return {**base, "ok": False, "problems": pf["problems"],
+                "error": "the preflight found problems; nothing was written"}
+    if not confirmed:
+        return {**base, "ok": False, "needs_confirmation": True,
+                "error": f"{step} writes to {pf['repo']} — ask the user first; only after they say yes, "
+                         f"run it again with --confirmed"}
+
+    extra = {"gh_token": token} if token else None
+    log_base = {"run_id": s["run_id"], "deploy_name": new, "step": step}
+    _update_state(run_p, lambda st: st.update(deploy={
+        **(st.get("deploy") or {}), "deploy_name": new, "suffix": suffix, "repo": pf["repo"], "branch": branch,
+        "bundle_hash": pf["bundle_hash"], "steps": {**((st.get("deploy") or {}).get("steps") or {}),
+                                                    step: {"ok": False, "started": _now_iso()}}}))
+    detail: dict = {}
+    try:
+        if step == "publish":
+            # Every file is read and leak-checked before the first one is pushed.
+            files = []
+            for fn in sorted(copy_wf["FunctionGitRepo"]):
+                src = bundle / "functions" / f"{fn}.py"
+                if not src.is_file():
+                    raise StepError(f"the bundle has no functions/{fn}.py")
+                files.append((fn, f"functions/{new}/{fn}.py", _checked(src.read_text(), f"functions/{fn}.py", extra)))
+            for fn, path, code in files:
+                put_file(gh, user, repo, path, code, f"Add/update {fn} (curate-skills)", branch)
+                _log_written(run_p, {**log_base, "repo": f"{user}/{repo}", "branch": branch, "path": path})
+            detail = {"written": paths}
+        elif step == "upload":
+            path = f"workflows/{new}.json"
+            text = _checked(json.dumps(copy_wf, indent=2), path, extra)
+            (run_p / "deploy").mkdir(exist_ok=True)
+            (run_p / "deploy" / "workflow.json").write_text(text + "\n")
+            put_file(gh, user, repo, path, text, f"Add/update workflow payload {new} (curate-skills)", branch)
+            _log_written(run_p, {**log_base, "repo": f"{user}/{repo}", "branch": branch, "path": path})
+            detail = {"written": [path], "local_copy": str(run_p / "deploy" / "workflow.json")}
+        elif step == "register":
+            log = RUNNERS["register"](copy_wf, token, extra)
+            for path in paths:
+                _log_written(run_p, {**log_base, "repo": f"{user}/{repo}", "branch": branch, "path": path})
+            detail = {"written": paths, "log": log}
+        elif step == "invoke":
+            dispatched = _now_iso()
+            got = RUNNERS["invoke"](f"workflows/{new}.json", token, extra)
+            for t in pf["s3_targets"]:
+                if t["prefix"]:
+                    _log_written(run_p, {**log_base, "bucket": t["bucket"], "prefix": t["prefix"]})
+            detail = {"invocation_id": got["invocation_id"], "invocation_timestamp": got["invocation_timestamp"],
+                      "dispatched_at": dispatched, "log": got.get("log", [])}
+    except (StepError, OSError) as e:
+        err = leakcheck.redact(str(e), extra_values=extra)
+        _update_state(run_p, lambda st: st["deploy"]["steps"].__setitem__(
+            step, {"ok": False, "ts": _now_iso(), "error": err}))
+        return {**base, "ok": False, "failed": True, "error": err,
+                "resume_command": _resume_cmd(s),
+                "note": "what this step already wrote is in the deploy log; retrying it needs "
+                        "--overwrite-own-deploy (the user's choice)"}
+
+    def finish(st):
+        st["deploy"]["steps"][step] = {"ok": True, "ts": _now_iso(),
+                                       **{k: v for k, v in detail.items() if k != "log"}}
+        if step == "invoke":
+            st["deploy"].update(invocation_id=detail["invocation_id"],
+                                invocation_timestamp=detail["invocation_timestamp"],
+                                dispatched_at=detail["dispatched_at"], workflow_name=new)
+            st.setdefault("history", []).append({
+                "gate": "deploy", "decision": "deployed", "text": f"{new} invocation {detail['invocation_id']}",
+                "structural": None, "ts": _now_iso()})
+            # Until curate-monitor exists (D2), the run stops here: saving to the catalog comes only
+            # after the user has checked that the deployed run worked.
+            st.update(stage="stopped", stopped_from="finalize", begun=None)
+    s = _update_state(run_p, finish)
+    done = [x for x in STEPS if s["deploy"]["steps"].get(x, {}).get("ok")]
+    nxt = next((x for x in STEPS if x not in done), None)
+    out = {**base, "ok": True, "done": done, "next_step": nxt, **detail, "next_stage": s["stage"]}
+    if step == "invoke":
+        resume = f"/curate-skills:curate --resume {s['run_id']}"
+        out.update(stopped=True, resume_command=resume,
+                   resume_stage_command=f"/curate-skills:wda-finalize --run {s['run_id']}",
+                   message=f"Deployed: {new}, invocation {detail['invocation_id']}. The run is stopped. Check "
+                           f"Actions and S3; resume with {resume} to finalize.")
+    return out
+
+
+def deploy_status(run: str) -> dict:
+    s, _ = load_run(run)
+    rec = s.get("deploy") or {}
+    steps = rec.get("steps") or {}
+    done = [x for x in STEPS if steps.get(x, {}).get("ok")]
+    failed = {x: steps[x].get("error") for x in STEPS if x in steps and not steps[x].get("ok") and steps[x].get("error")}
+    return {"ok": True, "stage": s.get("stage"), "deploy_choice": s.get("deploy_choice"), "done": done,
+            "failed": failed, "next_step": next((x for x in STEPS if x not in done), None),
+            "deploy_name": rec.get("deploy_name"), "invocation_id": rec.get("invocation_id"),
+            "deploy_log": str(Path(run) / DEPLOY_LOG) if (Path(run) / DEPLOY_LOG).is_file() else None}
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def _print(obj: dict, extra_values: dict | None = None) -> int:
@@ -699,21 +1022,39 @@ def _print(obj: dict, extra_values: dict | None = None) -> int:
 def main(argv=None, opener=None, s3_factory=boto3_s3) -> int:
     p = argparse.ArgumentParser(prog="deploy.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
-    pf = sub.add_parser("preflight", help="read-only check of what deploying would do")
-    pf.add_argument("--run", required=True)
-    pf.add_argument("--name-suffix", default=None,
-                    help=f"deploy name suffix (default: $CURATE_DEPLOY_NAME_SUFFIX or {DEFAULT_SUFFIX!r})")
-    pf.add_argument("--overwrite-own-deploy", action="store_true",
-                    help="allow existing paths only if this run's own deploy log records them (and, in "
-                         "the repo, they still carry its mark); everything else is still refused")
+    for name, help_ in [("preflight", "read-only check of what deploying would do"),
+                        *[(x, STEP_WHAT[x] + " (needs --confirmed)") for x in STEPS]]:
+        q = sub.add_parser(name, help=help_)
+        q.add_argument("--run", required=True)
+        q.add_argument("--name-suffix", default=None,
+                       help=f"deploy name suffix (default: $CURATE_DEPLOY_NAME_SUFFIX or {DEFAULT_SUFFIX!r})")
+        q.add_argument("--overwrite-own-deploy", action="store_true",
+                       help="allow existing paths only if this run's own deploy log records them (and, in "
+                            "the repo, they still carry its mark); everything else is still refused")
+        if name in STEPS:
+            q.add_argument("--confirmed", action="store_true",
+                           help="the user said yes to this step (passed only after asking them)")
+    sub.add_parser("status", help="which deploy steps are done").add_argument("--run", required=True)
     args = p.parse_args(argv)
+    if args.cmd == "status":
+        try:
+            return _print(deploy_status(args.run))
+        except InputError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 2
     suffix = args.name_suffix if args.name_suffix is not None else \
         (os.environ.get("CURATE_DEPLOY_NAME_SUFFIX") or DEFAULT_SUFFIX)
     token, source = get_token()
     extra = {"gh_token": token} if token else None
     try:
         gh = GitHub(token, opener) if token else None
-        return _print(preflight(args.run, suffix, gh, source, s3_factory, args.overwrite_own_deploy), extra)
+        if args.cmd == "preflight":
+            out = preflight(args.run, suffix, gh, source, s3_factory, args.overwrite_own_deploy)
+            out.pop("_copy_wf", None)
+        else:
+            out = deploy_step(args.run, args.cmd, suffix, gh, token, source, s3_factory,
+                              args.confirmed, args.overwrite_own_deploy)
+        return _print(out, extra)
     except InputError as e:
         print(json.dumps({"ok": False, "error": str(e)}))
         return 2

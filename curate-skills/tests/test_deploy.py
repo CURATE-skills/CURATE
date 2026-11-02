@@ -122,6 +122,7 @@ def run(tmp_path):
     (bundle / "functions").mkdir(parents=True)
     (bundle / "workflow.json").write_text(json.dumps(workflow(), indent=2))
     (bundle / "functions" / "plot_weather.py").write_text("def plot_weather(): pass\n")
+    (bundle / "functions" / "download_station.py").write_text("def download_station(): pass\n")
     r = tmp_path / ".curate" / "runs" / "r1"
     r.mkdir(parents=True)
     (r / "state.json").write_text(json.dumps({
@@ -142,18 +143,31 @@ def env(monkeypatch):
 
 
 class FakeGitHub:
-    """Serves GET paths from a dict; records every request; refuses anything but GET."""
+    """Serves GET paths from a dict; records every request. PUT (a contents write) only when
+    writable=True: it stores the file and its commit message; paths in fail_put get HTTP 500."""
 
     def __init__(self, files=None, commits=None, secrets=("GH_PAT", "S3_AccessKey", "S3_SecretKey"),
-                 scopes="repo, workflow", default_branch="main", push=True):
-        self.files = files or {}
-        self.commits = commits or {}
+                 scopes="repo, workflow", default_branch="main", push=True, writable=False, fail_put=()):
+        self.files = dict(files or {})
+        self.commits = dict(commits or {})
         self.secrets, self.scopes, self.default_branch, self.push = secrets, scopes, default_branch, push
-        self.requests = []
+        self.writable, self.fail_put = writable, set(fail_put)
+        self.requests, self.puts = [], []
 
     def __call__(self, req, timeout=None):
-        assert req.get_method() == "GET"
         self.requests.append(req)
+        if req.get_method() == "PUT":
+            assert self.writable, "a write was attempted where none is allowed"
+            assert req.headers["Authorization"] == f"Bearer {FAKE['GH_PAT']}"
+            p = req.full_url.split("/contents/", 1)[1]
+            body = json.loads(req.data)
+            if p in self.fail_put:
+                raise urllib.error.HTTPError(req.full_url, 500, "boom", {}, io.BytesIO(b"{}"))
+            self.puts.append((p, body))
+            self.files[p] = base64.b64decode(body["content"]).decode()
+            self.commits[p] = body["message"]
+            return self._ok({"content": {"path": p}})
+        assert req.get_method() == "GET"
         assert req.headers["Authorization"] == f"Bearer {FAKE['GH_PAT']}"
         url = req.full_url.split("https://api.github.com", 1)[1]
         path, _, query = url.partition("?")
@@ -166,7 +180,7 @@ class FakeGitHub:
         if path.startswith("/repos/alice/faasr-actions/contents/"):
             p = path.split("/contents/", 1)[1]
             if p in self.files:
-                return self._ok({"content": base64.b64encode(self.files[p].encode()).decode()})
+                return self._ok({"content": base64.b64encode(self.files[p].encode()).decode(), "sha": "sha-" + p})
         if path == "/repos/alice/faasr-actions/commits":
             p = dict(x.split("=", 1) for x in query.split("&"))["path"].replace("%2F", "/")
             if p in self.commits:
@@ -555,3 +569,209 @@ def test_uppercase_spellings_are_leak_checked_and_scrubbed(monkeypatch):
     assert "[REDACTED:S3_SECRETKEY]" in L.redact(text)
     assert emit.find_leaked_secrets(text, emit.BASE_SECRET_NAMES) == ["S3_SECRETKEY"]
     assert "S3_SECRETKEY" not in stubtest._env(None, None, [])
+
+
+def test_tree_hash_ignores_os_metadata_but_not_content(tmp_path):
+    (tmp_path / "functions").mkdir()
+    (tmp_path / "workflow.json").write_text("{}")
+    (tmp_path / "functions" / "f.py").write_text("x = 1\n")
+    before = D.tree_hash(tmp_path)
+    (tmp_path / ".DS_Store").write_bytes(b"finder")
+    (tmp_path / "functions" / "._f.py").write_bytes(b"resource fork")
+    (tmp_path / "functions" / "__pycache__").mkdir()
+    (tmp_path / "functions" / "__pycache__" / "f.cpython-313.pyc").write_bytes(b"pyc")
+    assert D.tree_hash(tmp_path) == before
+    (tmp_path / "functions" / "f.py").write_text("x = 2\n")
+    assert D.tree_hash(tmp_path) != before
+
+
+# ── the four deploy steps (fakes only: nothing reaches GitHub or S3) ──
+
+@pytest.fixture
+def deploying(run):
+    """The run after Gate 4 was approved with Approve & deploy."""
+    s = json.loads((run / "state.json").read_text())
+    s.update(stage="deploy", deploy_choice="yes", bundle_hash=D.tree_hash(Path(s["bundle_dir"])))
+    (run / "state.json").write_text(json.dumps(s))
+    return run
+
+
+@pytest.fixture
+def runners(monkeypatch):
+    """Stand-ins for CURATE's register and invoke code; they record what they were given."""
+    calls = {}
+
+    def register(copy_wf, token, extra):
+        calls["register"] = copy_wf
+        for action in copy_wf["ActionList"]:
+            calls["fake"].files[f".github/workflows/{copy_wf['WorkflowName']}-{action}.yml"] = \
+                f"name: {copy_wf['WorkflowName']}-{action}\n"
+        return ["INFO: registered"]
+
+    def invoke(workflow_path, token, extra):
+        calls["invoke"] = workflow_path
+        return {"invocation_id": "inv-123", "invocation_timestamp": "2026-11-01-12-00-00", "log": []}
+    monkeypatch.setattr(D, "RUNNERS", {"register": register, "invoke": invoke})
+    return calls
+
+
+def step(capsys, run, name, fake, *extra, s3=None):
+    code = D.main([name, "--run", str(run), *extra], opener=fake, s3_factory=s3 or FakeS3())
+    return code, json.loads(capsys.readouterr().out)
+
+
+def log_lines(run):
+    p = run / "deploy" / "deploy-log.jsonl"
+    return [json.loads(x) for x in p.read_text().splitlines()] if p.exists() else []
+
+
+def test_a_step_without_confirmed_writes_nothing_and_says_what_it_would_do(deploying, env, capsys):
+    fake = FakeGitHub(writable=True)
+    code, out = step(capsys, deploying, "publish", fake)
+    assert code == 1 and out.get("needs_confirmation"), out.get("problems") or out
+    assert "ask the user first" in out["error"]
+    assert out["plan"]["paths"] == ["functions/weather-cs/download_station.py", "functions/weather-cs/plot_weather.py"]
+    assert out["plan"]["repo"] == "alice/faasr-actions" and fake.puts == [] and log_lines(deploying) == []
+    assert "deploy" not in json.loads((deploying / "state.json").read_text()) or \
+        not json.loads((deploying / "state.json").read_text()).get("deploy")
+
+
+def test_all_four_steps_in_order(deploying, env, capsys, runners):
+    fake = FakeGitHub(writable=True)
+    runners["fake"] = fake
+    for name in D.STEPS:
+        code, out = step(capsys, deploying, name, fake, "--confirmed")
+        assert code == 0 and out["ok"], (name, out)
+    # publish: the bundle's function files, each with curate-skills' mark
+    assert [p for p, _ in fake.puts] == ["functions/weather-cs/download_station.py",
+                                         "functions/weather-cs/plot_weather.py", "workflows/weather-cs.json"]
+    assert all("(curate-skills)" in b["message"] and b["branch"] == "main" for _, b in fake.puts)
+    assert fake.files["functions/weather-cs/plot_weather.py"] == "def plot_weather(): pass\n"
+    # upload: the deploy copy (renamed, -cs folder), also kept in the run
+    uploaded = json.loads(fake.files["workflows/weather-cs.json"])
+    assert uploaded["WorkflowName"] == "weather-cs"
+    assert {a["Arguments"]["folder"] for a in uploaded["ActionList"].values()} == {"weather_data-cs"}
+    assert json.loads((deploying / "deploy" / "workflow.json").read_text()) == uploaded
+    assert runners["register"] == uploaded and runners["invoke"] == "workflows/weather-cs.json"
+    # state, log, stage
+    s = json.loads((deploying / "state.json").read_text())
+    assert all(s["deploy"]["steps"][x]["ok"] for x in D.STEPS)
+    assert s["deploy"]["invocation_id"] == "inv-123"
+    assert s["stage"] == "stopped" and s["stopped_from"] == "finalize"  # until D2: the user checks first
+    assert out["stopped"] and out["message"].endswith(
+        "Check Actions and S3; resume with /curate-skills:curate --resume r1 to finalize.")
+    assert s["history"][-1]["decision"] == "deployed"
+    import spec as S
+    S.main(["next", "--run", str(deploying)])
+    nxt = json.loads(capsys.readouterr().out)
+    assert nxt["next_skill"] is None and nxt["stopped_from"] == "finalize"  # /curate stops here
+    assert nxt["resume_stage_command"] == "/curate-skills:wda-finalize --run r1"
+    logged = [(e["step"], e.get("path") or e.get("prefix")) for e in log_lines(deploying)]
+    assert logged == [("publish", "functions/weather-cs/download_station.py"),
+                      ("publish", "functions/weather-cs/plot_weather.py"),
+                      ("upload", "workflows/weather-cs.json"),
+                      ("register", ".github/workflows/weather-cs-download.yml"),
+                      ("register", ".github/workflows/weather-cs-plot.yml"),
+                      ("invoke", "weather_data-cs/"), ("invoke", "FaaSrLog/weather-cs/")]
+    assert all(e["run_id"] == "r1" and e["deploy_name"] == "weather-cs" for e in log_lines(deploying))
+    # secrets nowhere
+    for f in [deploying / "state.json", deploying / "deploy" / "deploy-log.jsonl", deploying / "deploy" / "workflow.json"]:
+        assert all(v not in f.read_text() for v in FAKE.values())
+    assert all(v not in json.dumps(b) for _, b in fake.puts for v in FAKE.values())
+
+
+def test_steps_go_in_order_and_a_finished_step_is_skipped(deploying, env, capsys, runners):
+    fake = FakeGitHub(writable=True)
+    runners["fake"] = fake
+    code, out = step(capsys, deploying, "upload", fake, "--confirmed")
+    assert code == 1 and out["next_step"] == "publish" and fake.puts == []
+    step(capsys, deploying, "publish", fake, "--confirmed")
+    n = len(fake.puts)
+    code, out = step(capsys, deploying, "publish", fake, "--confirmed")
+    assert code == 0 and out["skipped"] and len(fake.puts) == n
+    code, out = step(capsys, deploying, "upload", fake)  # publish's files exist: not a problem
+    assert out["needs_confirmation"], out.get("problems")
+    assert "written by this deploy" in out["preflight_summary"]
+
+
+@pytest.mark.parametrize("case,needle", [
+    ("changed", "bundle folder changed after Gate 4"),
+    ("no_hash", "no bundle hash was recorded"),
+    ("stage", "not deploy"),
+    ("no_deploy", "without deploying"),
+    ("actions_env", "GITHUB_REPOSITORY is set here"),
+])
+def test_steps_refuse_before_writing(deploying, env, capsys, monkeypatch, case, needle):
+    s = json.loads((deploying / "state.json").read_text())
+    if case == "changed":
+        (Path(s["bundle_dir"]) / "functions" / "plot_weather.py").write_text("def plot_weather(): return 1\n")
+    if case == "no_hash":
+        s.pop("bundle_hash")
+    if case == "stage":
+        s["stage"] = "finalize"
+    if case == "no_deploy":
+        s["deploy_choice"] = "no"
+    if case == "actions_env":
+        monkeypatch.setenv("GITHUB_REPOSITORY", "someone/else")
+    (deploying / "state.json").write_text(json.dumps(s))
+    fake = FakeGitHub(writable=True)
+    code, out = step(capsys, deploying, "publish", fake, "--confirmed")
+    assert code == 1 and needle in json.dumps(out), out
+    assert fake.puts == [] and log_lines(deploying) == []
+
+
+def test_a_secret_in_function_code_is_never_pushed(deploying, env, capsys):
+    s = json.loads((deploying / "state.json").read_text())
+    bundle = Path(s["bundle_dir"])
+    (bundle / "functions" / "plot_weather.py").write_text(f"KEY = '{FAKE['S3_SecretKey']}'\n")
+    s["bundle_hash"] = D.tree_hash(bundle)  # as if it had been approved like this
+    (deploying / "state.json").write_text(json.dumps(s))
+    fake = FakeGitHub(writable=True)
+    code, out = step(capsys, deploying, "publish", fake, "--confirmed")
+    assert code == 1 and out["failed"] and "contains secret values (S3_SecretKey)" in out["error"]
+    assert fake.puts == [] and log_lines(deploying) == []  # every file is checked before the first push
+    assert FAKE["S3_SecretKey"] not in json.dumps(out) + (deploying / "state.json").read_text()
+
+
+def test_a_failed_step_can_be_retried_only_with_overwrite_own_deploy(deploying, env, capsys):
+    fake = FakeGitHub(writable=True, fail_put={"functions/weather-cs/plot_weather.py"})
+    code, out = step(capsys, deploying, "publish", fake, "--confirmed")
+    assert code == 1 and out["failed"] and "HTTP 500" in out["error"]
+    assert out["resume_command"] == "/curate-skills:curate-deploy --run r1"
+    s = json.loads((deploying / "state.json").read_text())
+    assert s["stage"] == "deploy" and s["deploy"]["steps"]["publish"]["ok"] is False
+    assert [e["path"] for e in log_lines(deploying)] == ["functions/weather-cs/download_station.py"]
+    fake.fail_put = set()
+    code, out = step(capsys, deploying, "publish", fake, "--confirmed")  # its own file now exists
+    assert code == 1 and out["problems"] and "--overwrite-own-deploy" in " ".join(out["problems"])
+    code, out = step(capsys, deploying, "publish", fake, "--confirmed", "--overwrite-own-deploy")
+    assert code == 0 and out["ok"], out
+    assert sum(p == "functions/weather-cs/download_station.py" for p, _ in fake.puts) == 2
+
+
+def test_status_reports_done_and_next(deploying, env, capsys, runners):
+    fake = FakeGitHub(writable=True)
+    runners["fake"] = fake
+    step(capsys, deploying, "publish", fake, "--confirmed")
+    D.main(["status", "--run", str(deploying)])
+    out = json.loads(capsys.readouterr().out)
+    assert out["done"] == ["publish"] and out["next_step"] == "upload" and out["deploy_log"]
+
+
+def test_publish_never_pushes_os_metadata(deploying, env, capsys, runners):
+    # The same files tree_hash ignores: they can appear after approval without changing the hash,
+    # and publish only pushes functions/<fn>.py for the functions in FunctionGitRepo.
+    bundle = Path(json.loads((deploying / "state.json").read_text())["bundle_dir"])
+    (bundle / ".DS_Store").write_bytes(b"finder")
+    (bundle / "functions" / ".DS_Store").write_bytes(b"finder")
+    (bundle / "functions" / "._plot_weather.py").write_bytes(b"apple double")
+    (bundle / "functions" / "__pycache__").mkdir()
+    (bundle / "functions" / "__pycache__" / "plot_weather.cpython-313.pyc").write_bytes(b"pyc")
+    (bundle / "functions" / "Thumbs.db").write_bytes(b"thumbs")
+    fake = FakeGitHub(writable=True)
+    runners["fake"] = fake
+    for name in ("publish", "upload"):
+        code, out = step(capsys, deploying, name, fake, "--confirmed")
+        assert code == 0, out  # the hash still matches
+    assert [p for p, _ in fake.puts] == ["functions/weather-cs/download_station.py",
+                                         "functions/weather-cs/plot_weather.py", "workflows/weather-cs.json"]

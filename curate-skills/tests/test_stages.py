@@ -45,7 +45,7 @@ def foreground(monkeypatch):
     ("skeleton", "curate-skeleton"), ("gate1", "curate-skeleton"), ("reuse", "curate-reuse"),
     ("resolve", "curate-resolve"), ("gate2", "curate-resolve"), ("generate", "curate-generate"),
     ("gate3", "curate-generate"), ("emit", "curate-emit"), ("gate4", "curate-emit"),
-    ("finalize", "wda-finalize"), ("done", None), ("stopped", None)])
+    ("deploy", "curate-deploy"), ("finalize", "wda-finalize"), ("done", None), ("stopped", None)])
 def test_next_names_the_stage_skill(make_run, capsys, stage, skill):
     run = make_run(stage=stage)
     out = ok(S, ["next", "--run", str(run)], capsys)
@@ -423,3 +423,17 @@ def test_gates_are_the_users_and_displays_are_verbatim():
     assert "Gate decisions are the user's: never approve or submit a change for them." in desc
     assert "the user types the change at Gate 3" in desc
     assert "don't say you will submit it" in skill
+
+
+def test_deploy_stage_asks_before_every_step_and_never_touches_credentials():
+    plugin = Path(__file__).resolve().parents[1]
+    text = " ".join((plugin / "references" / "stages" / "deploy.md").read_text().split())
+    assert "Each of the four steps is the user's decision, asked right before it runs" in text
+    assert "A yes to one step is never a yes to the next" in text
+    assert "without** `--confirmed`" in text and "Never pass `--confirmed` without the user's yes" in text
+    assert "Never read, print, echo or ask for a credential" in text and "never open a `.env` file" in text
+    assert "never pass `--overwrite-own-deploy` unless the user chose it" in text
+    skill = (plugin / "skills" / "curate-deploy" / "SKILL.md").read_text()
+    assert "disable-model-invocation: true" in skill and "references/stages/deploy.md" in skill
+    emit_md = (plugin / "references" / "stages" / "emit.md").read_text()
+    assert "**Approve & deploy**" in emit_md and "--deploy yes" in emit_md and "--deploy no" in emit_md

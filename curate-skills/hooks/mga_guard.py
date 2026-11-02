@@ -12,7 +12,13 @@ writes right before spawning the subagent and removes afterwards.
                                             must target paths inside allowed_dir
 
 The Bash check is a heuristic; /curate's snapshot diff (scratch.py verify-writes)
-is the backstop. Any error while checking a curate-mga call denies it.
+is the backstop. Any error while checking a curate-mga call denies it. curate-mga may
+never run deploy.py or monitor.py (deploying is the user's decision, step by step).
+
+For every other caller (the main session), one more heuristic: Bash commands that would
+print a credential are denied — `gh auth token`, `printenv`, a bare `env`/`set`/`export`,
+`echo $GH_PAT` (or any credential variable, any case), and reading a `.env*` / `*.env` file with
+cat/less/head/tail/grep/…. Credentials are read only inside deploy.py and monitor.py.
 Standard library only; runs on Python 3.9+.
 """
 import json
@@ -34,6 +40,15 @@ SAFE_SINKS = {"/dev/null", "/dev/stdout", "/dev/stderr"}
 GIT_READ_ONLY = {"status", "diff", "log", "show", "blame", "grep", "ls-files", "rev-parse"}
 SHELL_SEPARATORS = {";", "&&", "||", "|", "&", "\n", "(", ")"}
 REDIRECTS = {">", ">>", ">|", "&>", "&>>"}
+
+
+DEPLOY_SCRIPTS = re.compile(r"(^|[/\s'\"])(deploy|monitor)\.py\b")
+CREDENTIAL_VARS = {"GH_PAT", "GH_TOKEN", "GITHUB_TOKEN", "S3_ACCESSKEY", "S3_SECRETKEY", "AWS_ACCESSKEY",
+                   "AWS_SECRETKEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+                   "OW_APIKEY", "GCP_SECRETKEY", "SLURM_TOKEN"}  # compared upper-cased
+FILE_READERS = {"cat", "less", "more", "head", "tail", "bat", "strings", "grep", "egrep", "rg", "awk",
+                "sed", "xxd", "od", "nl", "tac", "sort", "uniq", "cut", "column", "jq"}
+PRINTERS = {"echo", "printf", "print"}
 
 
 class Deny(Exception):
@@ -188,9 +203,58 @@ def check_bash(command, cwd, allowed):
         cwd = check_segment(segment, cwd, allowed)
 
 
+def _is_env_file(arg):
+    base = os.path.basename(arg)
+    return base.startswith(".env") or base.endswith(".env")  # .env, .env.local, .envrc, prod.env
+
+
+def _credential_ref(arg):
+    for m in re.finditer(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)", arg):
+        if m.group(1).upper() in CREDENTIAL_VARS:
+            return m.group(1)
+    return None
+
+
+def check_credential_print(command):
+    """Main session: deny Bash that would print a credential. A heuristic (documented)."""
+    for tokens in split_segments(command):
+        args = [a for a in tokens if not re.match(r"^\d*(>>?|>\||&>>?|<|<<|<<<)$", a)]
+        while args and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", args[0]):
+            args = args[1:]
+        if not args:
+            continue
+        cmd, rest = os.path.basename(args[0]), args[1:]
+        if cmd == "gh" and rest[:2] == ["auth", "token"]:
+            raise Deny("`gh auth token` prints the GitHub token; deploy.py and monitor.py read it themselves")
+        if cmd == "gh" and rest[:2] == ["auth", "status"] and ("-t" in rest or "--show-token" in rest):
+            raise Deny("`gh auth status --show-token` prints the GitHub token")
+        if cmd == "printenv":
+            raise Deny("printenv would print credentials from the environment")
+        dumps_all = ((cmd == "env" and not non_options(rest)) or (cmd == "set" and not rest)
+                     or (cmd in ("export", "declare", "typeset") and all(a in ("-p", "-x", "-px") for a in rest)))
+        if dumps_all:
+            raise Deny("`{}` without arguments would print every environment variable, credentials "
+                       "included".format(cmd))
+        if cmd in PRINTERS:
+            ref = next((r for r in map(_credential_ref, rest) if r), None)
+            if ref:
+                raise Deny("this would print the credential ${}".format(ref))
+        if cmd in FILE_READERS and any(_is_env_file(a) for a in non_options(rest)):
+            raise Deny("this would print a .env file, which holds credentials; deploy.py and "
+                       "monitor.py read credentials from the environment themselves")
+
+
 def decide(data, env):
     """Return None to allow (no opinion), or a deny reason."""
     if not is_mga(data):
+        if data.get("tool_name") != "Bash":
+            return None
+        try:
+            check_credential_print(str((data.get("tool_input") or {}).get("command") or ""))
+        except Deny as e:
+            return str(e)
+        except Exception:  # the main session is not blocked by a parse problem
+            return None
         return None
     project = env.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd()
     try:
@@ -204,7 +268,11 @@ def decide(data, env):
                 raise Deny("{} call has no {}".format(tool, FILE_TOOLS[tool]))
             check_path(raw, cwd, allowed, tool)
         elif tool == "Bash":
-            check_bash(str(tool_input.get("command") or ""), cwd, allowed)
+            command = str(tool_input.get("command") or "")
+            if DEPLOY_SCRIPTS.search(command):
+                raise Deny("curate-mga may not run deploy.py or monitor.py; deploying is the user's "
+                           "decision, asked step by step in the main session")
+            check_bash(command, cwd, allowed)
         return None
     except Deny as e:
         return str(e)

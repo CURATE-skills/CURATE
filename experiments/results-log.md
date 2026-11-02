@@ -865,3 +865,79 @@ contains the approved code; every content file is dated 22:13:47, before the app
   bundle folder, in the original too. `tree_hash` counted it, so browsing a bundle in Finder
   would have made a deploy refuse; it now ignores OS metadata (`.DS_Store`, `._*`, `Thumbs.db`,
   `desktop.ini`, `__pycache__/`) — part of D1's changes, with a test.
+
+## 32. D1 build: curate-deploy (fakes only; nothing reached GitHub or S3)
+
+**What was built.**
+- **Gate 4** offers **Approve & deploy** / **Approve, no deploy** / **Stop here**
+  (`spec.py approve --gate 4 --deploy yes|no`; default no = straight to finalize, as before).
+  Approval records `bundle_hash` (sha256 of the bundle folder, OS metadata ignored) and
+  `deploy_choice`; both are in the Gate 4 snapshot.
+- **New stage `deploy`** (skill `curate-deploy`, stage file `references/stages/deploy.md`)
+  between emit and finalize. Its requirements: Gate 4 approved (not superseded) with
+  deploy = yes, a validated bundle for the current spec, a recorded bundle hash. Redoing emit or
+  an earlier stage clears `bundle_hash`, `deploy_choice` and `deploy` (the deploy log stays).
+- **`--start-at deploy --from-run <id>`**: a new run with that run's Gate 4-approved bundle. The
+  hash comes from the snapshot, or for runs approved before hashes existed from the source's
+  `state.json` (same bundle folder only, with its `bundle_hash_recorded` note); a bundle whose
+  hash differs is refused. Only from a run (not a bundle or file).
+- **`deploy.py publish|upload|register|invoke --run R [--confirmed] [--overwrite-own-deploy]`**
+  and `deploy.py status`. In order; a finished step is skipped. Without `--confirmed` a step
+  writes nothing and returns its plan (what, repo, branch, every path). Each step re-runs the
+  preflight (bundle hash required; earlier steps' paths must still be this deploy's), checks all
+  content for secrets before the first push, appends every written path to
+  `<run>/deploy/deploy-log.jsonl`, and records itself in `state.json` under `state.lock`. Publish
+  and upload use the contents API (ported from CURATE's PyGithub calls; messages tagged
+  `(curate-skills)`); register and invoke call CURATE's vendored `main`s, with their log lines
+  captured and redacted, keeping only the InvocationID/timestamp from the payload (which holds
+  the token). A failed step keeps the run at `deploy` with a resume command; retrying it needs
+  `--overwrite-own-deploy` (the user's choice). After invoke the run is **stopped** (stopped_from
+  finalize) with "Check Actions and S3; resume with /curate-skills:curate --resume <id> to
+  finalize." — saving to the catalog comes only after the user has checked the deployed run (until
+  D2's monitor exists). The preflight also refuses when `GITHUB_REPOSITORY`/`GITHUB_REF_NAME` are set
+  (CURATE's code would deploy there instead).
+- **Guard** (`hooks/mga_guard.py`): curate-mga may never run `deploy.py`/`monitor.py`; the main
+  session is denied Bash that would print a credential (`gh auth token`, `printenv`, bare
+  `env`/`set`/`export`, `echo $<credential>` in any case, reading a `.env` file) — a heuristic.
+- **Docs**: gates.md (Gate 4 options, deploy steps are the user's), emit.md, /curate SKILL.md
+  (description unchanged, 1001 characters), state-contract.md, stage-io.md, VENDORED.md.
+
+**Tests: 320 passed** (without `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` set);
+`claude plugin validate --strict` passes. New: the four steps in order against a fake GitHub that
+accepts writes (paths, commit tags, the uploaded deploy copy, deploy log, state, invocation id,
+no secret in any output, state, log or pushed content); unconfirmed steps write nothing; order and
+skipping; refusals before any write (changed bundle, no hash, wrong stage, no deploy choice,
+`GITHUB_REPOSITORY` set); a secret in one function file stops publish before the first push; a
+failed write leaves a resumable run whose retry is refused until `--overwrite-own-deploy`; spec
+side (Gate 4 choice, start at deploy and its refusals, rewind clears); guard (16 denied, 11
+allowed commands); the deploy stage file's rules.
+
+**Checked without side effects:** CURATE's vendored register/invoke modules import under
+`deploy.py`'s pinned deps (`FaaSr_py==0.1.13`, `PyGithub`, `requests`); the generated Actions file
+references only `GH_PAT`, `S3_AccessKey`, `S3_SecretKey`. A dry run of
+`spec.py start --at deploy --from-run 20261020-215732-corvallis-winter-weather` in the copy
+project (`~/curate-tests/weather-deploy`) previews the new run and creates nothing; for that, the
+copy's Gate 4 snapshot `bundle_dir` was repointed to the copied bundle (as its `state.json`
+already was). The original run is untouched.
+
+Diff: 15 files, +1010 / −62 (deploy.py +374, spec.py +108, guard +72, tests +367, docs).
+
+**Review fixes before committing D1** (user's three points):
+- The run-A copy's Gate 4 snapshot edit is recorded in the copy's own history (a `copy` /
+  `repointed` entry: what was copied, both `bundle_dir` values, the snapshot's sha256 after).
+  Root cause fixed: `--from-run` now takes the bundle folder from the source's `state.json` when
+  the snapshot's path differs and a folder of the same name exists there (a copied or moved run);
+  its content is still checked by hash, and the source is never changed. Tests: copied run with
+  the hash in the snapshot or only in state.json; a changed copy is refused; a differently named
+  folder is not taken.
+- Publish only pushes `functions/<fn>.py` for the functions in `FunctionGitRepo`, never a folder
+  listing, so OS metadata is never pushed; a test puts `.DS_Store`, `._*.py`, `__pycache__/` and
+  `Thumbs.db` in the bundle after approval: the hash still matches and only the function files
+  and the workflow JSON are pushed.
+- After invoke the run stops (above); `spec.py next` then names no skill, so /curate stops too.
+Tests: 325 passed (without `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`); plugin validates.
+- Follow-up: a moved bundle is accepted only when it matches a recorded hash (snapshot's or
+  state.json's); with neither, `--from-run` refuses (for deploy and finalize starts) and says how to
+  go on — approve Gate 4 again, put the bundle back, or record a checked hash. Never by folder name
+  alone. The guard now treats `.env*` (`.env.local`, `.envrc`, …) as well as `*.env` as credential
+  files. Tests: 333 passed.

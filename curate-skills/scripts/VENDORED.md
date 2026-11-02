@@ -78,7 +78,7 @@ Replaces the FGA's single temporary context directory with one folder per node, 
 | `cmd_harvest` | Put generated code, secrets and deps back into the spec | `agents/fga.py` 927-947 | follows |
 | `cmd_record` | Record MGA status, attempts and the stub-test tail | — | new |
 
-### `scripts/deploy.py` — curate-deploy (D0: `preflight` only)
+### `scripts/deploy.py` — curate-deploy (preflight, and from D1 the four steps)
 
 | Part | Purpose | Original | Relation |
 |---|---|---|---|
@@ -89,6 +89,9 @@ Replaces the FGA's single temporary context directory with one folder per node, 
 | `s3_check`, `boto3_s3` | Read-only S3: `head_bucket`, and one-key `list_objects_v2` on each prefix the run would write and on CURATE's own prefixes | client built as `faasr/runtime/s3_client.py` 64-83 | new |
 | `field_diff`, `deploy_diff`, `derived_changes` | Field-by-field diff of the deploy copy against the approved bundle, each with its reason; refuses any change outside `ALLOWED_DIFF` | — | new |
 | `read_deploy_log`, `own_paths`, `--overwrite-own-deploy` | Retrying a partial deploy: existing paths allowed only if this run's `deploy/deploy-log.jsonl` records them (same run, deploy name, repo/branch or bucket) and repo files still carry curate-skills' mark | — | new |
+| `put_file`, publish/upload in `deploy_step` | Create or update a file in the action repo (contents API), with the commit message `Add/update <fn> (curate-skills)` / `Add/update workflow payload <Name> (curate-skills)` | `agents/wda.py` 56-132 (`_upload_functions_to_github`, `_upload_workflow_json_to_github`: PyGithub `get_contents` + `update_file`/`create_file`, messages `… (faasr-agents)`) | ported (same API calls; urllib instead of PyGithub; path, branch and tag differ) |
+| `run_register`, `run_invoke` | Call the vendored `register_workflow.main(workflow_data=…)` and `invoke_workflow.main(workflow_path=…)` on the deploy copy; their log lines are captured and redacted; only `InvocationID`/`InvocationTimestamp` are kept from the payload (FaaSr adds the token to it) | `agents/wda.py` 135-157 (`_register_and_invoke`) | ported (split into two confirmed steps) |
+| `deploy_step`, `deploy_status`, `STEPS` | The order publish → upload → register → invoke; each step needs `--confirmed`, re-runs the preflight (bundle hash required; earlier steps' paths must still be this deploy's), checks every file for leaks before the first push, appends each written path to the deploy log, records the step in `state.json` (under `state.lock`); a finished step is skipped | `agents/wda.py` 270-278 (the step list: push code, then register & invoke) | adapted |
 | `preflight`, `_owner_of`, `preflight_summary` | Read-only: run/Gate 4/bundle checks, placeholders, native containers, env, token scopes, repo push + default branch, secret names, existing targets and their owner, CURATE's own files | `register_workflow.py` 49-85 (`verify_containers`); `cli.py` 368-382 (secret hints) | new |
 
 ### `scripts/leakcheck.py`
@@ -101,7 +104,7 @@ Run lock (`fcntl.flock` on `<run>/state.lock`), atomic JSON writes, and the inpu
 
 ### `hooks/mga_guard.py`
 
-PreToolUse write-scope guard for `curate-mga` subagents. New; no counterpart in the original.
+PreToolUse write-scope guard for `curate-mga` subagents; from D1 it also denies `curate-mga` any `deploy.py`/`monitor.py` call, and denies the main session Bash commands that would print a credential (`gh auth token`, `printenv`, a bare `env`/`set`/`export`, `echo $<credential>`, reading a `.env` file) — a heuristic. New; no counterpart in the original.
 
 ## Adapted prompt text
 
@@ -132,4 +135,5 @@ PreToolUse write-scope guard for `curate-mga` subagents. New; no counterpart in 
 - The revision classifier is applied by Claude in the main session using `classify.md`; mixed requests count as STRUCTURE (original: separate LLM call, ambiguous answers default to FUNCTION, no mixed-request rule).
 - Deployments are named `<WorkflowName><suffix>` (`deploy_name_suffix`, default `-cs`, never empty) with function files in `functions/<Name>-cs/`, so a curate-skills deployment never writes CURATE's `functions/<fn>.py`, `workflows/<Name>.json` or `.github/workflows/<Name>-<action>.yml`; each action's S3 `folder` argument becomes `<folder>-cs` in the deploy copy (FaaSr's logs go to `FaaSrLog/<Name>-cs/` by the name alone), so the run never writes CURATE's S3 outputs or logs. The preflight refuses any path (repo or S3) that lacks the suffix or already exists — including the deployment's own earlier files — and a workflow with external S3 inputs, which the renamed folder would not hold. Emit's `<FAASR_…>` placeholders are filled from the environment in the deploy copy. The approved bundle itself is unchanged.
 - **Deploy-copy rule.** The deploy copy may differ from the Gate 4-approved bundle only in `WorkflowName` (suffix), `ActionList.<action>.Arguments.folder` (suffix), `FunctionGitRepo.<fn>` (per-deployment folder) and fields that held an emit `<FAASR_…>` placeholder; any other difference is refused. The preflight shows every difference field by field (approved value, deploy value, reason), plus the locations that change only through the name (S3 log prefix, repo paths). CURATE deploys its bundle unchanged.
+- **Deploying asks before each step.** CURATE deploys in one go after Gate 4 approval (push code, upload, register, invoke). curate-skills asks at Gate 4 whether to deploy at all (**Approve & deploy** / **Approve, no deploy**), then asks the user before each of the four steps; `deploy.py <step>` writes nothing without `--confirmed`. A failed step keeps the run at `deploy` with a resume command (CURATE ends the run). After invoke the run stops, to be resumed into finalize by the user once they have checked the deployed run (CURATE monitors and goes on to its Gate 5). Gate 4 approval records the bundle's hash; every step refuses a bundle that changed since. The function files pushed are the approved bundle's files (CURATE pushes each node's code; the bundle file adds emit's 3-line comment header).
 - **Retrying a partial deploy** (`--overwrite-own-deploy`, off by default): an existing path is allowed only if this run's own deploy log records it for the same run, deploy name and repo/branch or bucket, and (repo) it still carries curate-skills' mark. CURATE overwrites its files on every deploy.

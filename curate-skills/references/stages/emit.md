@@ -19,10 +19,15 @@ step 3.
    goes back to `reuse`), then finish as `gates.md` "After the gate decision" says. Otherwise show
    the error at Gate 4 and ask.
 3. **Gate 4**: `spec.py show --run <run> --gate 4`, print its `markdown` verbatim as a message — never re-formatted (the user does not see tool results), then ask
-   with AskUserQuestion — the returned `question` and `header`, options Approve / Stop here, each
-   with the returned `compact` as `preview` — every time, also after a change request or a
-   question from the user (`<plugin>/references/gates.md`, "Asking at a gate").
-   - Approve → `spec.py approve --run <run> --gate 4`; for each id in `reused_catalog_ids`,
+   with AskUserQuestion — the returned `question` and `header`, options **Approve & deploy** /
+   **Approve, no deploy** / **Stop here**, each with the returned `compact` as `preview` —
+   every time, also after a change request or a question from the user
+   (`<plugin>/references/gates.md`, "Asking at a gate").
+   - Approve & deploy → `spec.py approve --run <run> --gate 4 --deploy yes` (the run goes to the
+     deploy stage, which asks again before each of its four steps).
+   - Approve, no deploy → `spec.py approve --run <run> --gate 4 --deploy no` (straight to
+     finalize, as before).
+   - After either approval: for each id in `reused_catalog_ids`,
      `catalog.py increment-usage --run <run> --id <id>`.
    - Changes → classify with `<plugin>/references/prompts/classify.md`, then
      `spec.py directive --run <run> --gate 4 --text "<verbatim>" --structural true|false`.

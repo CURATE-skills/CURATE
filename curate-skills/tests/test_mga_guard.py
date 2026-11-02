@@ -161,3 +161,37 @@ def test_denials_are_logged_and_debug_log(project):
     lines = [json.loads(l) for l in (proj / ".curate" / "mga_guard.log").read_text().splitlines()]
     assert lines[0]["agent_type"] == "curate-skills:curate-mga" and "x" in lines[0]["reason"]
     assert lines[1] == {**lines[1], "debug": True, "decision": "allow", "tool": "Write"}
+
+
+# ── deploying: never by curate-mga; credentials never printed by the main session ──
+
+@pytest.mark.parametrize("cmd", [
+    "uv run --quiet /p/scripts/deploy.py publish --run r1 --confirmed",
+    "python3 scripts/monitor.py poll --run r1",
+    "cd /p/scripts && uv run deploy.py preflight --run r1",
+])
+def test_mga_may_not_deploy(project, cmd):
+    proj, _ = project
+    assert "may not run deploy.py or monitor.py" in guard(proj, "Bash", {"command": cmd})
+
+
+@pytest.mark.parametrize("cmd", [
+    "gh auth token", "gh auth status --show-token", "printenv", "printenv GH_PAT", "env", "env | grep S3",
+    "set", "export", "export -p", "declare -x", "echo $GH_PAT", "echo \"${S3_SecretKey}\"",
+    "printf '%s' $S3_ACCESSKEY", "cat ~/.config/curate/.env", "head -3 .env", "grep S3 prod.env",
+    "ls && cat .env", "cat .env.local", "less config/.env.production", "tail .envrc",
+])
+def test_main_session_may_not_print_credentials(project, cmd):
+    proj, _ = project
+    assert guard(proj, "Bash", {"command": cmd}, agent=None)
+
+
+@pytest.mark.parametrize("cmd", [
+    "uv run --quiet /p/scripts/deploy.py publish --run r1 --confirmed",
+    "env -u CLAUDE_CODE_DISABLE_BACKGROUND_TASKS uv run pytest", "set -a", "export FOO=1",
+    "echo $HOME", "cat README.md", "ls .env", "git status", "gh auth status", "cat env.md", "cat my.environment",
+    "(set -a; . ~/.config/curate/.env; set +a; uv run deploy.py preflight --run r)",
+])
+def test_main_session_ordinary_commands_pass(project, cmd):
+    proj, _ = project
+    assert guard(proj, "Bash", {"command": cmd}, agent=None) is None

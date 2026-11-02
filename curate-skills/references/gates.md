@@ -10,6 +10,7 @@ CURATE has five human gates. Each stage skill ends at its own gate (curate-reuse
 | `curate-resolve` | `resolve`, `gate2` | Gate 2 | `fca_resolve` (WCA part), `gate2_candidates` |
 | `curate-generate` | `generate`, `gate3` | Gate 3 | `fga_generate`, `gate3_code_review` |
 | `curate-emit` | `emit`, `gate4` | Gate 4 | `gate4_deploy` (validate) |
+| `curate-deploy` | `deploy` | four confirmed steps (no gate) | `gate4_deploy` (`_register_and_invoke`, after the upload steps) |
 | `wda-finalize` | `finalize` | Gate 5 | `gate5_output_review` (save) |
 
 ## Asking at a gate
@@ -24,8 +25,9 @@ asked to see something, and after the user answered in chat:
    its `markdown` verbatim — not your own rendering of it.
 2. **Ask with AskUserQuestion whenever it is available** — never switch to plain chat because the
    previous answer came in chat or through "Other". Use the returned `question` and `header`;
-   options **Approve** and **Stop here**, each with the returned `compact` as its `preview`, so
-   the table is in the question itself. Typing in "Other" requests changes.
+   options **Approve** and **Stop here** (Gate 4: **Approve & deploy**, **Approve, no deploy**,
+   **Stop here**), each with the returned `compact` as its `preview`, so the table is in the
+   question itself. Typing in "Other" requests changes.
 3. If the answer is not a decision (e.g. "show me the table", "show me the code"), show what was
    asked and go back to step 2 — with AskUserQuestion again.
 
@@ -46,7 +48,7 @@ stops; anything else is a change request. Never approve on the user's behalf.
 | 1 | `spec.py approve --gate 1` → `reuse` | `spec.py directive --gate 1 --text "<verbatim>"`, then redo the skeleton in this same stage (a refinement; not counted toward the cap) |
 | 2 | `spec.py approve --gate 2` → `generate` | classify (`prompts/classify.md`), `spec.py directive --gate 2 --text "<verbatim>" --structural true\|false` → `skeleton` or `reuse` |
 | 3 | `spec.py approve --gate 3` → `emit` | as Gate 2 with `--gate 3`; functions that still fit come back `[cached]` |
-| 4 | `spec.py approve --gate 4` → `finalize` | as Gate 2 with `--gate 4` |
+| 4 | `spec.py approve --gate 4 --deploy yes` → `deploy`; `--deploy no` → `finalize` | as Gate 2 with `--gate 4` |
 
 - **Cap.** If `directive` returns `"cap_reached": true`, nothing was changed. Ask: approve the
   current version as-is (`approve`), stop, or raise the cap (`spec.py set-cap --max N`, then repeat
@@ -65,6 +67,10 @@ stops; anything else is a change request. Never approve on the user's behalf.
   is available (options **Yes, rewind** / **No**; chat only without the tool). Only after a clear yes:
   `spec.py begin --run <run> --stage <S> --rewind --confirmed`. Never pass `--confirmed` without
   asking; `begin` refuses a rewind without it.
+
+**Deploy steps are the user's too.** curate-deploy asks before each of its four steps (publish,
+upload, register, invoke); `deploy.py <step> --confirmed` only after the user's yes to that step in
+their latest answer (`stages/deploy.md`).
 
 ## After the gate decision
 
