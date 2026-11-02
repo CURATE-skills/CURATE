@@ -1032,3 +1032,22 @@ report-only on a `done` run leaves every file byte-identical; finalize needs mon
 **Checked without side effects:** `monitor.py` loads under its pinned deps; on run
 `20261101-172823` without a token it refuses (exit 2), and its `state.json` (sha256 `b14b985e…`)
 and folder tree hash (`671fd39d…`) are unchanged.
+
+## 35. First real monitor check: run 20261101-172823 (report-only)
+
+User ran `monitor.py poll --run …/20261101-172823-corvallis-winter-weather-comparison --report-only`
+with their `.env`, at `6f9798c`. Read-only; the run was at `done`.
+
+- **Result: success** in 0.2 min (one poll). Invocation `2026-11-01-17-33-10`, dispatched
+  2026-11-02T01:33:09Z, deployment `corvallis-winter-weather-comparison-cs` in
+  `laurakuo1006/CURATE-test`.
+- **Actions:** 5/5 runs, all `success`, **all matched by InvocationID** — the job logs do contain
+  it, so the time-only fallback was not needed: download 1/1, process-weather-variable 3/3, plot
+  1/1.
+- **FaaSr logs:** every rank `completed`.
+- **Outputs:** 5/5 present and fresh under `s3://test-curate/corvallis_winter_weather-cs/`:
+  `USC00351862_daily.csv` (13,127,314 bytes), `winter_comparison_1.csv` (2,239),
+  `winter_comparison_2.csv` (2,732), `winter_comparison_3.csv` (2,640),
+  `corvallis_winter_comparison.png` (297,097). The plot itself was not judged.
+- **Unchanged:** the run's `state.json` (sha256 `b14b985e…`) and folder tree hash (`671fd39d…`)
+  are identical before and after; no `deploy/monitor/` folder was created.
