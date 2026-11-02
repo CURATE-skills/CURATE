@@ -1109,3 +1109,63 @@ All 5 saved (none skipped), byte counts equal the S3 sizes; `manifest.json` reco
 the run folder; run 172823's `state.json` (`b14b985e…`) and folder hash (`671fd39d…`) are unchanged.
 The invocation ran from dispatch (01:33:09Z) to the plot (01:35:47Z) in about 2.6 minutes, so a
 1-minute monitor budget should time out mid-run as intended.
+
+## 38. Live D2 test: invoke only, timeout at 1 min, resume, success (run 20261101-185129)
+
+User's session (`~/curate-tests/weather-deploy`, `.env` loaded, `CURATE_MONITOR_MINUTES=1`, at
+`67e04f3`): `/curate-skills:curate --start-at deploy --from-run
+20261101-172823-corvallis-winter-weather-comparison` → new run
+`20261101-185129-corvallis-winter-weather-comparison`. Checked from the run's state.json and the
+session transcript (`e4607aa6-…jsonl`).
+
+**Start and invoke only.**
+- "Start this run?" → **Yes** (02:51:43Z), then `spec.py confirm-start` recorded the deploy
+  choice (`deploy-confirmed`; the source's own choice was `yes`).
+- `deploy.py reuse` without `--confirmed` (02:51:59Z) → the preflight summary with the diff, and
+  the identical files. Question "Invoke only: start corvallis-winter-weather-comparison-cs again
+  (nothing is written to GitHub)?" at 02:52:26Z → **Yes, invoke** at 02:52:37Z → `deploy.py reuse
+  … --confirmed` at 02:52:39Z. That is the only `--confirmed` in the session, and it came after the
+  user's yes in that turn.
+- publish / upload / register recorded as `reused_from: 20261101-172823…`, `verified:
+  byte-identical`; nothing was written to GitHub (this run's deploy log has only the two invoke S3
+  prefixes). Invocation **`2026-11-01-18-52-58`**, dispatched 02:52:57Z.
+
+**Monitor, first call (1 min, from `CURATE_MONITOR_MINUTES`).** Interim polls:
+
+| At (s) | Runs concluded | Outputs present / stale / missing |
+|---|---|---|
+| 4 | 0/5 | 0 / 5 / 0 |
+| 17 | 0/5 | 0 / 5 / 0 |
+| 31 | 0/5 | 0 / 5 / 0 |
+| 45 | 0/5 | 1 / 4 / 0 (station CSV rewritten at 02:53:42Z) |
+| 60 | 1/5 | 1 / 4 / 0 |
+
+→ **timeout** at 02:54:07Z; the run stopped (`stopped_from: monitor`), history `timed-out`. The
+previous invocation's files showed as stale until rewritten, as intended.
+
+**Resume.** `/curate-skills:curate-monitor --run 20261101-185129… --minutes 10` (02:57:31Z) →
+`begin` resumed into monitor (no redeploy) → `monitor.py poll … --minutes 10` → one poll: 5/5
+runs concluded, 5/5 outputs present → **success** at 02:57:50Z, stage `finalize`.
+- Actions: download 1/1, process-weather-variable 3/3, plot 1/1, all `success`, **all matched by
+  InvocationID** (7 runs confirmed in `matches`; see the plot note below). FaaSr logs: every rank
+  `completed`.
+- Outputs fresh: `USC00351862_daily.csv` 13,127,314 B (02:53:42Z), `winter_comparison_1/2/3.csv`
+  2,239 / 2,732 / 2,640 B (02:54:34–42Z), `corvallis_winter_comparison.png` 297,097 B (02:55:32Z).
+  Same sizes as run 172823's backed-up outputs (#37). The plot was not judged.
+- Monitoring used 1.0 + 0.24 min (6 polls; the budget restarted on resume, as designed).
+
+**Was the `--minutes 10` override recorded in the run's history? No.** It is recorded in
+`state.monitor.settings` (`minutes: 10.0`, `minutes_source: "flag (changed on resume)"`) and was
+returned as `settings_changed` by that poll, but no `history` entry records it — history has only
+`timed-out` and `succeeded`. (Gap; not changed.)
+
+**Finding: plot is dispatched three times.** Each `process-weather-variable` rank invokes
+`plot-weather-comparison`; FaaSr's fan-in lets only the last one do the work. The monitor
+confirmed all three plot runs by InvocationID, used the **oldest** for the Actions check, and
+reported the other two as `extra_runs: 2`. Here all three concluded `success`, and the FaaSr
+plot log (`.done` put, "no triggers") and the fresh PNG confirm the real run. But if the working
+plot run failed while an early one succeeded, the Actions check alone would pass; the FaaSr
+`[ERROR]` check and the stale or missing PNG would still fail it. (Not changed; for later.)
+
+**Not exercised live:** a final stale or missing output, a failed action, an unconfirmed match —
+covered by fake tests only.
