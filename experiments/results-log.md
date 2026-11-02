@@ -833,3 +833,35 @@ builds and will serve curate-monitor's; the preflight summary says which spellin
 leak checks (`leakcheck`, `emit.find_leaked_secrets`) and the stub-test env scrub now match secret
 names without regard to case, so an upper-case spelling is never missed. Tests: camel only, upper
 only, both equal, both different, plus leak/scrub of the upper-case name; 265 passed.
+
+## 31. Real preflight: ready (run A copy → laurakuo1006/CURATE-test)
+
+User's `.env`, read-only, run on the copy `~/curate-tests/weather-deploy` of run A
+(`20261020-215732-corvallis-winter-weather`), at `d35bcf9`. Nothing was written to GitHub or S3.
+
+- **Ready.** Deploys as `corvallis-winter-weather-comparison-cs` to `laurakuo1006/CURATE-test`,
+  branch `main` (token: `GH_PAT`, accepted; push allowed; default branch `main`).
+- All 8 repo paths new: `functions/corvallis-winter-weather-comparison-cs/{download_ghcn_station,
+  plot_weather_comparison,process_weather_variable}.py`,
+  `workflows/corvallis-winter-weather-comparison-cs.json`, three
+  `.github/workflows/corvallis-winter-weather-comparison-cs-<action>.yml`.
+- Both S3 prefixes new in bucket `test-curate` (us-east-1): `corvallis_winter_weather-cs/` and
+  `FaaSrLog/corvallis-winter-weather-comparison-cs/`. S3 keys read from `S3_AccessKey`/`S3_SecretKey`.
+- GitHub secrets `GH_PAT`, `S3_AccessKey`, `S3_SecretKey` present (the repo stores the S3 ones as
+  `S3_ACCESSKEY`/`S3_SECRETKEY`; matched case-insensitively, #30).
+- Deploy copy vs approved bundle: 12 fields, all allowed — 3 `folder` arguments (+`-cs`), 5
+  placeholders filled (`ComputeServers.GH.{UserName,ActionRepoName}`,
+  `DataStores.S3.{Bucket,Endpoint,Region}`), 3 `FunctionGitRepo` paths (per-deployment folder),
+  `WorkflowName`; plus 4 derived locations (S3 log prefix, repo paths).
+- Note: no bundle hash recorded at approval (run A predates deploy).
+
+**Bundle hash recorded before D1** (in the copy's `state.json` only; the original run is not
+touched). The Gate 4 snapshot `history/005-gate4-approve.json` holds no hash, so the bundle was
+checked against what it does hold: `spec.json` equals the snapshot's spec; each function file
+contains the approved code; every content file is dated 22:13:47, before the approval
+(2026-10-20T22:14:11); the copy equals the original run's bundle. `bundle_hash` =
+`57aae69c…4273`, with `bundle_hash_recorded` saying how. D1 refuses to deploy if it changes.
+- Found while checking: a Finder `.DS_Store` (dated 00:10:37, after the approval) sits in the
+  bundle folder, in the original too. `tree_hash` counted it, so browsing a bundle in Finder
+  would have made a deploy refuse; it now ignores OS metadata (`.DS_Store`, `._*`, `Thumbs.db`,
+  `desktop.ini`, `__pycache__/`) — part of D1's changes, with a test.
