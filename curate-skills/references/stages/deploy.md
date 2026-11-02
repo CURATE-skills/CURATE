@@ -42,10 +42,8 @@ are skipped). For that step:
    `deploy.py <step> --run <run> --confirmed`. Anything else is not a yes: **Stop here** → step 4
    below; a question → answer it, then ask again (3).
 5. Show the result in one line, then go back to `deploy.py status` for the next step.
-   After invoke the run is **stopped**: print the returned `message` exactly (the deploy name,
-   the `invocation_id`, "Check Actions and S3; resume with … to finalize.") and end. Do not go
-   on to finalize: saving to the catalog comes only after the user has checked that the
-   deployed run worked and resumes the run themselves.
+   After invoke, print the returned `message` (the deploy name and `invocation_id`); the run
+   moves on to `monitor`, which checks the Actions runs, FaaSr logs and outputs read-only.
 
 Never pass `--confirmed` without the user's yes to that step in their latest answer, and never
 pass `--overwrite-own-deploy` unless the user chose it (below).
@@ -67,5 +65,5 @@ finished ones are recorded and skipped). Nothing is undone.
 
 ## 5. Done
 
-The run is stopped after invoke (see 2.5). Under /curate, `spec.py next` then names no skill, so
-/curate summarizes and stops; it does not resume the run itself.
+Finish as `<plugin>/references/gates.md` "After the gate decision" says; `spec.py next` names
+`curate-monitor`.

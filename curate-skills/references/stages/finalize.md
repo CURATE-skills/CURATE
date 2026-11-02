@@ -7,7 +7,15 @@ The local stand-in for CURATE's post-run Workflow Deployment Agent (the original
 Precondition: `spec.py begin --run <run> --stage finalize` returned `ok` (it checked that the
 bundle was validated and built from the current spec).
 
-1. **Summarize.** `spec.py summary --run <run>`; print its `markdown` exactly.
+1. **Summarize.** `spec.py summary --run <run>`; print its `markdown` exactly. For a deployed run
+   it includes the monitor summary (Actions, outputs, the note that output correctness is not
+   judged).
+   - **Unconfirmed match.** If `monitor.py status --run <run>` shows `result`
+     `success_unconfirmed` and `accepted` is empty, ask first, with AskUserQuestion — question
+     "Some Actions runs were matched to this invocation by time only. Accept them as this
+     run's?", header "Gate 5", options **Accept the unconfirmed match** / **Stop here**. Only
+     after Accept: `monitor.py accept-unconfirmed --run <run> --confirmed`. Stop →
+     `spec.py set-stage --run <run> --stage stopped`. Saving is refused until it is accepted.
 2. **Preview the save** (nothing is written yet):
    - `catalog.py save-functions --run <run> --only-verified --dry-run`
    - `catalog.py save-workflow --run <run> --dry-run`

@@ -318,6 +318,22 @@ def export_entries(cat: Catalog, out: Path, ids: Optional[list[str]]) -> dict:
     return {"ok": not missing, "out": str(out.resolve()), "exported": exported, "missing_ids": missing}
 
 
+def deployed_run_problem(state: dict) -> Optional[str]:
+    """A deployed run is saved only after its monitor result is success, or success with an
+    unconfirmed match that the user accepted at Gate 5."""
+    if state.get("deploy_choice") != "yes" or not state.get("deploy"):
+        return None
+    mon = state.get("monitor") or {}
+    if mon.get("result") == "success":
+        return None
+    if mon.get("result") == "success_unconfirmed":
+        return None if mon.get("accepted") else (
+            "the deployed run's Actions runs were matched by time only; the user has to accept that at "
+            "Gate 5 (monitor.py accept-unconfirmed) before anything is saved")
+    return (f"the deployed run has not been confirmed to work (monitor result {mon.get('result') or 'none'}); "
+            "nothing is saved")
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def main(argv=None) -> int:
@@ -405,6 +421,10 @@ def run_command(args, root: Path) -> dict:
         e.usage_count += 1
         (cat.save_workflow if args.workflow else cat.save_function)(e)
         return {"ok": True, "id": e.id, "usage_count": e.usage_count}
+    if cmd in ("save-functions", "save-workflow") and args.run and not args.dry_run:
+        problem = deployed_run_problem(json.loads((Path(args.run) / "state.json").read_text()))
+        if problem:
+            raise InputError(problem)
     if cmd == "save-functions":
         if args.only_verified and not args.run:
             raise InputError("--only-verified needs --run (stub-test status lives in state.json)")

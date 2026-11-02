@@ -11,6 +11,7 @@ CURATE has five human gates. Each stage skill ends at its own gate (curate-reuse
 | `curate-generate` | `generate`, `gate3` | Gate 3 | `fga_generate`, `gate3_code_review` |
 | `curate-emit` | `emit`, `gate4` | Gate 4 | `gate4_deploy` (validate) |
 | `curate-deploy` | `deploy` | four confirmed steps (no gate) | `gate4_deploy` (`_register_and_invoke`, after the upload steps) |
+| `curate-monitor` | `monitor` | a result (success / success, unconfirmed match / failure / timeout) | `_monitor_execution` (`WorkflowRunner`) |
 | `wda-finalize` | `finalize` | Gate 5 | `gate5_output_review` (save) |
 
 ## Asking at a gate

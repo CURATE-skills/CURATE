@@ -989,19 +989,15 @@ def deploy_step(run: str, step: str, suffix: str, gh: GitHub | None, token: str 
             st.setdefault("history", []).append({
                 "gate": "deploy", "decision": "deployed", "text": f"{new} invocation {detail['invocation_id']}",
                 "structural": None, "ts": _now_iso()})
-            # Until curate-monitor exists (D2), the run stops here: saving to the catalog comes only
-            # after the user has checked that the deployed run worked.
-            st.update(stage="stopped", stopped_from="finalize", begun=None)
+            st.update(stage="monitor", begun=None)  # curate-monitor checks the run (read-only)
     s = _update_state(run_p, finish)
     done = [x for x in STEPS if s["deploy"]["steps"].get(x, {}).get("ok")]
     nxt = next((x for x in STEPS if x not in done), None)
     out = {**base, "ok": True, "done": done, "next_step": nxt, **detail, "next_stage": s["stage"]}
     if step == "invoke":
-        resume = f"/curate-skills:curate --resume {s['run_id']}"
-        out.update(stopped=True, resume_command=resume,
-                   resume_stage_command=f"/curate-skills:wda-finalize --run {s['run_id']}",
-                   message=f"Deployed: {new}, invocation {detail['invocation_id']}. The run is stopped. Check "
-                           f"Actions and S3; resume with {resume} to finalize.")
+        out.update(next_skill="curate-skills:curate-monitor",
+                   message=f"Deployed: {new}, invocation {detail['invocation_id']}. Next: curate-monitor checks "
+                           "the Actions runs, FaaSr logs and outputs (read-only).")
     return out
 
 

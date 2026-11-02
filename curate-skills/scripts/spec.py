@@ -81,7 +81,7 @@ DEFAULT_STUBTEST_MODE = "strict"
 STUBTEST_MODES = ("strict", "parity")
 DEFAULT_MAX_ITERATIONS = 5
 STAGES = ("skeleton", "gate1", "reuse", "resolve", "gate2", "generate", "gate3",
-          "emit", "gate4", "deploy", "finalize", "done", "stopped")
+          "emit", "gate4", "deploy", "monitor", "finalize", "done", "stopped")
 # Stage skills, in pipeline order, with the run `stage` values each one owns.
 PIPELINE = (
     ("skeleton", ("skeleton", "gate1"), "curate-skeleton"),
@@ -90,6 +90,7 @@ PIPELINE = (
     ("generate", ("generate", "gate3"), "curate-generate"),
     ("emit", ("emit", "gate4"), "curate-emit"),
     ("deploy", ("deploy",), "curate-deploy"),
+    ("monitor", ("monitor",), "curate-monitor"),
     ("finalize", ("finalize",), "wda-finalize"),
 )
 STAGE_NAMES = tuple(p[0] for p in PIPELINE)
@@ -1336,6 +1337,8 @@ def cmd_import(args) -> dict:
     if stage == "deploy":
         raise InputError("deploying needs a bundle approved at Gate 4 in a run: start from that run "
                          "with --start-at deploy --from-run <run_id>, or import at emit and approve Gate 4")
+    if stage == "monitor":
+        raise InputError("monitoring watches a deployed run: /curate-skills:curate-monitor --run <run_id>")
     if stage == "finalize":
         raise InputError("starting at finalize from files is not supported: a bundle has no stub-test "
                          "results, so nothing could be saved as verified. Use --run on the run that "
@@ -1489,7 +1492,8 @@ def _superseded_by(history: list, approval_index: int, gate: int) -> Optional[di
 
 def _redoes(at: str) -> list[str]:
     """The stages a run started at `at` goes through; deploy only if chosen at Gate 4."""
-    return [n if n != "deploy" or at == "deploy" else "deploy (if chosen at Gate 4)"
+    cond = {"deploy": "deploy (if chosen at Gate 4)", "monitor": "monitor (if deployed)"}
+    return [cond[n] if n in cond and at not in ("deploy", "monitor") else n
             for n in STAGE_NAMES[STAGE_NAMES.index(at):]]
 
 
@@ -1727,6 +1731,9 @@ def cmd_start(args) -> dict:
         out = _start_via_import(args, "skeleton", args.sketch_file, "sketch", args.sketch_file)
     elif args.from_file:
         out = _start_via_import(args, at, args.from_file, "file", args.from_file)
+    elif at == "monitor":
+        raise InputError("monitoring is not a start point: it watches a run that was deployed — "
+                         "/curate-skills:curate-monitor --run <run_id> (or deploy again with --start-at deploy)")
     elif at == "deploy" and not args.from_run:
         raise InputError("deploying starts from a run whose Gate 4 was approved: --start-at deploy "
                          "--from-run <run_id> (a bundle or file has no Gate 4 approval)")
@@ -1791,7 +1798,7 @@ def start_summary(at: str, p: dict) -> str:
 # ── stages: next / require / begin / end ─────────────────────────────────────
 
 # Fields a stage (and everything after it) produces; cleared on a fresh entry.
-DEPLOY_OUTPUTS = ("bundle_hash", "deploy_choice", "deploy")
+DEPLOY_OUTPUTS = ("bundle_hash", "deploy_choice", "deploy", "monitor")
 STAGE_OUTPUTS = {
     "skeleton": ("enriched_spec", "enriched_basis", "spec_basis", "candidates", "mga",
                  "validation", "bundle_dir") + DEPLOY_OUTPUTS,
@@ -1800,7 +1807,8 @@ STAGE_OUTPUTS = {
     "resolve": ("spec_basis", "mga", "validation", "bundle_dir") + DEPLOY_OUTPUTS,
     "generate": ("mga", "validation", "bundle_dir") + DEPLOY_OUTPUTS,
     "emit": ("validation", "bundle_dir") + DEPLOY_OUTPUTS,
-    "deploy": (),  # what was deployed stays recorded (the deploy log is in <run>/deploy/)
+    "deploy": ("monitor",),  # what was deployed stays recorded (the deploy log is in <run>/deploy/)
+    "monitor": (),
     "finalize": (),
 }
 _EMPTY = {"mga": {}, "candidates": []}
@@ -1910,7 +1918,17 @@ def require_problems(s: dict, name: str, env=None) -> list[str]:
         if not s.get("bundle_hash"):
             out.append(f"no bundle hash was recorded at Gate 4 — approve Gate 4 again ({_run_cmd(s, 'emit')})")
         return out
+    if name == "monitor":
+        dep = s.get("deploy") or {}
+        if not (dep.get("steps") or {}).get("invoke", {}).get("ok") or not dep.get("invocation_id"):
+            out.append(f"nothing to monitor: the workflow was not started — run {_run_cmd(s, 'deploy')}")
+        return out
     if name == "finalize":
+        if s.get("deploy_choice") == "yes" and s.get("deploy"):
+            mon = s.get("monitor") or {}
+            if mon.get("result") not in ("success", "success_unconfirmed"):
+                out.append("the deployed run has not been confirmed to work (monitor result "
+                           f"{mon.get('result') or 'none'}) — run {_run_cmd(s, 'monitor')}")
         v = s.get("validation") or {}
         if not v.get("ok"):
             out.append(f"no validated bundle — run {_run_cmd(s, 'emit')}")
@@ -2210,6 +2228,12 @@ def summary_md(s: dict) -> str:
     ext = external_inputs(spec)
     out += ["", "Files to upload before running:"] + (
         [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
+    mon = s.get("monitor") or {}
+    if mon.get("summary"):
+        out += ["", mon["summary"]]
+        if mon.get("result") == "success_unconfirmed":
+            out.append("- Unconfirmed match " + ("**accepted** by the user" if mon.get("accepted")
+                                                 else "**not accepted yet** (Gate 5 asks first)"))
     hist = s.get("history") or []
     out += ["", "Decisions:"] + ([
         f"- Gate {h['gate']}: {h['decision']}" + (f" — {h['text']}" if h.get("text") else "")

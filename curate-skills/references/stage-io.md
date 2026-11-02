@@ -15,7 +15,8 @@ produces it.
 | generate | a resolved spec: inputs/outputs on every node, no `check` errors, a description for every function to generate, resolved from the current reuse decisions; plus the foreground setting when anything is generated | curate-resolve |
 | emit | code for every function, generated for the current spec | curate-generate |
 | deploy | Gate 4 approved with Approve & deploy, a validated bundle for the current spec, its recorded hash | curate-emit |
-| finalize | a validated bundle built from the current spec | curate-emit |
+| monitor | the deploy stage started the workflow (InvocationID recorded) | curate-deploy |
+| finalize | a validated bundle built from the current spec; after a deploy, a monitor result of success (or success with an unconfirmed match) | curate-emit, curate-monitor |
 
 ## Start points (`/curate --start-at <stage>`)
 

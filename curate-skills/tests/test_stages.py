@@ -45,7 +45,7 @@ def foreground(monkeypatch):
     ("skeleton", "curate-skeleton"), ("gate1", "curate-skeleton"), ("reuse", "curate-reuse"),
     ("resolve", "curate-resolve"), ("gate2", "curate-resolve"), ("generate", "curate-generate"),
     ("gate3", "curate-generate"), ("emit", "curate-emit"), ("gate4", "curate-emit"),
-    ("deploy", "curate-deploy"), ("finalize", "wda-finalize"), ("done", None), ("stopped", None)])
+    ("deploy", "curate-deploy"), ("monitor", "curate-monitor"), ("finalize", "wda-finalize"), ("done", None), ("stopped", None)])
 def test_next_names_the_stage_skill(make_run, capsys, stage, skill):
     run = make_run(stage=stage)
     out = ok(S, ["next", "--run", str(run)], capsys)
@@ -437,3 +437,18 @@ def test_deploy_stage_asks_before_every_step_and_never_touches_credentials():
     assert "disable-model-invocation: true" in skill and "references/stages/deploy.md" in skill
     emit_md = (plugin / "references" / "stages" / "emit.md").read_text()
     assert "**Approve & deploy**" in emit_md and "--deploy yes" in emit_md and "--deploy no" in emit_md
+
+
+def test_monitor_stage_is_read_only_and_states_the_final_rules():
+    plugin = Path(__file__).resolve().parents[1]
+    text = " ".join((plugin / "references" / "stages" / "monitor.md").read_text().split())
+    assert "never writes to GitHub or S3 and never deploys again" in text
+    assert "written after the dispatch" in text and "**stale**" in text
+    for result in ("`success`", "`success_unconfirmed`", "`failure`", "`timeout`"):
+        assert result in text
+    assert "Job-log text is never shown or saved" in text and "never open a `.env` file" in text
+    assert "--config-minutes '${user_config.monitor_minutes}'" in text
+    skill = (plugin / "skills" / "curate-monitor" / "SKILL.md").read_text()
+    assert "disable-model-invocation: true" in skill and "references/stages/monitor.md" in skill
+    fin = " ".join((plugin / "references" / "stages" / "finalize.md").read_text().split())
+    assert "**Accept the unconfirmed match**" in fin and "accept-unconfirmed --run <run> --confirmed" in fin

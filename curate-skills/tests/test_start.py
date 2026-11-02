@@ -90,7 +90,7 @@ def test_dry_run_prints_what_will_be_used_and_creates_nothing(source_run, capsys
                       "--existing-code", "ignore", "--dry-run")
     assert code == 0 and out["dry_run"] and sorted(source_run.parent.iterdir()) == runs
     assert out["uses"].startswith("history/") and "Gate 2" in out["uses"]
-    assert out["redoes"] == ["generate", "emit", "deploy (if chosen at Gate 4)", "finalize"]
+    assert out["redoes"] == ["generate", "emit", "deploy (if chosen at Gate 4)", "monitor (if deployed)", "finalize"]
     assert {f["has_code"] for f in out["functions"]} == {False}
     assert set(out["settings"]) == {"catalog_dir", "mga_max_retries", "stubtest_mode"}
 
@@ -184,7 +184,7 @@ def test_summary_is_ready_to_print(source_run, capsys):
     md = out["summary"]
     assert md.startswith("**Start at emit — a new run**") and f"run `{rid}`" in md
     assert "will not be changed" in md and "gate3-approve.json" in md
-    assert "Stub-test results copied: generate_text (passed)" in md and "Redoes: emit → deploy (if chosen at Gate 4) → finalize" in md
+    assert "Stub-test results copied: generate_text (passed)" in md and "Redoes: emit → deploy (if chosen at Gate 4) → monitor (if deployed) → finalize" in md
     code, out = start(capsys, source_run, "generate", "--from-bundle", Path(state(source_run)["bundle_dir"]),
                       "--existing-code", "keep", "--dry-run")
     assert out["summary"].startswith("**Start at generate — a new run**") and "bundle `" in out["summary"]
@@ -202,7 +202,7 @@ def test_real_start_from_bundle_summary_is_complete(source_run, capsys):
     md = out["summary"]
     assert code == 0 and "`None`" not in md and "Workflow: `mapreduce_word_count`, 5 functions" in md
     assert "with code: generate_text, split, map, shuffle, reduce" in md
-    assert "Redoes: emit → deploy (if chosen at Gate 4) → finalize" in md and "spec.json" in md
+    assert "Redoes: emit → deploy (if chosen at Gate 4) → monitor (if deployed) → finalize" in md and "spec.json" in md
 
 
 # ── generate from a run with approved code (results log #27, bug 4) ──
@@ -323,7 +323,7 @@ def test_start_at_deploy_copies_the_approved_bundle_and_its_hash(source_run, cap
     rec = s["history"][-1]
     assert rec["bundle_hash_from"] == "the Gate 4 approval snapshot" and rec["bundle_hash"] == src["bundle_hash"]
     assert rec["from_run"] == rid and rec["snapshot"].endswith("gate4-approve.json")
-    assert out["redoes"] == ["deploy", "finalize"]
+    assert out["redoes"] == ["deploy", "monitor", "finalize"]
     assert "- Bundle hash (checked against the bundle now): from the Gate 4 approval snapshot" in out["summary"]
     # Not a deploy choice yet: that is the user's Yes to "Start this run?"
     assert s["deploy_choice"] is None and rec["deploy"] == "pending" and rec["source_deploy_choice"] == "no"

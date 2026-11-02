@@ -8,7 +8,7 @@ allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT
 # /curate — the whole CURATE pipeline
 
 /curate runs the CURATE stages in order — skeleton → reuse → resolve → generate → emit →
-deploy (only after **Approve & deploy** at Gate 4) → finalize — by following the same stage files
+deploy and monitor (only after **Approve & deploy** at Gate 4) → finalize — by following the same stage files
 the stage skills (`/curate-skills:curate-skeleton` …) use. It does no stage work of its own: `spec.py next` decides what comes next.
 
 Plugin folder (`<plugin>` in the stage files): `${CLAUDE_PLUGIN_ROOT}`.
@@ -65,7 +65,7 @@ later turn:
 1. `spec.py next --run <run>` → `next_skill`, e.g. `curate-skills:curate-reuse`. If it is none,
    the run is done or stopped: summarize and stop (for a stopped run, give its `resume_command`).
 2. Its stage is the part after `curate-` (`skeleton`, `reuse`, `resolve`, `generate`, `emit`,
-   `deploy`);
+   `deploy`, `monitor`);
    for `wda-finalize` it is `finalize`. Tell the user one line: `Stage: <stage>`.
 3. `spec.py begin --run <run> --stage <stage>`. If refused, show the `error` exactly and stop.
 4. Read `${CLAUDE_PLUGIN_ROOT}/references/stages/<stage>.md` and follow it **as if started with

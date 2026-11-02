@@ -35,6 +35,13 @@
       "description": "strict (default): every rank, deps installed, ModuleNotFoundError fails. parity: original CURATE behaviour (rank 1 only, no dep install, ModuleNotFoundError with declared deps passes). CURATE_STUBTEST_MODE overrides this.",
       "required": false,
       "default": "strict"
+    },
+    "monitor_minutes": {
+      "type": "number",
+      "title": "Monitor minutes",
+      "description": "How long curate-monitor watches a deployed run before stopping with a resume command (default 10; resuming starts a fresh budget). CURATE_MONITOR_MINUTES overrides this.",
+      "required": false,
+      "default": 10
     }
   }
 }

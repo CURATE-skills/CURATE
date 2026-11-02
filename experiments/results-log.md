@@ -972,3 +972,63 @@ run is marked abandoned in its history (it also lacks the hash the fix records).
   → `confirm-start` → `begin deploy` → `deploy.py preflight` (ok) → `publish` without and with
   `--confirmed` against the fake GitHub; then a bundle edit makes the next step refuse
   ("no longer matches the Gate 4 approval carried over"). Tests: 335 passed.
+
+## 34. D2 build: curate-monitor (fakes only; nothing reached GitHub or S3)
+
+Plan approved with three changes (fresh outputs; job logs in memory only; time-only matches give
+"success, unconfirmed match" that the user accepts at Gate 5) plus: each run's job log is fetched
+once and the match cached.
+
+**What was built.**
+- New stage `monitor` (skill `curate-monitor`, stage file `references/stages/monitor.md`) between
+  deploy and finalize; after invoke the run goes there (D1's temporary stop is gone).
+- `monitor.py poll --run R [--budget S] [--report-only] [--minutes M] [--interval S]`, `status`,
+  `accept-unconfirmed --confirmed`. Read-only: Actions runs via GET (`/actions/workflows/<deploy
+  name>-<action>.yml/runs?event=workflow_dispatch&created>=dispatched_at−2min`, run jobs, job
+  logs); S3 via `head_object`/`get_object`. The job-log redirect is followed by the monitor itself
+  **without** the Authorization header (checked against a local server: the opener stops at the
+  302 and the token is sent only to the first host).
+- Matching: a finished run counts as this invocation's when its job log contains the InvocationID
+  (searched in memory; job-log text is never saved or printed; a failure excerpt from it is
+  redacted). Each run's classification (`confirmed` / `time_only` / `other`) is cached in
+  `state.monitor.matches`, so its log is fetched once. A finished run without a log is matched by
+  time only.
+- Per action rank (`download`, `process(1..3)`, `plot`): FaaSr log and `.done` marker in
+  `FaaSrLog/<name>/<timestamp>/<InvocationID>/`, `[ERROR]` = failed.
+- Outputs = each action's `output<N>` under its `folder` (CURATE's `build_artifact_list`),
+  `{rank}` expanded; for the weather workflow the 5 files `USC00351862_daily.csv`,
+  `winter_comparison_{1,2,3}.csv`, `corvallis_winter_comparison.png` under
+  `corvallis_winter_weather-cs/`. A file counts only if `LastModified >= dispatched_at`; older is
+  "stale" and fails the outputs check. Checked once every Actions run succeeded.
+- Results, each reported separately (Actions / outputs / FaaSr logs) with the note that output
+  correctness (the plot) is not judged: **success** → finalize; **success, unconfirmed match** →
+  finalize, where Gate 5 asks "Accept the unconfirmed match" first (`accept-unconfirmed
+  --confirmed` after the user's answer; `catalog.py save-*` refuses a deployed run until success or
+  an accepted unconfirmed match); **failure** → stopped (`stopped_from: monitor`) with the failed
+  action, why, its Actions URL and a redacted excerpt; **timeout** (`monitor_minutes`, default 10,
+  pinned per run; each call ≤ 540 s) → stopped, resuming continues the same invocation with a
+  fresh budget and never redeploys. Resume after success is a no-op.
+- Report-only: a run not at stage `monitor` (e.g. `done`) is never recorded — no state, stage or
+  file change; `--report-only` forces it.
+- spec.py: `monitor` stage and requirements (finalize after a deploy needs monitor success);
+  `start --at monitor` and `import --stage monitor` refused; the run summary (Gate 5) includes the
+  monitor summary. Plugin userConfig `monitor_minutes`. The guard already denies curate-mga
+  `monitor.py` (D1).
+- Reuse (VENDORED.md): `build_artifact_list` as-is; log/done key formats, `[ERROR]` regex,
+  invocation folder and rank parsing ported (the vendored classes import boto3/FaaSr_py at load);
+  S3 client built as the vendored one; `WorkflowRunner` (threads, inactivity timer) not used —
+  each poll is a bounded snapshot.
+
+**Tests: 352 passed** (without `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`); plugin validates. New
+(`tests/test_monitor.py`, fakes for GitHub with Actions endpoints and a redirecting blob host, and
+S3): success; a failed action (redacted excerpt, fake token never in output, state or saved
+logs); a missing and a stale output (outputs fail, Actions pass); all outputs stale from an
+earlier invocation; timeout then resume (same invocation, fresh budget, GET only); resume after
+success (no calls); job logs fetched once and another invocation's run ignored; a job log holding
+the token and payload is never printed or saved; time-only match → success_unconfirmed → catalog
+refuses → accept needs `--confirmed` → accepted; catalog refuses a deployed run before success;
+report-only on a `done` run leaves every file byte-identical; finalize needs monitor success.
+
+**Checked without side effects:** `monitor.py` loads under its pinned deps; on run
+`20261101-172823` without a token it refuses (exit 2), and its `state.json` (sha256 `b14b985e…`)
+and folder tree hash (`671fd39d…`) are unchanged.

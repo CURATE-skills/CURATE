@@ -657,15 +657,12 @@ def test_all_four_steps_in_order(deploying, env, capsys, runners):
     s = json.loads((deploying / "state.json").read_text())
     assert all(s["deploy"]["steps"][x]["ok"] for x in D.STEPS)
     assert s["deploy"]["invocation_id"] == "inv-123"
-    assert s["stage"] == "stopped" and s["stopped_from"] == "finalize"  # until D2: the user checks first
-    assert out["stopped"] and out["message"].endswith(
-        "Check Actions and S3; resume with /curate-skills:curate --resume r1 to finalize.")
+    assert s["stage"] == "monitor" and out["next_skill"] == "curate-skills:curate-monitor"
     assert s["history"][-1]["decision"] == "deployed"
     import spec as S
     S.main(["next", "--run", str(deploying)])
     nxt = json.loads(capsys.readouterr().out)
-    assert nxt["next_skill"] is None and nxt["stopped_from"] == "finalize"  # /curate stops here
-    assert nxt["resume_stage_command"] == "/curate-skills:wda-finalize --run r1"
+    assert nxt["next_skill"] == "curate-skills:curate-monitor"
     logged = [(e["step"], e.get("path") or e.get("prefix")) for e in log_lines(deploying)]
     assert logged == [("publish", "functions/weather-cs/download_station.py"),
                       ("publish", "functions/weather-cs/plot_weather.py"),
