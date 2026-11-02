@@ -313,10 +313,12 @@ def read_deploy_log(run: str) -> tuple[list[dict], list[str]]:
     return entries, bad
 
 
-def own_paths(entries: list[dict], run_id: str, deploy_name: str, repo: str, branch: str
+def own_paths(entries: list[dict], run_id, deploy_name: str, repo: str, branch: str
               ) -> tuple[set[str], set[tuple[str, str]]]:
-    """Repo paths and (bucket, prefix) pairs this run's deploy log says it wrote under this name."""
-    mine = [e for e in entries if e.get("run_id") == run_id and e.get("deploy_name") == deploy_name]
+    """Repo paths and (bucket, prefix) pairs the deploy log says this run (or, for a reused deployment,
+    the run that deployed it — run_id may be a set) wrote under this name."""
+    ids = run_id if isinstance(run_id, (set, frozenset)) else {run_id}
+    mine = [e for e in entries if e.get("run_id") in ids and e.get("deploy_name") == deploy_name]
     files = {e["path"] for e in mine if e.get("path") and e.get("repo") == repo and e.get("branch") == branch}
     s3 = {(e["bucket"], e["prefix"]) for e in mine if e.get("bucket") and e.get("prefix")}
     return files, s3
@@ -475,9 +477,11 @@ def _owner_of(gh: GitHub, user: str, repo: str, branch: str, t: dict, new: str) 
 
 def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str = "none",
               s3_factory=boto3_s3, overwrite_own: bool = False, done_steps=(),
-              require_hash: bool = False) -> dict:
+              require_hash: bool = False, reuse_from: dict | None = None) -> dict:
     """Read-only. done_steps: deploy steps this run already finished; their paths must exist,
     carry curate-skills' mark and be in this run's deploy log (they are not written again).
+    reuse_from ({run_id, run_dir}): the deployment was made by that run and is reused (invoke only);
+    its deploy log counts too, and the S3 prefixes it recorded may be rewritten by the new invocation.
     require_hash: refuse without a bundle hash recorded at Gate 4 (every deploy step does)."""
     if not suffix or not SUFFIX_RX.match(suffix):
         raise InputError(f"deploy name suffix {suffix!r} must be non-empty letters, digits, '-' or '_'")
@@ -545,8 +549,13 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
     problems += diff_problems
     log_entries, bad_lines = read_deploy_log(run)
     warnings += bad_lines
-    own_files, own_s3 = own_paths(log_entries, s.get("run_id"), copy_wf["WorkflowName"],
-                                  f"{user}/{repo}", branch)
+    run_ids = {s.get("run_id")}
+    if reuse_from:
+        src_entries, src_bad = read_deploy_log(reuse_from["run_dir"])
+        log_entries += src_entries
+        warnings += [f"source run {reuse_from['run_id']}: {x}" for x in src_bad]
+        run_ids.add(reuse_from["run_id"])
+    own_files, own_s3 = own_paths(log_entries, run_ids, copy_wf["WorkflowName"], f"{user}/{repo}", branch)
     out = {"run": str(Path(run).resolve()), "bundle": str(bundle), "bundle_hash": bhash,
            "approved_name": wf.get("WorkflowName"), "deploy_name": copy_wf["WorkflowName"],
            "suffix": suffix, "repo": f"{user}/{repo}" if user and repo else None, "branch": branch,
@@ -554,7 +563,7 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
            "filled_placeholders": {k: ", ".join(f"${x}" for x in v) + f" = {_dig(copy_wf, k)}" for k, v in filled.items()
                                    if not k.startswith("FunctionGitRepo")},
            "s3_targets": s3_targets, "secrets": {"required": req_secrets}, "curate_files": [],
-           "github_checked": False, "deploy_diff": diff_rows,
+           "github_checked": False, "deploy_diff": diff_rows, "reuse_from": (reuse_from or {}).get("run_id"),
            "derived_changes": derived_changes(wf, copy_wf), "overwrite_own": overwrite_own,
            "deploy_log": {"path": str(DEPLOY_LOG), "repo_paths": sorted(own_files),
                           "s3_prefixes": sorted(f"s3://{b}/{x}" for b, x in own_s3)}}
@@ -570,7 +579,7 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
         for t in s3_targets:
             if not t.get("exists"):
                 continue
-            if overwrite_own and (t["bucket"], t["prefix"]) in own_s3:
+            if (overwrite_own or reuse_from) and (t["bucket"], t["prefix"]) in own_s3:
                 t["overwrite"] = True
             else:
                 problems.append(f"S3 path s3://{t['bucket']}/{t['prefix']} already holds objects; refusing — "
@@ -625,6 +634,8 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
                 t.update(_owner_of(gh, user, repo, branch, t, new))
                 if t["step"] in done_steps:
                     t["written"] = True
+                    if reuse_from:
+                        t["reused_from"] = reuse_from["run_id"]
                     if not (t.get("exists") and t.get("ours") and t["path"] in own_files):
                         problems.append(f"{t['path']} was written by this deploy's {t['step']} step but is "
                                         f"{'gone' if not t.get('exists') else 'no longer ours (' + str(t.get('why')) + ')'}"
@@ -686,7 +697,9 @@ def preflight_summary(p: dict) -> str:
              f"(token: {p['token_source']}; GitHub {'checked' if p['github_checked'] else 'not checked'})"]
     by_step: dict[str, list[str]] = {}
     for t in p["targets"]:
-        if t.get("written"):
+        if t.get("reused_from"):
+            state = f"deployed by run {t['reused_from']}, reused"
+        elif t.get("written"):
             state = "written by this deploy"
         elif t.get("exists") is None:
             state = "not checked"
@@ -707,7 +720,9 @@ def preflight_summary(p: dict) -> str:
         if t["prefix"] is None:
             continue
         state = ("not checked" if t.get("exists") is None else "new" if not t["exists"] else
-                 "exists, in this run's deploy log — will be overwritten (--overwrite-own-deploy)"
+                 ("exists (this deployment's earlier outputs) — the new invocation rewrites them"
+                  if p.get("reuse_from") else
+                  "exists, in this run's deploy log — will be overwritten (--overwrite-own-deploy)")
                  if t.get("overwrite") else "EXISTS — refused")
         lines.append(f"- S3 ({t['kind']}, written by the run): `s3://{t['bucket']}/{t['prefix']}` ({state})")
     if s3.get("key_vars"):
@@ -909,7 +924,12 @@ def deploy_step(run: str, step: str, suffix: str, gh: GitHub | None, token: str 
         return {**base, "ok": False, "error": f"run {missing[0]} first (steps go publish → upload → "
                 f"register → invoke)", "next_step": missing[0]}
 
-    pf = preflight(run, suffix, gh, token_source, s3_factory, overwrite_own, done_steps=done, require_hash=True)
+    try:
+        reused = reuse_source(run, s) if rec.get("reused_from") else None
+    except StepError as e:
+        return {**base, "ok": False, "error": str(e)}
+    pf = preflight(run, suffix, gh, token_source, s3_factory, overwrite_own, done_steps=done, require_hash=True,
+                   reuse_from=reused)
     copy_wf = pf.pop("_copy_wf")
     user, repo, branch = (os.environ.get("FAASR_GH_USERNAME", "").strip(),
                           os.environ.get("FAASR_ACTION_REPO", "").strip(),
@@ -1001,13 +1021,156 @@ def deploy_step(run: str, step: str, suffix: str, gh: GitHub | None, token: str 
     return out
 
 
+# ── invoke only: reuse an identical existing deployment ──────────────────────
+
+def expected_actions_files(copy_wf: dict) -> dict[str, str]:
+    """The Actions files register would write for the deploy copy, from CURATE's own generator.
+    Generated twice: if the two differ, the deployed files cannot be verified byte for byte."""
+    from vendor.curate_deploy import register_workflow as rw
+
+    def generate():
+        secrets = rw.generate_github_secret_imports(copy_wf)
+        user = rw.generate_user_defined_secret_imports(copy_wf)
+        if user:
+            secrets += "\n" + user
+        out = {}
+        for action, a in copy_wf["ActionList"].items():
+            name = f"{copy_wf['WorkflowName']}-{action}"
+            gen = rw.generate_vm_yaml if a.get("RequiresVM") else rw.generate_serverless_yaml
+            out[f".github/workflows/{name}.yml"] = gen(name, copy_wf["ActionContainers"][action], secrets)
+        return out
+    first, second = generate(), generate()
+    if first != second:
+        raise StepError("CURATE's Actions-file generator gave different output on two calls for the same "
+                        "input, so the deployed Actions files cannot be verified byte for byte; reuse is refused")
+    return first
+
+
+def reuse_source(run: str, s: dict) -> dict:
+    """The run whose deployment this run reuses: the run its Gate 4 approval was carried over from,
+    in the same project, with all four deploy steps done for the same deployment and bundle."""
+    first = (s.get("history") or [{}])[0]
+    src_id = (s.get("deploy") or {}).get("reused_from") or first.get("from_run")
+    if not (first.get("decision") == "copied" and first.get("gate") == 4 and src_id):
+        raise StepError("invoke only needs a run started with --start-at deploy --from-run <the run that deployed>")
+    src_dir = Path(run).resolve().parent / src_id
+    try:
+        src = json.loads((src_dir / "state.json").read_text())
+    except (OSError, ValueError):
+        raise StepError(f"the source run {src_id} is not in this project ({src_dir})") from None
+    dep = src.get("deploy") or {}
+    missing = [x for x in STEPS if not (dep.get("steps") or {}).get(x, {}).get("ok")]
+    if missing:
+        raise StepError(f"run {src_id} did not finish deploying (missing: {', '.join(missing)}); nothing to reuse")
+    if dep.get("bundle_hash") != s.get("bundle_hash"):
+        raise StepError(f"run {src_id} deployed a different bundle (hash) than the one approved here")
+    return {"run_id": src_id, "run_dir": str(src_dir), "deploy_name": dep.get("deploy_name"),
+            "repo": dep.get("repo"), "branch": dep.get("branch")}
+
+
+def verify_identical(gh: GitHub, user: str, repo: str, branch: str, bundle: Path, copy_wf: dict,
+                     targets: list[dict]) -> tuple[list[str], list[str]]:
+    """GET each deployed repo file and compare it, byte for byte, with what publish, upload and
+    register would write for this run. Returns (identical paths, problems)."""
+    new = copy_wf["WorkflowName"]
+    expected = {f"functions/{new}/{fn}.py": (bundle / "functions" / f"{fn}.py").read_text()
+                for fn in copy_wf["FunctionGitRepo"] if (bundle / "functions" / f"{fn}.py").is_file()}
+    expected[f"workflows/{new}.json"] = json.dumps(copy_wf, indent=2)
+    expected.update(expected_actions_files(copy_wf))
+    same, problems = [], []
+    for t in targets:
+        if t["step"] == "invoke":
+            continue
+        want = expected.get(t["path"])
+        st, _, body = gh.get(f"/repos/{user}/{repo}/contents/{t['path']}", ref=branch)
+        if want is None:
+            problems.append(f"{t['path']}: nothing to compare it with")
+        elif st != 200 or not isinstance(body, dict) or body.get("encoding") not in (None, "base64"):
+            problems.append(f"{t['path']}: could not read it from the repo (HTTP {st})")
+        elif base64.b64decode(body.get("content") or "") != want.encode():
+            problems.append(f"{t['path']} differs from what this run would deploy")
+        else:
+            same.append(t["path"])
+    return same, problems
+
+
+def reuse(run: str, suffix: str, gh: GitHub | None, token: str | None, token_source: str,
+          s3_factory=boto3_s3, confirmed: bool = False) -> dict:
+    """Invoke only: verify that the deployment made by the source run is byte-identical to what this
+    run would deploy, record publish/upload/register as reused (nothing written to GitHub), then run
+    the normal invoke step. Needs --confirmed, like every step."""
+    run_p = Path(run)
+    s, bundle = load_run(run)
+    rec = s.get("deploy") or {}
+    base = {"run": str(run_p.resolve()), "step": "reuse"}
+    if s.get("stage") != "deploy" or s.get("deploy_choice") != "yes":
+        return {**base, "ok": False, "error": "invoke only runs in the deploy stage, after the user confirmed "
+                "starting the run (Start this run? → Yes)"}
+    if any((rec.get("steps") or {}).get(x, {}).get("ok") for x in STEPS):
+        return {**base, "ok": False, "error": "this run already started its own deploy steps; invoke only is "
+                "for a run that has not written anything"}
+    try:
+        src = reuse_source(run, s)
+    except StepError as e:
+        return {**base, "ok": False, "error": str(e)}
+    done = ("publish", "upload", "register")
+    pf = preflight(run, suffix, gh, token_source, s3_factory, done_steps=done, require_hash=True, reuse_from=src)
+    copy_wf = pf.pop("_copy_wf")
+    new = copy_wf["WorkflowName"]
+    user, repo, branch = (os.environ.get("FAASR_GH_USERNAME", "").strip(),
+                          os.environ.get("FAASR_ACTION_REPO", "").strip(),
+                          os.environ.get("FAASR_ACTION_BRANCH", "").strip() or "main")
+    problems = list(pf["problems"])
+    if (src["deploy_name"], src["repo"], src["branch"]) != (new, f"{user}/{repo}", branch):
+        problems.append(f"run {src['run_id']} deployed {src['deploy_name']} to {src['repo']} ({src['branch']}); "
+                        f"this run would deploy {new} to {user}/{repo} ({branch})")
+    identical = []
+    if gh is not None and not problems:
+        try:
+            identical, diff = verify_identical(gh, user, repo, branch, bundle, copy_wf, pf["targets"])
+        except StepError as e:
+            identical, diff = [], [str(e)]
+        problems += diff
+    plan = {"what": f"start the workflow again on the existing deployment {new}, made by run {src['run_id']} "
+                    "(publish, upload and register are skipped: nothing is written to GitHub)",
+            "repo": pf["repo"], "branch": branch, "deploy_name": new, "reused_from": src["run_id"],
+            "identical": identical,
+            "paths": [f"s3://{t['bucket']}/{t['prefix']}" for t in pf["s3_targets"] if t["prefix"]]}
+    base.update(plan=plan, preflight_summary=pf["summary"])
+    if problems:
+        return {**base, "ok": False, "problems": problems,
+                "error": "the existing deployment cannot be reused; nothing was written"}
+    if not confirmed:
+        return {**base, "ok": False, "needs_confirmation": True,
+                "error": f"invoke only starts the workflow in {pf['repo']} — ask the user first; only after they "
+                         "say yes, run it again with --confirmed"}
+    text = json.dumps(copy_wf, indent=2)
+    (run_p / "deploy").mkdir(exist_ok=True)
+    (run_p / "deploy" / "workflow.json").write_text(_checked(text, "the deploy copy", {"gh_token": token}) + "\n")
+    ts = _now_iso()
+    _update_state(run_p, lambda st: st.update(deploy={
+        "deploy_name": new, "suffix": suffix, "repo": pf["repo"], "branch": branch, "bundle_hash": pf["bundle_hash"],
+        "reused_from": src["run_id"],
+        "steps": {x: {"ok": True, "ts": ts, "reused_from": src["run_id"], "verified": "byte-identical",
+                      "paths": [t["path"] for t in pf["targets"] if t["step"] == x]} for x in done}}))
+    out = deploy_step(run, "invoke", suffix, gh, token, token_source, s3_factory, confirmed=True)
+    return {**out, "reused_from": src["run_id"], "identical": identical}
+
+
 def deploy_status(run: str) -> dict:
     s, _ = load_run(run)
     rec = s.get("deploy") or {}
     steps = rec.get("steps") or {}
     done = [x for x in STEPS if steps.get(x, {}).get("ok")]
     failed = {x: steps[x].get("error") for x in STEPS if x in steps and not steps[x].get("ok") and steps[x].get("error")}
+    reuse_possible = None
+    if not done and s.get("stage") == "deploy":
+        try:
+            reuse_possible = reuse_source(run, s)["run_id"]
+        except StepError:
+            pass
     return {"ok": True, "stage": s.get("stage"), "deploy_choice": s.get("deploy_choice"), "done": done,
+            "reuse_possible": reuse_possible,
             "failed": failed, "next_step": next((x for x in STEPS if x not in done), None),
             "deploy_name": rec.get("deploy_name"), "invocation_id": rec.get("invocation_id"),
             "deploy_log": str(Path(run) / DEPLOY_LOG) if (Path(run) / DEPLOY_LOG).is_file() else None}
@@ -1042,6 +1205,11 @@ def main(argv=None, opener=None, s3_factory=boto3_s3) -> int:
         if name in STEPS:
             q.add_argument("--confirmed", action="store_true",
                            help="the user said yes to this step (passed only after asking them)")
+    q = sub.add_parser("reuse", help="invoke only: reuse the identical deployment of the run this one was "
+                                     "started from (needs --confirmed)")
+    q.add_argument("--run", required=True)
+    q.add_argument("--name-suffix", default=None)
+    q.add_argument("--confirmed", action="store_true")
     sub.add_parser("status", help="which deploy steps are done").add_argument("--run", required=True)
     args = p.parse_args(argv)
     if args.cmd == "status":
@@ -1059,6 +1227,8 @@ def main(argv=None, opener=None, s3_factory=boto3_s3) -> int:
         if args.cmd == "preflight":
             out = preflight(args.run, suffix, gh, source, s3_factory, args.overwrite_own_deploy)
             out.pop("_copy_wf", None)
+        elif args.cmd == "reuse":
+            out = reuse(args.run, suffix, gh, token, source, s3_factory, args.confirmed)
         else:
             out = deploy_step(args.run, args.cmd, suffix, gh, token, source, s3_factory,
                               args.confirmed, args.overwrite_own_deploy)

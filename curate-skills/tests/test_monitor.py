@@ -130,6 +130,11 @@ class World:
             def text(self, key):
                 world.s3_calls.append(("text", key))
                 return world.s3[key][0] if key in world.s3 else None
+
+            def get_bytes(self, key):
+                world.s3_calls.append(("get", key))
+                return world.s3[key][0].encode()
+            bucket = "b"
         return Reader()
 
 
@@ -144,14 +149,17 @@ def _resp(body):
 
 
 class Clock:
-    def __init__(self):
+    def __init__(self, on_sleep=None):
         self.t = 0.0
+        self.on_sleep = on_sleep
 
     def __call__(self):
         return self.t
 
     def sleep(self, s):
         self.t += s
+        if self.on_sleep:
+            self.on_sleep()
 
 
 def poll(capsys, run, world, *extra, clock=None):
@@ -369,3 +377,73 @@ def test_finalize_after_a_deploy_needs_monitor_success(run, env, capsys):
     s["monitor"] = {"result": "success"}
     assert not any("confirmed to work" in p for p in S.require_problems(s, "finalize"))
     assert S.require_problems({**s, "deploy": {}}, "monitor")[0].startswith("nothing to monitor")
+
+
+# ── live-test support: interim polls, --minutes on resume, downloading the outputs ──
+
+def test_interim_polls_show_earlier_outputs_as_stale_until_rewritten(run, env, capsys):
+    world = World().finish_all()
+    plot = world.runs.pop("plot")
+    for key in OUTPUTS:  # the previous invocation's files are still there
+        world.s3[key] = ("old", BEFORE)
+
+    def the_run_finishes():
+        world.runs["plot"] = plot
+        for key in OUTPUTS:
+            world.s3[key] = ("new", AFTER)
+    clock = Clock(on_sleep=the_run_finishes)
+    code, out = poll(capsys, run, world, clock=clock)
+    assert code == 0 and out["result"] == "success"
+    first, last = out["interim"]
+    assert first["runs_concluded"] == 4 and first["outputs"] == {"stale": 5}
+    assert last["runs_concluded"] == 5 and last["outputs"] == {"present": 5}
+    assert "| 1 | 0 | 4/5 | 0 / 5 / 0 |" in out["summary"] and "| 2 | 10 | 5/5 | 5 / 0 / 0 |" in out["summary"]
+    assert state(run)["monitor"]["poll_log"] == out["interim"]
+
+
+def test_minutes_given_on_resume_replace_the_pinned_value(run, env, capsys):
+    import spec as S
+    world = World().finish_all()
+    plot = world.runs.pop("plot")
+    code, out = poll(capsys, run, world, "--minutes", "0.5")
+    assert out["result"] == "timeout" and state(run)["monitor"]["settings"]["minutes"] == 0.5
+    S.main(["begin", "--run", str(run), "--stage", "monitor"])
+    capsys.readouterr()
+    world.runs["plot"] = plot
+    code, out = poll(capsys, run, world, "--minutes", "10")
+    assert out["result"] == "success" and out["settings_changed"] == {"minutes": [0.5, 10.0]}
+    settings = state(run)["monitor"]["settings"]
+    assert settings["minutes"] == 10.0 and settings["minutes_source"] == "flag (changed on resume)"
+
+
+def test_download_outputs_copies_files_with_a_manifest_and_leaves_the_run_alone(run, env, capsys, tmp_path):
+    world = World().finish_all()
+    world.s3["wx-cs/fig.png"] = ("png-bytes", "2026-11-02T01:41:00+00:00")
+    before = {p: p.read_bytes() for p in run.rglob("*") if p.is_file()}
+    dest = tmp_path / "backup" / "r1-outputs"
+    code = M.main(["download-outputs", "--run", str(run), "--to", str(dest)], s3_factory=world.reader)
+    out = json.loads(capsys.readouterr().out)
+    assert code == 0 and [f["key"] for f in out["files"]] == OUTPUTS
+    fig = next(f for f in out["files"] if f["key"] == "wx-cs/fig.png")
+    assert fig["size"] == 9 and fig["last_modified"] == "2026-11-02T01:41:00+00:00" and len(fig["sha256"]) == 64
+    assert (dest / "wx-cs" / "fig.png").read_bytes() == b"png-bytes"
+    assert json.loads((dest / "manifest.json").read_text())["invocation_id"] == INV
+    assert {p: p.read_bytes() for p in run.rglob("*") if p.is_file()} == before
+    assert {c[0] for c in world.s3_calls} <= {"head", "get"}  # read-only
+
+
+def test_download_outputs_refuses_unsafe_targets_and_skips_secrets(run, env, capsys, tmp_path):
+    world = World().finish_all()
+    code = M.main(["download-outputs", "--run", str(run), "--to", str(run / "x")], s3_factory=world.reader)
+    assert code == 2 and "inside the run folder" in json.loads(capsys.readouterr().out)["error"]
+    full = tmp_path / "full"
+    full.mkdir()
+    (full / "keep.txt").write_text("mine")
+    code = M.main(["download-outputs", "--run", str(run), "--to", str(full)], s3_factory=world.reader)
+    assert code == 2 and "not empty" in json.loads(capsys.readouterr().out)["error"]
+    world.s3["wx-cs/station.csv"] = (f"key,{FAKE['S3_SecretKey']}\n", AFTER)
+    dest = tmp_path / "out"
+    code = M.main(["download-outputs", "--run", str(run), "--to", str(dest)], s3_factory=world.reader)
+    out = json.loads(capsys.readouterr().out)
+    assert code == 1 and out["skipped"][0]["key"] == "wx-cs/station.csv" and "S3_SecretKey" in out["skipped"][0]["reason"]
+    assert not (dest / "wx-cs" / "station.csv").exists() and FAKE["S3_SecretKey"] not in json.dumps(out)

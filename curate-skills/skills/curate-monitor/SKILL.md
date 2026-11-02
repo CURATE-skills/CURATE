@@ -1,7 +1,7 @@
 ---
 name: curate-monitor
 description: CURATE monitor stage — watch a deployed workflow's invocation read-only (Actions runs, FaaSr logs, fresh output files) until it succeeds, fails or the time budget runs out. Run it by name; /curate runs it after curate-deploy.
-argument-hint: "--run <run_id>"
+argument-hint: "--run <run_id> [--minutes N]"
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*)
 ---

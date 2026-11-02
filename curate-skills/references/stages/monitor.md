@@ -12,9 +12,12 @@ deploy: never read, print, echo or ask for one, and never open a `.env` file.
 ## 1. Poll
 
 `monitor.py poll --run <run> --config-minutes '${user_config.monitor_minutes}'` (keep the quotes
-exactly). One call polls for at most 9 minutes; the total is `monitor_minutes` (default 10,
-pinned for the run). After each call tell the user one line: the `result` and `minutes_used`.
-While `result` is `pending`, call it again.
+exactly), plus `--minutes N` if the arguments contain it. One call polls for at most 9 minutes;
+the total is `monitor_minutes` (default 10, pinned for the run; an explicit `--minutes`, e.g. on
+resume, replaces it). After each call tell the user one line: the `result`, `minutes_used`, and
+the last entry of `interim` (runs concluded, outputs present / stale / missing). While `result`
+is `pending`, call it again. Before every run has succeeded, files from an earlier invocation
+show as stale; that is progress, not a failure.
 
 What it checks, per action in workflow order (e.g. download → process 1–3 → plot):
 - **Actions:** the action's GitHub Actions run(s) for this InvocationID, all concluded `success`.

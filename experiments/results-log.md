@@ -1051,3 +1051,41 @@ with their `.env`, at `6f9798c`. Read-only; the run was at `done`.
   `corvallis_winter_comparison.png` (297,097). The plot itself was not judged.
 - **Unchanged:** the run's `state.json` (sha256 `b14b985e…`) and folder tree hash (`671fd39d…`)
   are identical before and after; no `deploy/monitor/` folder was created.
+
+## 36. Build for the live D2 test: invoke only, --minutes on resume, interim polls, output backup
+
+Option 1 of the live-test plan (re-invoke the existing `-cs` deployment from a new run), with the
+user's additions. Fakes only; nothing reached GitHub or S3.
+
+- **`deploy.py reuse --run R [--confirmed]` (invoke only).** For a run started with
+  `--start-at deploy --from-run <src>` where `<src>` finished all four steps for the same deploy
+  name, repo, branch and bundle hash. It GETs each deployed file and compares it byte for byte
+  with what this run would write: the bundle's function files, the deploy copy of workflow.json
+  (`json.dumps(…, indent=2)`, as upload writes it), and the Actions files regenerated with CURATE's
+  generator — generated twice, and refused, naming the reason, if the two differ. The source
+  run's deploy log counts as this deployment's; the S3 prefixes it recorded may be rewritten by
+  the new invocation. Without `--confirmed` it writes nothing and returns the preflight summary
+  (with the field-by-field deploy-copy diff) and the list of identical files; with it, it records
+  publish/upload/register as `reused_from` + `verified: byte-identical` (nothing written to
+  GitHub), writes `deploy/workflow.json`, and runs the normal invoke step. `deploy.py status`
+  reports `reuse_possible`; the deploy stage offers **Yes, invoke** / **Stop here** after showing
+  the diff.
+- **Determinism.** A test calls the vendored YAML generator twice for the same input (identical);
+  checked also with the real modules on run 20261101-172823's deploy copy: deterministic.
+- **`monitor.py poll --minutes N`** on resume replaces the pinned value (recorded as
+  `flag (changed on resume)`, returned as `settings_changed`).
+- **Interim polls.** Every poll records the runs concluded and each output's state (present /
+  stale / missing) in `interim` and `state.monitor.poll_log` (last 200); the summary shows a polls
+  table. Before every run succeeded, an earlier invocation's files show as stale (progress, not
+  failure). A *final* stale failure is covered by fake tests only (the live test is expected to
+  rewrite all five files).
+- **`monitor.py download-outputs --run R --to DIR`.** Read-only copy of the declared outputs to an
+  empty folder outside the run, with `manifest.json` (key, size, LastModified, sha256); refuses a
+  target inside the run or a non-empty one; skips a file holding a secret value.
+
+Tests: 366 passed (without `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`); plugin validates. New: YAML
+determinism; reuse without/with `--confirmed` (diff shown, no PUT, steps recorded as reused,
+only the invoke in this run's log); refusals for an edited function file, an edited Actions file,
+a missing deployed file, a non-deterministic generator, an unfinished source, a run that started
+its own steps; `reuse_possible`; interim stale → present; `--minutes` on resume; download with
+manifest, run untouched, unsafe targets refused, a secret-holding output skipped.

@@ -18,6 +18,26 @@ never open a `.env` file, and never put a value on a command line. If the prefli
 missing, tell the user which name is missing and that Claude Code must be started with it in the
 environment, e.g. `set -a; . <their .env>; set +a; claude …`, then stop (step 4).
 
+## 0. Invoke only (reuse an identical existing deployment)
+
+`deploy.py status --run <run>`. If `reuse_possible` names a run (this run was started with
+`--start-at deploy --from-run` from a run that deployed the same bundle), the deployment may
+already be in the repo:
+1. `deploy.py reuse --run <run>` **without** `--confirmed`. It writes nothing. It checks that
+   every deployed file is byte-identical to what this run would deploy (function files, the
+   deploy copy of workflow.json, and the Actions files regenerated with CURATE's generator).
+2. Print its `preflight_summary` exactly — it includes the field-by-field table of the deploy copy
+   vs the approved bundle — then tell the user the `plan`: the reused run, the identical files,
+   and that the new invocation rewrites the deployment's earlier outputs in the S3 paths listed.
+   If it returned `problems` instead, show them exactly and stop (step 4); nothing is reused.
+3. Ask with AskUserQuestion — question `Invoke only: start <deploy_name> again (nothing is
+   written to GitHub)?`, header `Invoke`, options **Yes, invoke** and **Stop here**.
+4. Only after **Yes, invoke** in the user's answer just now: `deploy.py reuse --run <run>
+   --confirmed`. It records publish, upload and register as reused (byte-identical) and runs the
+   invoke step. Then continue at 2.5 (the result) below.
+
+Otherwise go on with the preflight.
+
 ## 1. Preflight (read-only)
 
 `deploy.py preflight --run <run>`. **Print its `summary` exactly as a message** (the user does not

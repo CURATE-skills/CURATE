@@ -772,3 +772,135 @@ def test_publish_never_pushes_os_metadata(deploying, env, capsys, runners):
         assert code == 0, out  # the hash still matches
     assert [p for p, _ in fake.puts] == ["functions/weather-cs/download_station.py",
                                          "functions/weather-cs/plot_weather.py", "workflows/weather-cs.json"]
+
+
+# ── invoke only: reuse an identical existing deployment ──
+
+def test_curates_yaml_generator_is_deterministic(monkeypatch):
+    """Reuse compares deployed Actions files byte for byte with freshly generated ones; that only
+    works if CURATE's generator gives the same output for the same input."""
+    _stub_modules(monkeypatch)
+    from vendor.curate_deploy import register_workflow as R
+    wf = D.deploy_copy(workflow(secrets=["NOAA_TOKEN"]), "-cs", "alice", "faasr-actions", "main")[0]
+    secrets = R.generate_github_secret_imports(wf) + "\n" + R.generate_user_defined_secret_imports(wf)
+    a = R.generate_serverless_yaml("weather-cs-plot", wf["ActionContainers"]["plot"], secrets)
+    b = R.generate_serverless_yaml("weather-cs-plot", wf["ActionContainers"]["plot"], secrets)
+    assert a == b and a.startswith("name: weather-cs-plot\n")
+    assert D.expected_actions_files(wf) == D.expected_actions_files(wf)
+
+
+@pytest.fixture
+def reusable(run, monkeypatch):
+    """r0 deployed weather-cs (all four steps, its deploy log); r1 was started from r0 at deploy."""
+    _stub_modules(monkeypatch)
+    s = json.loads((run / "state.json").read_text())
+    bundle = Path(s["bundle_dir"])
+    h = D.tree_hash(bundle)
+    src = run.parent / "r0"
+    (src / "deploy").mkdir(parents=True)
+    paths = ["functions/weather-cs/download_station.py", "functions/weather-cs/plot_weather.py",
+             "workflows/weather-cs.json", ".github/workflows/weather-cs-download.yml",
+             ".github/workflows/weather-cs-plot.yml"]
+    (src / "state.json").write_text(json.dumps({
+        "schema_version": 2, "run_id": "r0", "stage": "done", "bundle_dir": str(bundle), "bundle_hash": h,
+        "deploy_choice": "yes", "history": [{"gate": 4, "decision": "approve"}],
+        "deploy": {"deploy_name": "weather-cs", "repo": "alice/faasr-actions", "branch": "main", "bundle_hash": h,
+                   "invocation_id": "inv-0", "steps": {x: {"ok": True} for x in D.STEPS}}}))
+    log = [{"run_id": "r0", "deploy_name": "weather-cs", "step": "x", "repo": "alice/faasr-actions",
+            "branch": "main", "path": p} for p in paths]
+    log += [{"run_id": "r0", "deploy_name": "weather-cs", "step": "invoke", "bucket": "b", "prefix": x}
+            for x in ("weather_data-cs/", "FaaSrLog/weather-cs/")]
+    (src / "deploy" / "deploy-log.jsonl").write_text("".join(json.dumps(e) + "\n" for e in log))
+    s.update(stage="deploy", deploy_choice="yes", bundle_hash=h, history=[
+        {"gate": 4, "decision": "copied", "from_run": "r0", "snapshot": "005-gate4-approve.json", "bundle_hash": h},
+        {"gate": 4, "decision": "deploy-confirmed"}])
+    (run / "state.json").write_text(json.dumps(s))
+    copy_wf = D.deploy_copy(workflow(), "-cs", "alice", "faasr-actions", "main")[0]
+    files = {p: (bundle / "functions" / p.rsplit("/", 1)[1]).read_text() for p in paths[:2]}
+    files["workflows/weather-cs.json"] = json.dumps(copy_wf, indent=2)
+    files.update(D.expected_actions_files(copy_wf))
+    commits = {p: "Add/update (curate-skills)" for p in paths[:2]}
+    return run, files, commits
+
+
+def test_reuse_without_confirmed_shows_the_diff_and_writes_nothing(reusable, env, capsys, runners):
+    run, files, commits = reusable
+    fake = FakeGitHub(files=files, commits=commits, writable=True)
+    s3 = FakeS3(objects={"weather_data-cs/station.csv", "FaaSrLog/weather-cs/old/x.txt"})
+    code, out = step(capsys, run, "reuse", fake, s3=s3)
+    assert code == 1 and out["needs_confirmation"], out.get("problems")
+    assert sorted(out["plan"]["identical"]) == sorted(files) and out["plan"]["reused_from"] == "r0"
+    assert "nothing is written to GitHub" in out["plan"]["what"]
+    summary = out["preflight_summary"]
+    assert "**Deploy copy vs approved bundle**" in summary and "deployed by run r0, reused" in summary
+    assert "the new invocation rewrites them" in summary
+    assert fake.puts == [] and "invoke" not in runners and not (run / "deploy" / "deploy-log.jsonl").exists()
+
+
+def test_reuse_confirmed_invokes_without_writing_to_github(reusable, env, capsys, runners):
+    run, files, commits = reusable
+    fake = FakeGitHub(files=files, commits=commits, writable=True)
+    runners["fake"] = fake
+    code, out = step(capsys, run, "reuse", fake, "--confirmed",
+                     s3=FakeS3(objects={"weather_data-cs/station.csv"}))
+    assert code == 0 and out["ok"] and out["invocation_id"] == "inv-123", out
+    assert fake.puts == [] and runners["invoke"] == "workflows/weather-cs.json"
+    s = json.loads((run / "state.json").read_text())
+    assert s["stage"] == "monitor" and s["deploy"]["reused_from"] == "r0"
+    for x in ("publish", "upload", "register"):
+        assert s["deploy"]["steps"][x]["verified"] == "byte-identical" and s["deploy"]["steps"][x]["reused_from"] == "r0"
+    assert json.loads((run / "deploy" / "workflow.json").read_text()) == json.loads(files["workflows/weather-cs.json"])
+    assert {e["step"] for e in log_lines(run)} == {"invoke"}  # this run wrote nothing else
+
+
+@pytest.mark.parametrize("case,needle", [
+    ("code", "functions/weather-cs/plot_weather.py differs from what this run would deploy"),
+    ("yaml", ".github/workflows/weather-cs-plot.yml differs"),
+    ("gone", "workflows/weather-cs.json was written by this deploy's upload step but is gone"),
+])
+def test_reuse_refuses_a_deployment_that_is_not_identical(reusable, env, capsys, runners, case, needle):
+    run, files, commits = reusable
+    if case == "code":
+        files["functions/weather-cs/plot_weather.py"] += "# edited in the repo\n"
+    if case == "yaml":
+        files[".github/workflows/weather-cs-plot.yml"] = files[".github/workflows/weather-cs-plot.yml"].replace(
+            "ubuntu-latest", "ubuntu-22.04")
+    if case == "gone":
+        del files["workflows/weather-cs.json"]
+    fake = FakeGitHub(files=files, commits=commits, writable=True)
+    code, out = step(capsys, run, "reuse", fake, "--confirmed")
+    assert code == 1 and any(needle in p for p in out["problems"]), out.get("problems")
+    assert fake.puts == [] and "invoke" not in runners
+
+
+def test_reuse_refuses_when_the_yaml_generator_is_not_deterministic(reusable, env, capsys, runners, monkeypatch):
+    run, files, commits = reusable
+    from vendor.curate_deploy import register_workflow as R
+    calls = iter(range(100))
+    monkeypatch.setattr(R, "generate_serverless_yaml", lambda name, image, secrets: f"name: {name}\n# {next(calls)}\n")
+    fake = FakeGitHub(files=files, commits=commits, writable=True)
+    code, out = step(capsys, run, "reuse", fake, "--confirmed")
+    assert code == 1 and any("gave different output on two calls" in p for p in out["problems"])
+    assert "invoke" not in runners
+
+
+def test_status_offers_reuse_only_when_the_source_finished_deploying(reusable, env, capsys):
+    run, _, _ = reusable
+    D.main(["status", "--run", str(run)])
+    assert json.loads(capsys.readouterr().out)["reuse_possible"] == "r0"
+
+
+def test_reuse_refuses_an_unfinished_source_or_a_run_that_started_deploying(reusable, env, capsys, runners):
+    run, files, commits = reusable
+    src = json.loads((run.parent / "r0" / "state.json").read_text())
+    src["deploy"]["steps"]["invoke"]["ok"] = False
+    (run.parent / "r0" / "state.json").write_text(json.dumps(src))
+    code, out = step(capsys, run, "reuse", FakeGitHub(files=files, commits=commits), "--confirmed")
+    assert code == 1 and "did not finish deploying (missing: invoke)" in out["error"]
+    src["deploy"]["steps"]["invoke"]["ok"] = True
+    (run.parent / "r0" / "state.json").write_text(json.dumps(src))
+    s = json.loads((run / "state.json").read_text())
+    s["deploy"] = {"steps": {"publish": {"ok": True}}}
+    (run / "state.json").write_text(json.dumps(s))
+    code, out = step(capsys, run, "reuse", FakeGitHub(files=files, commits=commits), "--confirmed")
+    assert code == 1 and "already started its own deploy steps" in out["error"]
