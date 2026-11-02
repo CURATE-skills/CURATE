@@ -1181,6 +1181,27 @@ def cmd_directive(args) -> dict:
             "cap_reached": False, "next_skill": next_skill(s)}
 
 
+def cmd_confirm_start(args) -> dict:
+    """The user answered Yes to "Start this run?". For a run started at deploy, that answer is the
+    deploy choice (the source's Gate 4 may predate the deploy option); it is recorded as such."""
+    run = Path(args.run)
+    s = load_state(run)
+    hist = s.get("history") or []
+    first = hist[0] if hist else {}
+    if not (first.get("decision") == "copied" and first.get("gate") == 4 and first.get("deploy") == "pending"):
+        return {"ok": True, "recorded": None, "stage": s["stage"]}
+    if s.get("deploy_choice") == "yes":
+        return {"ok": True, "recorded": None, "stage": s["stage"], "deploy_choice": "yes"}
+    s["deploy_choice"] = "yes"
+    _record(s, 4, "deploy-confirmed",
+            'the user answered Yes to "Start this run?" for --start-at deploy; this is the deploy choice '
+            f"(the source's Gate 4 recorded: {first.get('source_deploy_choice') or 'no deploy choice, approved before deploying existed'})")
+    s["history"][-1]["deploy"] = "yes"
+    save_state(run, s)
+    return {"ok": True, "recorded": "deploy_choice", "deploy_choice": "yes", "stage": s["stage"],
+            "next_skill": next_skill(s)}
+
+
 def cmd_set_cap(args) -> dict:
     run = Path(args.run)
     s = load_state(run)
@@ -1535,7 +1556,8 @@ def _start_from_run(args, at: str) -> dict:
     s["spec"] = dump(spec)
     s.update(copied)
     if at == "deploy":
-        s["deploy_choice"] = "yes"
+        # Pending until the user answers Yes to "Start this run?" (spec.py confirm-start).
+        s["deploy_choice"] = None
     s["stage"] = PIPELINE[STAGE_NAMES.index(at)][1][0]
     s["begun"] = None
     _record(s, gate, "copied", f"from run {st['run_id']}")
@@ -1543,6 +1565,10 @@ def _start_from_run(args, at: str) -> dict:
                             sha256=hashlib.sha256(snap_path.read_bytes()).hexdigest())
     if hash_from:
         s["history"][-1].update(bundle_hash_from=hash_from)
+    if copied.get("bundle_hash"):
+        s["history"][-1].update(bundle_hash=copied["bundle_hash"])
+    if at == "deploy":
+        s["history"][-1].update(source_deploy_choice=snap.get("deploy_choice"), deploy="pending")
     if moved_from:
         s["history"][-1].update(bundle_dir_moved_from=moved_from)
     if code_from:
@@ -1872,6 +1898,9 @@ def require_problems(s: dict, name: str, env=None) -> list[str]:
         approvals = [i for i, h in enumerate(hist) if h.get("gate") == 4 and h.get("decision") in ("approve", "copied")]
         if not approvals or _superseded_by(hist, approvals[-1], 4):
             out.append(f"Gate 4 has not been approved for the current bundle — run {_run_cmd(s, 'emit')}")
+        elif s.get("deploy_choice") != "yes" and hist[approvals[-1]].get("deploy") == "pending":
+            out.append('the user has not confirmed starting this run yet ("Start this run?" → Yes, then '
+                       f"spec.py confirm-start --run {s['run_id']})")
         elif s.get("deploy_choice") != "yes":
             out.append("Gate 4 was approved without deploying; to deploy this bundle, start a new run "
                        f"from it: /{PLUGIN}:curate --start-at deploy --from-run {s['run_id']}")
@@ -2304,6 +2333,7 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--text", required=True)
     q.add_argument("--structural")
     with_run("set-cap").add_argument("--max", type=int, required=True)
+    with_run("confirm-start")
     with_run("set-stage").add_argument("--stage", required=True, choices=STAGES)
     with_run("show").add_argument("--gate", type=int, required=True, choices=[1, 2, 3, 4])
     with_run("summary")
@@ -2334,7 +2364,7 @@ COMMANDS = {
     "skeleton": cmd_skeleton, "apply-candidates": cmd_apply_candidates,
     "merge-resolved": cmd_merge_resolved, "check": cmd_check, "toposort": cmd_toposort,
     "approve": cmd_approve, "directive": cmd_directive, "set-cap": cmd_set_cap,
-    "set-stage": cmd_set_stage, "show": cmd_show, "summary": cmd_summary,
+    "set-stage": cmd_set_stage, "confirm-start": cmd_confirm_start, "show": cmd_show, "summary": cmd_summary,
     "import": cmd_import, "start": cmd_start, "next": cmd_next, "require": cmd_require, "begin": cmd_begin,
     "end": cmd_end,
 }

@@ -34,7 +34,8 @@ Arguments: `$ARGUMENTS`
      "Start this run?", header "Start", options **Yes** and **Stop**, each with the summary as
      `preview`. Use AskUserQuestion whenever it is available; only without it (e.g. headless)
      end with "Reply **yes** to start or **stop** to leave it." and end the turn. Wait.
-     - **Yes** → the loop.
+     - **Yes** → `spec.py confirm-start --run <new run>` (for `--start-at deploy` this records
+       the user's Yes as the deploy choice), then the loop.
      - **Stop** → `spec.py set-stage --run <new run> --stage stopped`. Nothing is deleted: the
        source was never touched, and the new run stays, marked stopped and unchanged otherwise.
        Tell the user the `resume_command` it returns.

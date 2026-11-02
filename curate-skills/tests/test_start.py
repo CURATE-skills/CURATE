@@ -318,12 +318,23 @@ def test_start_at_deploy_copies_the_approved_bundle_and_its_hash(source_run, cap
     assert code == 0, out
     new = Path(out["run"])
     s, src = state(new), state(source_run)
-    assert s["stage"] == "deploy" and s["deploy_choice"] == "yes" and out["next_skill"] == "curate-skills:curate-deploy"
+    assert s["stage"] == "deploy" and out["next_skill"] == "curate-skills:curate-deploy"
     assert s["bundle_dir"] == src["bundle_dir"] and s["bundle_hash"] == src["bundle_hash"]
-    assert s["history"][-1]["bundle_hash_from"] == "the Gate 4 approval snapshot"
+    rec = s["history"][-1]
+    assert rec["bundle_hash_from"] == "the Gate 4 approval snapshot" and rec["bundle_hash"] == src["bundle_hash"]
+    assert rec["from_run"] == rid and rec["snapshot"].endswith("gate4-approve.json")
     assert out["redoes"] == ["deploy", "finalize"]
     assert "- Bundle hash (checked against the bundle now): from the Gate 4 approval snapshot" in out["summary"]
+    # Not a deploy choice yet: that is the user's Yes to "Start this run?"
+    assert s["deploy_choice"] is None and rec["deploy"] == "pending" and rec["source_deploy_choice"] == "no"
+    code, req = call(S, ["require", "--run", str(new), "--stage", "deploy"], capsys)
+    assert code == 1 and 'has not confirmed starting this run' in req["problems"][0]
+    conf = ok(S, ["confirm-start", "--run", str(new)], capsys)
+    assert conf["recorded"] == "deploy_choice" and state(new)["deploy_choice"] == "yes"
+    last = state(new)["history"][-1]
+    assert last["decision"] == "deploy-confirmed" and 'answered Yes to "Start this run?"' in last["text"]
     assert ok(S, ["require", "--run", str(new), "--stage", "deploy"], capsys)["problems"] == []
+    assert ok(S, ["confirm-start", "--run", str(new)], capsys)["recorded"] is None  # once only
     assert tree_hash(source_run) == before
 
 
@@ -445,3 +456,50 @@ def test_a_moved_bundle_that_differs_from_the_hash_is_refused_at_finalize_too(so
     (new / "README.md").write_text("edited in the copy\n")
     code, out = start(capsys, source_run, "finalize", "--from-run", state(source_run)["run_id"])
     assert code == 2 and "does not match the hash recorded for the approved bundle" in out["error"]
+
+
+
+def test_confirm_start_records_nothing_for_other_start_points(source_run, capsys):
+    code, out = start(capsys, source_run, "emit", "--from-run", state(source_run)["run_id"])
+    before = state(Path(out["run"]))
+    assert ok(S, ["confirm-start", "--run", out["run"]], capsys)["recorded"] is None
+    assert state(Path(out["run"])) == before
+
+
+def test_start_at_deploy_end_to_end_with_fakes(source_run, capsys, monkeypatch):
+    """start --at deploy --from-run → confirm → begin → preflight → publish, against fakes."""
+    import deploy as D
+    from test_deploy import FAKE, FakeGitHub, FakeS3
+    for k, v in FAKE.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("FAASR_GH_USERNAME", "alice")
+    monkeypatch.setenv("FAASR_ACTION_REPO", "faasr-actions")
+    for k in ("FAASR_S3_ENDPOINT", "FAASR_S3_BUCKET", "FAASR_S3_REGION"):
+        monkeypatch.setenv(k, {"FAASR_S3_BUCKET": "b"}.get(k, "x"))
+    for k in ("FAASR_ACTION_BRANCH", "GITHUB_REPOSITORY", "GITHUB_REF_NAME", "CUSTOM_CONTAINER"):
+        monkeypatch.delenv(k, raising=False)
+    code, out = start(capsys, source_run, "deploy", "--from-run", state(source_run)["run_id"])
+    assert code == 0, out
+    new = out["run"]
+    ok(S, ["confirm-start", "--run", new], capsys)
+    assert ok(S, ["begin", "--run", new, "--stage", "deploy"], capsys)["mode"] == "fresh"
+
+    fake = FakeGitHub(writable=True)
+    code = D.main(["preflight", "--run", new], opener=fake, s3_factory=FakeS3())
+    pf = json.loads(capsys.readouterr().out)
+    assert code == 0 and pf["ok"], pf["problems"]
+    code = D.main(["publish", "--run", new], opener=fake, s3_factory=FakeS3())
+    assert json.loads(capsys.readouterr().out)["needs_confirmation"] and fake.puts == []
+    code = D.main(["publish", "--run", new, "--confirmed"], opener=fake, s3_factory=FakeS3())
+    res = json.loads(capsys.readouterr().out)
+    assert code == 0 and res["ok"], res
+    name = pf["deploy_name"]
+    assert name.endswith("-cs") and all(p.startswith(f"functions/{name}/") for p, _ in fake.puts)
+    assert len(fake.puts) == len(state(source_run)["spec"]["nodes"])
+
+    # the carried-over approval only counts while the bundle matches its hash
+    bundle = Path(state(Path(new))["bundle_dir"])
+    (bundle / "README.md").write_text("edited after approval\n")
+    code = D.main(["upload", "--run", new, "--confirmed"], opener=fake, s3_factory=FakeS3())
+    res = json.loads(capsys.readouterr().out)
+    assert code == 1 and any("no longer matches the Gate 4 approval carried over" in p for p in res["problems"])

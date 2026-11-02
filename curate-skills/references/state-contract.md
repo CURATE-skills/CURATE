@@ -11,7 +11,7 @@ A run lives in `<project>/.curate/runs/<run_id>/`. Only the scripts write `state
 | `user_request`, `user_models`, `context_files` | the sketch and attachments |
 | `stage`, `iteration`, `max_iterations` | where the run is (`skeleton`, `gate1`, `reuse`, `resolve`, `gate2`, `generate`, `gate3`, `emit`, `gate4`, `deploy`, `finalize`, `done`, `stopped`) and how many revision rounds were used |
 | `begun`, `stopped_from` | which stage was started (for resume); where a stopped run stopped |
-| `bundle_hash`, `deploy_choice` | sha256 of the bundle folder (OS metadata ignored) and `yes`/`no`, both recorded when Gate 4 is approved; curate-deploy refuses a bundle whose hash changed |
+| `bundle_hash`, `deploy_choice` | sha256 of the bundle folder (OS metadata ignored) and `yes`/`no`, both recorded when Gate 4 is approved; curate-deploy refuses a bundle whose hash changed. A run started with `--start-at deploy` carries the source's approval over (history `copied` at gate 4, with `from_run`, `snapshot`, `bundle_hash`; it counts only while the bundle matches that hash), and its `deploy_choice` stays empty until the user answers Yes to "Start this run?" (`spec.py confirm-start`, history `deploy-confirmed`) |
 | `deploy` | written by `deploy.py`: `deploy_name`, `suffix`, `repo`, `branch`, `bundle_hash`, `steps.{publish,upload,register,invoke}` (`ok`, `ts`, `error`), and after invoke `invocation_id`, `invocation_timestamp`, `dispatched_at`, `workflow_name`. Every path a step wrote is also in `<run>/deploy/deploy-log.jsonl` |
 | `revision_directives`, `feedback`, `code_feedback`, `structural_change` | change requests; directives persist across rounds |
 | `skeleton_draft` | Gate 1 draft: `spec`, `last_good`, `parse_error`, `refinement` |

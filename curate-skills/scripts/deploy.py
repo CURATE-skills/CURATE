@@ -149,11 +149,23 @@ def load_run(run: str) -> tuple[dict, Path]:
     return s, bundle
 
 
-def gate4_problem(s: dict) -> str | None:
+def gate4_problem(s: dict, bundle_hash: str | None = None) -> str | None:
+    """None if the bundle is Gate 4-approved: approved in this run, or carried over from another
+    run's approval by `start --at deploy|finalize --from-run` — then only if the hash recorded with
+    the carried-over approval matches the bundle as it is now."""
     hist = s.get("history") or []
-    approvals = [i for i, h in enumerate(hist) if h.get("gate") == 4 and h.get("decision") == "approve"]
+    approvals = [i for i, h in enumerate(hist)
+                 if h.get("gate") == 4 and h.get("decision") in ("approve", "copied")]
     if not approvals:
         return "Gate 4 was never approved in this run; only an approved bundle can be deployed"
+    last = hist[approvals[-1]]
+    if last["decision"] == "copied":
+        if not (last.get("from_run") and last.get("snapshot") and last.get("bundle_hash")):
+            return ("this run's Gate 4 approval was carried over from another run without a bundle hash; "
+                    "start again with --start-at deploy --from-run <run_id>")
+        if bundle_hash is not None and last["bundle_hash"] != bundle_hash:
+            return (f"the bundle no longer matches the Gate 4 approval carried over from run "
+                    f"{last['from_run']} ({last['snapshot']}); it cannot be deployed")
     for h in hist[approvals[-1] + 1:]:
         if h.get("decision") in ("revise", "rewind"):
             return (f"the last Gate 4 approval was superseded by a later {h['decision']} "
@@ -472,9 +484,9 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
     s, bundle = load_run(run)
     wf = json.loads((bundle / "workflow.json").read_text())
     problems, warnings = [], []
-    if (p := gate4_problem(s)):
-        problems.append(p)
     bhash = tree_hash(bundle)
+    if (p := gate4_problem(s, bhash)):
+        problems.append(p)
     if s.get("bundle_hash") and s["bundle_hash"] != bhash:
         problems.append("the bundle folder changed after Gate 4 approval; re-run curate-emit")
     elif require_hash and not s.get("bundle_hash"):

@@ -941,3 +941,34 @@ Tests: 325 passed (without `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`); plugin valid
   go on — approve Gate 4 again, put the bundle back, or record a checked hash. Never by folder name
   alone. The guard now treats `.env*` (`.env.local`, `.envrc`, …) as well as `*.env` as credential
   files. Tests: 333 passed.
+
+## 33. Fix: --start-at deploy --from-run failed the preflight (user's run 20261101-172236)
+
+**Bug.** The user's real attempt (`/curate-skills:curate --start-at deploy --from-run
+20261020-215732-corvallis-winter-weather`, run `20261101-172236-corvallis-winter-weather-comparison`)
+stopped at the preflight: "Gate 4 was never approved in this run". `start` records the source's
+approval as a `copied` gate-4 entry; `deploy.py`'s check only knew `approve`. The D1 tests set up
+deploy runs by hand and never went through `start`. Nothing was written to GitHub or S3. That
+run is marked abandoned in its history (it also lacks the hash the fix records).
+
+**Also found:** `start --at deploy` set `deploy_choice: yes` when it created the run — before
+/curate asks "Start this run?". The choice was recorded ahead of the user's answer.
+
+**Fix.**
+- `start --at deploy|finalize --from-run` records the carried-over approval with `from_run`,
+  `snapshot` (+ sha256) and `bundle_hash`. `deploy.py` accepts a `copied` Gate 4 entry only with
+  all three, and only while the bundle's hash matches it.
+- Deploy choice: the user's Yes to "Start this run?" counts as the deploy choice, recorded as such.
+  `start --at deploy` leaves `deploy_choice` empty (history `deploy: pending`, plus the source's
+  own `source_deploy_choice`); /curate calls the new `spec.py confirm-start --run <new run>` after
+  Yes, which sets it and records `deploy-confirmed`. Until then the deploy stage is refused
+  ("the user has not confirmed starting this run"). For other start points confirm-start records
+  nothing.
+- Chosen over refusing and pointing to `--start-at emit` because it deploys exactly the bundle that
+  was reviewed and approved at Gate 4 (hash-checked), where `--start-at emit` would re-emit a new
+  bundle folder (new hash) and repeat Gate 4 only to add a choice the user makes explicitly here
+  anyway; each of the four steps still asks.
+- End-to-end test: a run taken through Gates 1-4 by the scripts → `start --at deploy --from-run`
+  → `confirm-start` → `begin deploy` → `deploy.py preflight` (ok) → `publish` without and with
+  `--confirmed` against the fake GitHub; then a bundle edit makes the next step refuse
+  ("no longer matches the Gate 4 approval carried over"). Tests: 335 passed.
