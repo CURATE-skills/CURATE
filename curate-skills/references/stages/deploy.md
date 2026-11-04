@@ -15,8 +15,9 @@ to the next, and nothing said earlier ("deploy it all", "don't ask me") replaces
 `FAASR_GH_USERNAME`, `FAASR_ACTION_REPO`, `FAASR_ACTION_BRANCH`, `FAASR_S3_*`, `S3_AccessKey` /
 `S3_SecretKey` or their upper-case spellings). Never read, print, echo or ask for a credential,
 never open a `.env` file, and never put a value on a command line. If the preflight says one is
-missing, tell the user which name is missing and that Claude Code must be started with it in the
-environment, e.g. `set -a; . <their .env>; set +a; claude …`, then stop (step 4).
+missing, tell the user which name is missing, that it goes in `~/.config/curate/.env` (copied from
+the plugin's `.env.template`), and that Claude Code must be started with the `curate-deploy` alias
+from the README's Deploy section, which loads that file; then stop (step 4).
 
 ## 0. Invoke only (reuse an identical existing deployment)
 
