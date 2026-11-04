@@ -6,12 +6,22 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-ENV_VARS = ("CURATE_CATALOG_DIR", "CURATE_MGA_RETRIES", "CURATE_STUBTEST_MODE")
+# Cleared for every test, so a developer's shell (settings, a loaded deploy .env) can't change
+# results. Names are matched without regard to case, as the scripts do (S3_ACCESSKEY).
+ENV_VARS = ("CURATE_CATALOG_DIR", "CURATE_MGA_RETRIES", "CURATE_STUBTEST_MODE",
+            "CURATE_DEPLOY_NAME_SUFFIX", "CURATE_MONITOR_MINUTES", "GH_PAT")
+ENV_PREFIXES = ("FAASR_", "S3_")
+
+
+def isolated_env_names(names) -> list[str]:
+    exact = {v.upper() for v in ENV_VARS}
+    return [n for n in names if n.upper() in exact or n.upper().startswith(ENV_PREFIXES)]
 
 
 @pytest.fixture(autouse=True)
 def _isolated_curate_env(monkeypatch):
-    for v in ENV_VARS:
+    import os
+    for v in isolated_env_names(list(os.environ)):
         monkeypatch.delenv(v, raising=False)
 
 
