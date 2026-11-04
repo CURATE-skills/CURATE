@@ -253,3 +253,43 @@ def test_e2_seed_retrieval_for_e4_steps(query, expected, top):
     assert expected in hits
     if top:
         assert hits[0] == expected
+
+
+def test_curate_catalog_skill_commands_run_as_documented(tmp_path):
+    """Every `catalog.py …` row of the skill's table, with the settings flag appended exactly as the
+    skill says (single quotes, unsubstituted as under --plugin-dir), parses and runs in sh."""
+    import os
+    import re
+    import subprocess
+    import sys
+    plugin = Path(__file__).resolve().parents[1]
+    text = (plugin / "skills" / "curate-catalog" / "SKILL.md").read_text()
+    shape = ("`uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/catalog.py <subcommand> [its arguments] "
+             "--config-catalog-dir '${user_config.catalog_dir}'`")
+    assert shape in text
+    suffix = " --config-catalog-dir '${user_config.catalog_dir}'"
+    rows = re.findall(r"\| `(catalog\.py [^`]+)`", text)
+    assert {r.split()[1] for r in rows} == {"where", "list", "search", "init", "import", "export"}
+    seed = plugin / "tests" / "fixtures" / "catalog-e2-mapreduce"
+    fill = {"<query>": "count words", "<path>...": str(seed), "<dir>": str(tmp_path / "out"),
+            " [--workflows]": " --workflows", " [--ids ...]": ""}
+    cat = tmp_path / "cat"
+    first = {"init": 0, "import": 1}  # create and seed the catalog before the read-only commands
+    for row in sorted(rows, key=lambda r: first.get(r.split()[1], 2)):
+        cmd = row
+        for k, v in fill.items():
+            cmd = cmd.replace(k, v)
+        line = f'"{sys.executable}" "{plugin}/scripts/{cmd.split(" ", 1)[0]}" {cmd.split(" ", 1)[1]}{suffix}'
+        proc = subprocess.run(["sh", "-c", line], capture_output=True, text=True, timeout=60,
+                              env={**os.environ, "CURATE_CATALOG_DIR": str(cat)})
+        assert proc.returncode == 0, (row, proc.stdout, proc.stderr)
+        out = json.loads(proc.stdout)
+        assert out.get("ok", True) is not False, (row, out)
+    where = subprocess.run(["sh", "-c", f'"{sys.executable}" "{plugin}/scripts/catalog.py" where{suffix}'],
+                           capture_output=True, text=True, env={**os.environ, "CURATE_CATALOG_DIR": str(cat)})
+    info = json.loads(where.stdout)
+    assert str(cat.resolve()) in json.dumps(info) and "CURATE_CATALOG_DIR" in json.dumps(info)
+    # the old, wrong order is rejected by the script
+    bad = subprocess.run(["sh", "-c", f'"{sys.executable}" "{plugin}/scripts/catalog.py"{suffix} where'],
+                         capture_output=True, text=True)
+    assert bad.returncode == 2

@@ -8,9 +8,15 @@ allowed-tools: Read, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/catalog.p
 
 # curate-catalog
 
-Thin wrapper over `uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/catalog.py`. Always add
-`--config-catalog-dir '${user_config.catalog_dir}'` so the plugin setting is honoured. Keep it in single quotes exactly as written — if the setting
-was not filled in, the literal text must reach the script, which treats it as unset.
+Thin wrapper over `uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/catalog.py`. Every command has
+this shape — **the subcommand first**, then its own arguments, then the settings flag (the script
+rejects flags placed before the subcommand):
+
+`uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/catalog.py <subcommand> [its arguments] --config-catalog-dir '${user_config.catalog_dir}'`
+
+For example: `uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/catalog.py where --config-catalog-dir '${user_config.catalog_dir}'`.
+Keep `--config-catalog-dir` in single quotes exactly as written, so the plugin setting is honoured —
+if the setting was not filled in, the literal text must reach the script, which treats it as unset.
 
 Arguments: `$ARGUMENTS`
 
@@ -23,7 +29,7 @@ Arguments: `$ARGUMENTS`
 | `import <path>...` | `catalog.py import <path>... --dedupe-code` — accepts a catalog folder, a single entry file, or the original CURATE prototype's `catalog/data/` folder |
 | `export <dir> [ids]` | `catalog.py export --out <dir> [--ids ...]` |
 
-Add `--catalog-dir <dir>` when the user names a folder. Report what changed; never delete
+Add `--catalog-dir <dir>` (also after the subcommand) when the user names a folder. Report what changed; never delete
 entries (there is no delete command — tell the user to remove files under
 `<catalog>/functions/` by hand if they want to).
 
