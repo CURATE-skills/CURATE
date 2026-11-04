@@ -54,32 +54,20 @@ setup:
 ```
 
 Every line should say `ok` (a `warn` about `.curate/` in `.gitignore` is advice). Each `FAIL`
-line says what to fix. The first run takes a minute or two while `uv` downloads Python 3.13 and
-the packages.
+line says what to fix. On the first run `uv` downloads Python 3.13 and the packages.
 
-## Quick start: the paper's E2 (MapReduce) to Gate 4
+## Quick start: the paper's E2 (MapReduce)
 
-Start `curate` in an empty folder. Paste the command below, where `<prompt>` is the text inside
-the code block of `experiments/prompts/e2-mapreduce.md` in the clone (word counting with
-N=3 mappers, W=5000 words, M=5 reducers):
+Start `curate` in an empty folder and run this, where `<prompt>` is the text inside the code block
+of `experiments/prompts/e2-mapreduce.md` in the clone (`--catalog ./catalog` keeps the try-out away
+from your real catalog):
 
 ```
 /curate-skills:curate <prompt> --catalog ./catalog
 ```
 
-`--catalog ./catalog` keeps this try-out away from your real catalog. Then answer each gate with
-`approve`. What you should see (a run on this version, 2026-11-03):
-
-| Turn | You type | Stage(s) | Ends at | Time | Cost |
-|---|---|---|---|---|---|
-| 1 | the command | skeleton | **Gate 1**: 5 steps `generate_input_text → split → map ×3 → shuffle → reduce ×5` | ~45 s | ~$0.36 |
-| 2 | `approve` | reuse, resolve | **Gate 2**: all `[new]`, files and data flow | ~1 min | ~$0.5 |
-| 3 | `approve` | generate (5 subagents) | **Gate 3**: 5/5 `passed` stub tests | ~5 min | ~$1.75 |
-| 4 | `approve` | emit | **Gate 4**: bundle in `faasr_output/…`, `validation: passed (level faasr_py)` | ~30 s | ~$0.2 |
-
-About **7 minutes and $2.8** to Gate 4 (Claude Opus 5.5; costs vary between runs). At Gate 4 type
-`approve, no deploy` to finish (finalize shows a summary and offers to save the functions to the
-catalog), or see [Deploy](#deploy).
+The run stops at each gate for your review (see [Gates](#gates)). The validated bundle ends up in
+`faasr_output/<workflow>-<run_id>/` in that folder.
 
 ## Gates
 

@@ -82,3 +82,11 @@ def test_root_readme_points_to_the_plugin_readme():
     root = (PLUGIN.parent / "README.md").read_text()
     assert "git clone https://github.com/laurakuo1006/skill-curate.git" in root
     assert "](curate-skills/README.md)" in root and len(root.splitlines()) < 15
+
+
+def test_quick_start_is_short_and_the_readme_has_no_cost_or_time_figures():
+    quick = README[README.index("## Quick start"):README.index("## Gates")]
+    assert "/curate-skills:curate <prompt> --catalog ./catalog" in quick
+    assert "stops at each gate for your review" in quick and "faasr_output/<workflow>-<run_id>/" in quick
+    assert "| Turn |" not in quick and "approve, no deploy" not in quick
+    assert not re.search(r"\$\d|~\s?\d+\s?(s|min)\b|\d+\s?minutes? and \$|minute or two", README)
