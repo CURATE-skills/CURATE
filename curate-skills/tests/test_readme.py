@@ -65,3 +65,20 @@ def test_template_copy_command_matches_the_template():
     assert (PLUGIN / ".env.template").exists()
     assert "Never paste a secret into a Claude Code session" in README
     assert "/curate-skills:curate-doctor --deploy --online" in README
+
+
+def test_permission_rules_live_in_docs_not_the_install_flow():
+    assert "Permissions (recommended" not in README and '"permissions"' not in README
+    assert "Edit(./.curate/**)" not in README and "docs/permissions.md" not in README
+    assert ("| Claude Code asks for permission during a run? | That's expected. Choose **Yes** (or **Yes, and "
+            "don't ask again** for this project). Choosing **No** stops that step. |") in README
+    doc = (PLUGIN / "docs" / "permissions.md").read_text()
+    for rule in ('"Bash(uv run --quiet /absolute/path/to/skill-curate/curate-skills/scripts/*)"',
+                 '"Read(//absolute/path/to/skill-curate/curate-skills/**)"', '"Edit(./.curate/**)"'):
+        assert rule in doc
+
+
+def test_root_readme_points_to_the_plugin_readme():
+    root = (PLUGIN.parent / "README.md").read_text()
+    assert "git clone https://github.com/laurakuo1006/skill-curate.git" in root
+    assert "](curate-skills/README.md)" in root and len(root.splitlines()) < 15

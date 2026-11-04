@@ -57,36 +57,6 @@ Every line should say `ok` (a `warn` about `.curate/` in `.gitignore` is advice)
 line says what to fix. The first run takes a minute or two while `uv` downloads Python 3.13 and
 the packages.
 
-**Permissions (recommended, once).** Only the first turn of a curate command runs with the
-skill's own permissions; your gate answers are later turns, where Claude Code asks before it runs
-the plugin's scripts, reads the plugin's files, or writes the run's files under `.curate/` (the
-subagents too). Add these three rules once to your **user settings**, `~/.claude/settings.json`
-(merge them into an existing `"permissions"` → `"allow"` list if you have one), and they apply in
-every project:
-
-```json
-{
-  "permissions": {
-    "allow": [
-      "Bash(uv run --quiet /absolute/path/to/skill-curate/curate-skills/scripts/*)",
-      "Read(//absolute/path/to/skill-curate/curate-skills/**)",
-      "Edit(./.curate/**)"
-    ]
-  }
-}
-```
-
-- `Bash(…)` allows only commands that start with `uv run --quiet` and this plugin's `scripts/`
-  folder — not `uv run` in general. Use the same absolute path as in the alias, without quotes.
-- `Read(//…)`: the plugin's own files. `//` marks an absolute path; a single `/` would be read
-  relative to the settings file's folder.
-- `Edit(./.curate/**)`: writes under the `.curate/` folder of whichever project you're in (`./`
-  is the session's folder). Covers Write too. Nothing outside `.curate/` is pre-approved.
-
-Without them, answer the prompts ("Yes, and don't ask again" stores a rule in that project's
-`.claude/settings.local.json`). To limit the rules to one project, put the same block in that
-project's `.claude/settings.local.json` instead.
-
 ## Quick start: the paper's E2 (MapReduce) to Gate 4
 
 Start `curate` in an empty folder. Paste the command below, where `<prompt>` is the text inside
@@ -254,7 +224,7 @@ The plugin also declares Claude Code plugin settings (`catalog_dir`, `mga_retrie
 | Generation stops with "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS" | Quit and start with the `curate` alias. |
 | Every Write/Edit/Bash is blocked | The hook can't run: `python3` is missing or older than 3.9. Install it, or disable the plugin. |
 | "uv is not on PATH" | Install uv and open a new terminal. |
-| A permission prompt on every gate answer | Add the three rules under "Permissions" in [Install](#install). |
+| Claude Code asks for permission during a run? | That's expected. Choose **Yes** (or **Yes, and don't ask again** for this project). Choosing **No** stops that step. |
 | Skills appear twice / doctor says "loaded twice" | The plugin is also installed via `/plugin`; uninstall that copy or drop `--plugin-dir`. |
 | Emit says the FaaSr_py validator could not run | uv couldn't fetch FaaSr_py (offline?); emit used its built-in checks instead. Rerun when online. |
 | Deploy preflight lists missing variables | Start the session with `curate-deploy`, and check `~/.config/curate/.env` with `/curate-skills:curate-doctor --deploy`. |
