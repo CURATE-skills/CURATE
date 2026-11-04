@@ -86,7 +86,17 @@ def test_root_readme_points_to_the_plugin_readme():
 
 def test_quick_start_is_short_and_the_readme_has_no_cost_or_time_figures():
     quick = README[README.index("## Quick start"):README.index("## Gates")]
-    assert "/curate-skills:curate <prompt> --catalog ./catalog" in quick
-    assert "stops at each gate for your review" in quick and "faasr_output/<workflow>-<run_id>/" in quick
-    assert "| Turn |" not in quick and "approve, no deploy" not in quick
+    # the weather sketch from the real runs, verbatim (20 Oct and 1 Nov runs' user_request)
+    assert ("/curate-skills:curate Build me a FaaSr workflow that compares this winter's weather in Corvallis, "
+            "Oregon with the past 10 years. Download the NOAA GHCN-Daily CSV for station USC00351862.") in quick
+    assert "Temperatures in the data are in tenths of a degree Celsius.\n```" in quick
+    assert quick.count("```") == 2  # one code block: only the command
+    flat = " ".join(quick.split())
+    assert ("runs the **full pipeline** — sketch → outline → reuse → design → code + tests → bundle → catalog — "
+            "stopping at each gate for your review") in flat
+    assert "faasr_output/<workflow>-<run_id>/" in quick
+    e2 = "experiments/prompts/e2-mapreduce.md"
+    assert e2 in quick and (PLUGIN.parent / e2).exists()
+    assert "reconstructed, not the paper's verbatim prompt" in flat
+    assert "approve" not in quick and "| Turn |" not in quick
     assert not re.search(r"\$\d|~\s?\d+\s?(s|min)\b|\d+\s?minutes? and \$|minute or two", README)

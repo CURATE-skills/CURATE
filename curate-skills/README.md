@@ -56,18 +56,21 @@ setup:
 Every line should say `ok` (a `warn` about `.curate/` in `.gitignore` is advice). Each `FAIL`
 line says what to fix. On the first run `uv` downloads Python 3.13 and the packages.
 
-## Quick start: the paper's E2 (MapReduce)
+## Quick start: a weather visualization workflow
 
-Start `curate` in an empty folder and run this, where `<prompt>` is the text inside the code block
-of `experiments/prompts/e2-mapreduce.md` in the clone (`--catalog ./catalog` keeps the try-out away
-from your real catalog):
+Start `curate` in an empty folder and run:
 
 ```
-/curate-skills:curate <prompt> --catalog ./catalog
+/curate-skills:curate Build me a FaaSr workflow that compares this winter's weather in Corvallis, Oregon with the past 10 years. Download the NOAA GHCN-Daily CSV for station USC00351862. Then, in parallel, process precipitation (PRCP), minimum temperature (TMIN) and maximum temperature (TMAX): for each, take the values from 2025-01-01 to 2025-03-01, and the daily average over the same dates in each of the previous 10 years (extend that window by 30 days). Finally, plot a figure with three panels (precipitation, max temperature, min temperature) showing this year as a solid line and the 10-year average as a dashed line. Temperatures in the data are in tenths of a degree Celsius.
 ```
 
-The run stops at each gate for your review (see [Gates](#gates)). The validated bundle ends up in
-`faasr_output/<workflow>-<run_id>/` in that folder.
+`/curate-skills:curate <sketch>` runs the **full pipeline** — sketch → outline → reuse → design →
+code + tests → bundle → catalog — stopping at each gate for your review (see [Gates](#gates)).
+The validated bundle ends up in `faasr_output/<workflow>-<run_id>/` in that folder.
+
+To try E2 (word count) from the CURATE paper, the sketch is in
+`experiments/prompts/e2-mapreduce.md` in the clone; run it the same way. That prompt is
+reconstructed, not the paper's verbatim prompt.
 
 ## Gates
 
