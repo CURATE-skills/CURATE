@@ -64,7 +64,8 @@ folder, then:
 ### Run your own workflow
 
 This command runs the entire pipeline (sketch → outline → reuse → design → code + tests → bundle →
-catalog), stopping at each gate for your review (see [Gates](#gates)).
+[deploy → monitor, if you choose it at Gate 4] → catalog), stopping at each gate for your review
+(see [Gates](#gates)).
 
 ```text
 /curate-skills:curate <your sketch>
@@ -96,12 +97,22 @@ words.
 | 1 | skeleton | the steps and their order |
 | 2 | reuse + resolve | per function: new, from the catalog, adapted, or cached; files and data flow; packages |
 | 3 | generate | the code and each function's stub-test result (ask to see any function) |
-| 4 | emit | the validated bundle; **approve & deploy**, **approve, no deploy**, or **stop** |
+| 4 | emit | the validated bundle; **approve & deploy**, **approve, no deploy**, or **stop** (see below) |
 | 5 | finalize | the summary; which verified functions to save to the catalog |
 
 A change at Gates 2–4 sends the run back to the right stage (structural changes to the skeleton,
 functional ones to reuse; working functions come back as `[cached]`). Each change request is one
 revision round; after 5, only approve or stop.
+
+**After Gate 4**, `/curate-skills:curate` carries on in the same session:
+- **approve & deploy** → deploy (a read-only preflight, then four separate confirmations; see
+  [Deploy](#deploy)) → after invoke, monitor watches the run → on success, finalize (Gate 5).
+  It stops early only if you choose **Stop here** at a deploy step, or monitor ends with
+  `failure` or `timeout`; each time it prints the command to continue.
+- **approve, no deploy** → straight to finalize (Gate 5).
+
+A stage skill started on its own (`/curate-skills:curate-deploy`, `curate-monitor`, …) stops
+after its stage and prints the next command instead.
 
 ## Start at a stage, resume, rewind
 
@@ -169,17 +180,20 @@ to be loaded into your shell and no other alias is needed. A variable set in the
 overrides the file.
 
 **4. Deploy.** Answer Gate 4 with **approve & deploy** (or run
-`/curate-skills:curate-deploy --run <run_id>` on a run approved that way). Deploy:
+`/curate-skills:curate-deploy --run <run_id>` on a run approved that way, which stops after
+deploy). Deploy:
 - runs a read-only **preflight** and shows every path it would write — all under a `-cs` name
   (`<Workflow>-cs`), so it never overwrites another deployment — and refuses if any exists;
 - then asks **four separate confirmations**, each right before it runs: **publish** (function
   files), **upload** (the deploy copy of `workflow.json`), **register** (the GitHub Actions
   files), **invoke** (start the workflow). A yes to one is never a yes to the next.
 
-**5. Monitor.** After invoke, curate-monitor watches the run read-only — the Actions runs, FaaSr's
-logs, and that every declared output was freshly written to S3 — for up to 10 minutes. Results:
-`success`, `success_unconfirmed` (a run matched by time only; you're asked at Gate 5), `failure`,
-or `timeout`. After a timeout it stops with a resume command; continue with a new budget:
+**5. Monitor.** Under `/curate-skills:curate`, monitor starts by itself after invoke. It watches
+the run read-only — the Actions runs, FaaSr's logs, and that every declared output was freshly
+written to S3 — for up to 10 minutes. Results: `success` or `success_unconfirmed` (a run matched
+by time only; you're asked at Gate 5) → finalize follows; `failure` or `timeout` → the run stops
+with a resume command. After a timeout, continue with a new budget (then
+`/curate-skills:curate --resume <run_id>` to finalize):
 
 ```
 /curate-skills:curate-monitor --run <run_id> --minutes 20

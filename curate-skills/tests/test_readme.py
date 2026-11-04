@@ -33,8 +33,9 @@ def _alias(name):
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="no bash")
 def test_one_alias_as_written(tmp_path):
-    assert "alias curate-deploy" not in README and "curate-deploy`" not in README.replace(
-        "`curate-deploy`, `curate-monitor`", "")  # the skill is listed; there is no deploy alias
+    # the curate-deploy *skill* is mentioned; there is no deploy alias or deploy session any more
+    for gone in ("alias curate-deploy", "curate-deploy` alias", "curate-deploy` session", "Start `curate-deploy`"):
+        assert gone not in README
     home, bindir = tmp_path / "home", tmp_path / "bin"
     home.mkdir()
     bindir.mkdir()
@@ -91,7 +92,8 @@ def test_quick_start_is_short_and_the_readme_has_no_cost_or_time_figures():
                                 "GHCN-Daily CSV for station USC00351862.")
     assert blocks[1].endswith("Temperatures in the data are in tenths of a degree Celsius.")
     assert ("This command runs the entire pipeline (sketch → outline → reuse → design → code + tests → "
-            "bundle → catalog), stopping at each gate for your review (see [Gates](#gates))") in flat
+            "bundle → [deploy → monitor, if you choose it at Gate 4] → catalog), stopping at each gate for your "
+            "review (see [Gates](#gates))") in flat
     assert "faasr_output/<workflow>-<run_id>/` in the folder you started in" in flat
     link = re.search(r"\]\((\.\./experiments/prompts/e2-mapreduce\.md)\)", quick)
     assert link and (PLUGIN / link.group(1)).resolve().exists()
@@ -104,3 +106,18 @@ def test_sketch_not_prompt():
     # "prompt" only in file/folder names and in "the paper's verbatim prompt"
     rest = README.replace("experiments/prompts/", "").replace("the paper's verbatim prompt", "")
     assert not re.search(r"\bprompts?\b", rest, re.I)
+
+
+def test_after_gate_4_matches_the_stage_flow():
+    """README's after-Gate-4 text matches the code: invoke → monitor, monitor success → finalize."""
+    gates = " ".join(README[README.index("## Gates"):README.index("## Start at a stage")].split())
+    assert ("**approve & deploy** → deploy (a read-only preflight, then four separate confirmations; see "
+            "[Deploy](#deploy)) → after invoke, monitor watches the run → on success, finalize (Gate 5).") in gates
+    assert "**approve, no deploy** → straight to finalize (Gate 5)." in gates
+    assert "stops after its stage and prints the next command" in gates
+    deploy_src = (PLUGIN / "scripts" / "deploy.py").read_text()
+    monitor_src = (PLUGIN / "scripts" / "monitor.py").read_text()
+    assert 'st.update(stage="monitor", begun=None)' in deploy_src  # after invoke
+    assert 'st.update(stage="finalize", begun=None)' in monitor_src  # after success
+    skill = (PLUGIN / "skills" / "curate" / "SKILL.md").read_text()
+    assert "do not stop — go back to step 1" in skill  # /curate chains the stages
