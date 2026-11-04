@@ -1169,3 +1169,31 @@ plot run failed while an early one succeeded, the Actions check alone would pass
 
 **Not exercised live:** a final stale or missing output, a failed action, an unconfirmed match —
 covered by fake tests only.
+
+## 39. curate-doctor: the first model-invocable curate skill (P2-A)
+
+`/curate-skills:curate-doctor` (`scripts/doctor.py`, commit `f387e9a`; policy and fixes in the
+commits after it) is the **first curate skill without `disable-model-invocation: true`**. Every
+stage skill, `curate-catalog`, `curate-deploy` and `curate-monitor` can only be started by the
+user typing it. Data point for v2-skills (model-invocable stage skills).
+
+**Policy (decided by the user, 2026-11-03).** Claude may run doctor on its own: the core checks,
+and `--deploy` for deploy problems (`--deploy` reads variable names and asks `gh` for a token; it
+contacts nothing). `--online` (GitHub GETs on the action repo, S3 `head_bucket`, with the user's
+token and keys) only when the user asks for it in their own words, or as curate-setup's last
+step. Stated in the skill's description and body; checked by text tests only.
+
+**Why doctor is safe to auto-invoke:** read-only, standard library, names only (every line goes
+through `leakcheck.redact`, plus any token it fetched itself), no state written, no network
+without `--online`.
+
+**Checked so far.**
+- Headless `claude -p "/curate-skills:curate-doctor" --plugin-dir …` from an empty scratch
+  project (session `8f760526-…`): 2 turns, $0.123; `--plugin-root` and `--config-catalog-dir`
+  were filled in, the output was shown verbatim, 7 ok.
+- `doctor.py --deploy --online` with the deploy `.env` loaded in a subshell: 11 ok against the
+  test action repo and bucket, no value printed.
+
+**Not yet observed:** whether Claude actually *chooses* doctor unprompted (e.g. after a curate
+command fails with "uv is not on PATH"), and that it then leaves out `--online`. To check in a
+fresh session with a plain-language problem report, as #20/#22 did for the rewind wording.

@@ -119,37 +119,76 @@ def claude_dir(tmp_path):
     return d
 
 
-def _install(claude_dir, entries, enabled=None):
+def _install(claude_dir, entries, user=None, project=None, local=None, project_dir=None):
     (claude_dir / "plugins" / "installed_plugins.json").write_text(json.dumps({"version": 2, "plugins": entries}))
-    if enabled is not None:
-        (claude_dir / "settings.json").write_text(json.dumps({"enabledPlugins": enabled}))
+    for path, val in ((claude_dir / "settings.json", user),
+                      (project_dir / ".claude" / "settings.json" if project_dir else None, project),
+                      (project_dir / ".claude" / "settings.local.json" if project_dir else None, local)):
+        if path is None:
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if val is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(json.dumps({"enabledPlugins": val}))
 
 
-def test_loaded_once(tmp_path, claude_dir):
+KEY = "curate-skills@curate-local"
+
+
+@pytest.fixture
+def loaded(tmp_path, claude_dir):
     project = tmp_path / "proj"
     project.mkdir()
     checkout = str(tmp_path / "clone" / "curate-skills")
     cached = str(claude_dir / "plugins" / "cache" / "mkt" / "curate-skills" / "0.1.0")
 
-    def status(root):
+    def status(root=checkout):
         r = doctor.Report()
         doctor.check_loaded_once(r, root, claude_dir, project)
         return one(r)
 
-    assert status(checkout)[0] == "ok"  # nothing installed: --plugin-dir only
-    _install(claude_dir, {"curate-skills@curate-local": [{"scope": "user", "installPath": cached}],
-                          "other@x": [{"scope": "user"}]})
-    st, msg = status(checkout)
-    assert st == "fail" and "loaded twice" in msg and "curate-skills@curate-local (user scope)" in msg
-    assert status(cached)[0] == "ok"  # the installed copy itself
-    assert status("${CLAUDE_PLUGIN_ROOT}")[0] == "warn"  # unsubstituted: can't tell
-    _install(claude_dir, {"curate-skills@curate-local": [{"scope": "user"}]},
-             enabled={"curate-skills@curate-local": False})
-    assert status(checkout)[0] == "ok"  # installed but disabled
-    _install(claude_dir, {"curate-skills@curate-local": [{"scope": "project", "projectPath": str(tmp_path / "elsewhere")}]}, enabled={})
-    assert status(checkout)[0] == "ok"  # installed for another project only
-    _install(claude_dir, {"curate-skills@curate-local": [{"scope": "project", "projectPath": str(project)}]}, enabled={})
-    assert status(checkout)[0] == "fail"
+    def install(entries, **settings):
+        _install(claude_dir, entries, project_dir=project, **settings)
+    return types.SimpleNamespace(status=status, install=install, project=project, cached=cached, tmp=tmp_path)
+
+
+def test_loaded_once_nothing_installed(loaded):
+    assert loaded.status() == ("ok", f"--plugin-dir: {loaded.tmp / 'clone' / 'curate-skills'}")
+
+
+@pytest.mark.parametrize("settings,status", [
+    ({"user": {KEY: True}}, "fail"),                          # user-scope install, enabled in user settings
+    ({"project": {KEY: True}}, "fail"),                       # ... enabled in this project's settings
+    ({"local": {KEY: True}}, "fail"),                         # ... enabled in settings.local.json
+    ({"user": {KEY: True}, "project": {KEY: False}}, "ok"),   # disabled for this project
+    ({"user": {KEY: False}, "local": {KEY: True}}, "fail"),   # local wins over user
+    ({"user": {KEY: False}}, "ok"),
+    ({"user": {"other@x": True}}, "warn"),                    # installed, not listed anywhere
+    ({}, "warn"),
+])
+def test_loaded_twice_user_scope_install(loaded, settings, status):
+    loaded.install({KEY: [{"scope": "user", "installPath": loaded.cached}], "other@x": [{"scope": "user"}]},
+                   **settings)
+    st, msg = loaded.status()
+    assert st == status
+    if status == "fail":
+        assert "loaded twice" in msg and f"{KEY} (user scope)" in msg and "/plugin uninstall" in msg
+    assert loaded.status(loaded.cached)[0] == "ok"  # the installed copy itself is loaded once
+
+
+def test_loaded_twice_project_scope_install(loaded):
+    loaded.install({KEY: [{"scope": "project", "projectPath": str(loaded.tmp / "elsewhere")}]}, user={KEY: True})
+    assert loaded.status()[0] == "ok"  # installed for another project only
+    loaded.install({KEY: [{"scope": "project", "projectPath": str(loaded.project)}]}, project={KEY: True})
+    st, msg = loaded.status()
+    assert st == "fail" and f"{KEY} (project scope)" in msg
+
+
+def test_loaded_once_outside_claude_code(loaded):
+    assert loaded.status("${CLAUDE_PLUGIN_ROOT}")[0] == "ok"
+    loaded.install({KEY: [{"scope": "user"}]}, user={KEY: True})
+    assert loaded.status(None)[0] == "warn" and loaded.status("${CLAUDE_PLUGIN_ROOT}")[0] == "warn"
 
 
 def test_catalog(tmp_path):
@@ -241,38 +280,97 @@ class FakeResp(io.BytesIO):
         return False
 
 
-def gh_opener(repo_status=200, push=True, scopes="repo, workflow", branch_status=200):
+CLASSIC = "ghp_" + "C" * 36
+FINE = "github_pat_" + "F" * 60
+GH_CLI = "gho_" + "O" * 36
+
+
+def gh_opener(token=CLASSIC, repo_status=200, push=True, scopes="repo, workflow", branch_status=200,
+              default_branch="main", denied=()):
+    """A fake GitHub API: classic/OAuth tokens get an X-OAuth-Scopes header, fine-grained ones don't."""
     seen = []
 
     def opener(req, timeout=None):
-        seen.append((req.get_method(), req.full_url, req.headers.get("Authorization")))
-        status = branch_status if "/branches/" in req.full_url else repo_status
+        url = req.full_url
+        seen.append((req.get_method(), url, req.headers.get("Authorization")))
+        if "/branches/" in url:
+            status = branch_status
+        elif url.endswith("/repos/alice/act"):
+            status = repo_status
+        else:
+            status = 403 if any(d in url for d in denied) else 200
+        hdrs = {"X-OAuth-Scopes": scopes} if (scopes is not None and not token.startswith("github_pat_")) else {}
         if status != 200:
-            raise doctor.urllib.error.HTTPError(req.full_url, status, "x", {}, None)
-        return FakeResp(200, {"permissions": {"pull": True, "push": push}},
-                        {"X-OAuth-Scopes": scopes} if scopes is not None else {})
+            raise doctor.urllib.error.HTTPError(url, status, "x", hdrs, None)
+        return FakeResp(200, {"permissions": {"pull": True, "push": push}, "default_branch": default_branch}, hdrs)
     opener.seen = seen
     return opener
 
 
-@pytest.mark.parametrize("kw,status,text", [
-    ({}, "ok", "readable, push allowed"),
-    ({"scopes": None}, "ok", "fine-grained token"),
-    ({"repo_status": 404}, "fail", "not found, or the token can't see it"),
-    ({"repo_status": 401}, "fail", "token was rejected"),
-    ({"push": False}, "fail", "can read but not push"),
-    ({"scopes": "repo"}, "fail", "lack ['workflow']"),
-    ({"branch_status": 404}, "fail", "branch 'main' not found"),
-])
-def test_repo_online(kw, status, text):
-    opener = gh_opener(**kw)
+def run_repo(token=CLASSIC, env=None, **kw):
+    opener = gh_opener(token=token, **kw)
     r = doctor.Report()
-    r.secrets["GH_PAT"] = TOKEN
-    doctor.check_repo_online(r, ALL_DEPLOY, TOKEN, opener)
-    st, msg = one(r)
-    assert st == status and text in msg and TOKEN not in msg
+    r.secrets["GH_PAT"] = token
+    doctor.check_repo_online(r, env or ALL_DEPLOY, token, opener)
+    out = {x["check"]: (x["status"], x["message"]) for x in r.rows}
+    assert all(token not in m for _, m in out.values())
     assert all(m == "GET" for m, _, _ in opener.seen)  # read-only
     assert opener.seen[0][1] == "https://api.github.com/repos/alice/act"
+    return out, opener
+
+
+@pytest.mark.parametrize("kw,status,text", [
+    ({}, "ok", "readable, push allowed"),
+    ({"repo_status": 404}, "fail", "not found, or the token can't see it"),
+    ({"repo_status": 401}, "fail", "token was rejected"),
+    ({"push": False}, "fail", "can read it but not push"),
+    ({"branch_status": 404}, "fail", "branch 'main' not found"),
+    ({"default_branch": "master"}, "fail", "default branch is 'master'"),
+])
+def test_repo_online(kw, status, text):
+    out, _ = run_repo(**kw)
+    assert out["action repo"][0] == status and text in out["action repo"][1]
+    if kw.get("repo_status"):
+        assert "token permissions" not in out  # nothing more to check
+
+
+@pytest.mark.parametrize("token,scopes,status,text", [
+    (CLASSIC, "repo, workflow", "ok", "classic token with scopes repo and workflow"),
+    (CLASSIC, "repo, workflow, read:org", "ok", "classic token"),
+    (CLASSIC, "repo", "fail", "lacks ['workflow']"),
+    (CLASSIC, "", "fail", "lacks ['repo', 'workflow']"),
+    (GH_CLI, "repo, workflow, gist", "ok", "classic token"),  # gh auth token: OAuth, has the header
+    (GH_CLI, "gist, read:org", "fail", "lacks ['repo', 'workflow']"),
+])
+def test_classic_token_scopes(token, scopes, status, text):
+    out, opener = run_repo(token=token, scopes=scopes)
+    assert out["token permissions"][0] == status and text in out["token permissions"][1]
+    assert len(opener.seen) == 2  # repo + branch only; no fine-grained probes
+
+
+def test_fine_grained_token_read_ok_warns_cant_verify():
+    out, opener = run_repo(token=FINE)
+    st, msg = out["token permissions"]
+    assert st == "warn" and msg.startswith("can't verify scopes (fine-grained token)")
+    assert "Contents, Workflows and Actions: read and write; Secrets: read" in msg
+    assert out["action repo"][0] == "ok"
+    probed = [u for _, u, _ in opener.seen]
+    assert "https://api.github.com/repos/alice/act/contents/?ref=main" in probed
+    assert "https://api.github.com/repos/alice/act/actions/workflows?per_page=1" in probed
+
+
+@pytest.mark.parametrize("denied,perm", [(("/contents/",), "Contents: read"), (("/actions/",), "Actions: read")])
+def test_fine_grained_token_missing_read_permission_fails(denied, perm):
+    out, _ = run_repo(token=FINE, denied=denied)
+    st, msg = out["token permissions"]
+    assert st == "fail" and "fine-grained token" in msg and f"{perm} (HTTP 403)" in msg
+    assert "Edit the token" in msg
+
+
+def test_unknown_token_without_scope_header_is_not_called_fine_grained():
+    out, _ = run_repo(token="ghs_" + "S" * 36, scopes=None)
+    st, msg = out["token permissions"]
+    assert st == "warn" and "token without a scope header" in msg
 
 
 def test_repo_online_needs_inputs():
@@ -384,3 +482,15 @@ def test_skill_runs_doctor_with_python3_and_reads_nothing_secret():
     flat = " ".join(text.split())
     assert "never open a `.env` file" in flat and "Never read, print, echo or ask for a credential" in flat
     assert "Don't try to fix anything yourself" in flat
+
+
+def test_skill_invocation_policy_online_only_when_asked():
+    text = (PLUGIN / "skills" / "curate-doctor" / "SKILL.md").read_text()
+    front = text.split("---")[1]
+    assert "disable-model-invocation" not in front  # the first model-invocable curate skill
+    desc = " ".join(front.split())
+    assert "Use it on your own" in desc and "--online contacts GitHub and S3 with the user's credentials: only " \
+        "when the user asks for it or curate-setup runs it" in desc
+    body = " ".join(text.split())
+    assert "Add `--online` **only** when the user asked for it in their own words" in body
+    assert "Never add `--online` because it seems useful" in body

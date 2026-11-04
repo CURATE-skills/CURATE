@@ -1,6 +1,6 @@
 ---
 name: curate-doctor
-description: Check that this machine is ready to run curate-skills — uv, the python3 the write-guard hook needs, Python 3.13 with CURATE's packages, the launch variable, the plugin loaded once, the catalog folder, .curate/ git-ignored — and, with --deploy, the deploy variables and a GitHub token (--online also reads the action repo and the S3 bucket). Read-only. Use it when the user asks whether curate is set up, or when a curate command fails for an environment reason.
+description: Check that this machine is ready to run curate-skills — uv, the python3 the write-guard hook needs, Python 3.13 with CURATE's packages, the launch variable, the plugin loaded once, the catalog folder, .curate/ git-ignored — and, with --deploy, the deploy variables and a GitHub token. Read-only. Use it on your own when the user asks whether curate is set up, or when a curate command fails for an environment reason (core checks, and --deploy for deploy problems). --online contacts GitHub and S3 with the user's credentials: only when the user asks for it or curate-setup runs it.
 argument-hint: "[--deploy [--online]]"
 allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py *)
 ---
@@ -9,7 +9,14 @@ allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py *)
 
 Arguments: `$ARGUMENTS` (only `--deploy` and `--online` are passed on; ignore anything else).
 
-1. Run exactly this, adding `--deploy` and/or `--online` if the arguments contain them:
+**When to add which flag.** You may run doctor on your own initiative — the core checks, and
+`--deploy` when the problem is about deploying (`--deploy` only looks at variable names and asks
+`gh` for a token; it contacts nothing). Add `--online` **only** when the user asked for it in
+their own words (e.g. "check my repo and bucket", `/curate-skills:curate-doctor --online`) or
+when `/curate-skills:curate-setup` runs it as its last step: it uses the user's GitHub token and
+S3 keys to read their repo and bucket. Never add `--online` because it seems useful.
+
+1. Run exactly this, adding `--deploy` and/or `--online` as allowed above:
 
    `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py --plugin-root '${CLAUDE_PLUGIN_ROOT}' --config-catalog-dir '${user_config.catalog_dir}'`
 

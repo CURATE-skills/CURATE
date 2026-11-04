@@ -145,12 +145,15 @@ def check_foreground(r: Report, env):
               f"the `curate` alias: {LAUNCH}")
 
 
-def _installed_entries(claude_dir: Path, project: Path) -> list[str]:
-    """`curate-skills@<marketplace>` installs that are enabled for this project."""
+def _installed_entries(claude_dir: Path, project: Path) -> tuple[list[str], list[str]]:
+    """`curate-skills@<marketplace>` installs that apply to this project: user-scope installs (no
+    projectPath) everywhere, project/local-scope ones only here. Returns (enabled, unknown):
+    enabled = enabledPlugins says true in the user, project or local settings (later wins);
+    unknown = installed but not listed in any of them."""
     try:
         data = json.loads((claude_dir / "plugins" / "installed_plugins.json").read_text())
     except (OSError, ValueError):
-        return []
+        return [], []
     enabled: dict = {}
     for f in (claude_dir / "settings.json", project / ".claude" / "settings.json",
               project / ".claude" / "settings.local.json"):
@@ -158,35 +161,44 @@ def _installed_entries(claude_dir: Path, project: Path) -> list[str]:
             enabled.update(json.loads(f.read_text()).get("enabledPlugins") or {})
         except (OSError, ValueError, AttributeError):
             pass
-    found = []
+    on, unknown = [], []
     for key, entries in (data.get("plugins") or {}).items():
-        if not key.startswith(PLUGIN_NAME + "@") or enabled.get(key) is False:
+        if not key.startswith(PLUGIN_NAME + "@"):
             continue
         for e in entries if isinstance(entries, list) else [entries]:
-            pp = (e or {}).get("projectPath")
-            if not pp or Path(pp).resolve() == project.resolve():
-                found.append(f"{key} ({(e or {}).get('scope', 'user')} scope)")
-                break
-    return found
+            e = e or {}
+            pp = e.get("projectPath")
+            if pp and Path(pp).resolve() != project.resolve():
+                continue  # a project/local-scope install for another project
+            label = f"{key} ({e.get('scope') or ('project' if pp else 'user')} scope)"
+            if enabled.get(key) is True:
+                on.append(label)
+            elif key not in enabled:
+                unknown.append(label)
+            break
+    return on, unknown
 
 
 def check_loaded_once(r: Report, plugin_root: str | None, claude_dir: Path, project: Path):
-    installed = _installed_entries(claude_dir, project)
+    installed, unknown = _installed_entries(claude_dir, project)
     root = plugin_root if plugin_root and not plugin_root.startswith("${") else None
+    fix = "Uninstall it (/plugin uninstall <name>) or drop --plugin-dir from the alias."
     if root is None:
-        msg = "can't tell how the plugin is loaded outside Claude Code"
-        if installed:
-            r.add("core", "loaded once", "warn", f"{msg}; it is also installed as {', '.join(installed)}. If "
-                  "your alias uses --plugin-dir, uninstall that copy (/plugin uninstall <name>).")
+        both = installed + unknown
+        if both:
+            r.add("core", "loaded once", "warn", "can't tell how the plugin is loaded outside Claude Code; it is "
+                  f"also installed as {', '.join(both)}. If your alias uses --plugin-dir: {fix}")
         else:
             r.add("core", "loaded once", "ok", "no installed copy; loaded only via --plugin-dir")
         return
     cache = (claude_dir / "plugins").resolve()
     via_dir = cache not in Path(root).resolve().parents
     if via_dir and installed:
-        r.add("core", "loaded once", "fail", f"loaded twice: --plugin-dir {root} and installed as "
-              f"{', '.join(installed)}. Skills, the subagent and the hook would run twice under one name. "
-              "Uninstall the installed copy (/plugin uninstall <name>) or drop --plugin-dir from the alias.")
+        r.add("core", "loaded once", "fail", f"loaded twice: --plugin-dir {root} and the enabled install "
+              f"{', '.join(installed)}. Skills, the subagent and the hook would run twice under one name. {fix}")
+    elif via_dir and unknown:
+        r.add("core", "loaded once", "warn", f"--plugin-dir {root}, and also installed as {', '.join(unknown)} "
+              "(not listed in enabledPlugins, so it may be enabled). Check /plugin; if it is enabled: " + fix)
     else:
         r.add("core", "loaded once", "ok", f"{'--plugin-dir' if via_dir else 'installed'}: {root}")
 
@@ -299,6 +311,21 @@ def _gh_get(url, token, opener=None):
         return None, {}, f"{type(e).__name__}"
 
 
+# What deploy and monitor do with the token, as fine-grained repository permissions.
+FINE_GRAINED_NEEDS = "Contents, Workflows and Actions: read and write; Secrets: read"
+# Read-only probes for the read half of those (path under /repos/<user>/<repo>, permission).
+FINE_GRAINED_READ_PROBES = (("/contents/?ref={branch}", "Contents: read"),
+                            ("/actions/workflows?per_page=1", "Actions: read"))
+
+
+def token_kind(token: str, headers: dict) -> str:
+    """classic (incl. gh's OAuth token): GitHub sends X-OAuth-Scopes. fine-grained: github_pat_…
+    and no scope header. other: no scope header and an unknown prefix (e.g. a GitHub App token)."""
+    if "x-oauth-scopes" in headers:
+        return "classic"
+    return "fine-grained" if token.startswith("github_pat_") else "other"
+
+
 def check_repo_online(r: Report, env, token, opener=None):
     user, repo = str(env.get("FAASR_GH_USERNAME", "")).strip(), str(env.get("FAASR_ACTION_REPO", "")).strip()
     branch = str(env.get("FAASR_ACTION_BRANCH", "")).strip() or "main"
@@ -306,29 +333,58 @@ def check_repo_online(r: Report, env, token, opener=None):
         r.add("deploy", "action repo", "fail", "not checked: FAASR_GH_USERNAME, FAASR_ACTION_REPO or the "
               "token is missing (see above).")
         return
-    status, headers, body = _gh_get(f"https://api.github.com/repos/{user}/{repo}", token, opener)
+    base = f"https://api.github.com/repos/{user}/{repo}"
+    status, headers, body = _gh_get(base, token, opener)
+    headers = {k.lower(): v for k, v in headers.items()}
     if status != 200:
         why = {401: "the token was rejected (expired or revoked?)",
                404: "not found, or the token can't see it"}.get(status, f"HTTP {status or body}")
         r.add("deploy", "action repo", "fail", f"{user}/{repo}: {why}. Create the repo (see curate-setup) "
               "or fix FAASR_GH_USERNAME / FAASR_ACTION_REPO / the token.")
         return
+
+    # The repo itself: push allowed, branch exists and is the default branch (as deploy's preflight).
     perms = (body or {}).get("permissions") or {}
-    scopes = {s.strip() for s in (headers.get("X-OAuth-Scopes") or headers.get("x-oauth-scopes") or "").split(",")
-              if s.strip()}
     notes = []
     if perms and not perms.get("push"):
-        notes.append("the token can read but not push (deploy commits the workflow and functions)")
-    if scopes and not {"repo", "workflow"} <= scopes:
-        notes.append(f"classic token scopes {sorted(scopes)} lack {sorted({'repo', 'workflow'} - scopes)}")
-    status_b, _, _ = _gh_get(f"https://api.github.com/repos/{user}/{repo}/branches/{branch}", token, opener)
+        notes.append("you can read it but not push (deploy commits the workflow files and functions)")
+    status_b, _, _ = _gh_get(f"{base}/branches/{branch}", token, opener)
     if status_b != 200:
         notes.append(f"branch {branch!r} not found (HTTP {status_b}); create it or set FAASR_ACTION_BRANCH")
+    default = (body or {}).get("default_branch")
+    if default and default != branch:
+        notes.append(f"its default branch is {default!r} but FAASR_ACTION_BRANCH is {branch!r}; deploy needs "
+                     "them to be the same")
     if notes:
         r.add("deploy", "action repo", "fail", f"{user}/{repo}: " + "; ".join(notes) + ".")
     else:
-        r.add("deploy", "action repo", "ok", f"{user}/{repo} branch {branch}: readable, push allowed"
-              + ("" if scopes else " (fine-grained token: scopes not shown by GitHub)"))
+        r.add("deploy", "action repo", "ok", f"{user}/{repo} branch {branch}: readable, push allowed, default branch")
+
+    # The token's own permissions.
+    kind = token_kind(token, headers)
+    if kind == "classic":
+        scopes = {x.strip() for x in headers["x-oauth-scopes"].split(",") if x.strip()}
+        lack = sorted({"repo", "workflow"} - scopes)
+        if lack:
+            r.add("deploy", "token permissions", "fail", f"classic token with scopes {sorted(scopes)}: lacks "
+                  f"{lack}. Deploy needs repo and workflow (workflow to write .github/workflows/). Make a new "
+                  "token with both and update GH_PAT.")
+        else:
+            r.add("deploy", "token permissions", "ok", "classic token with scopes repo and workflow")
+        return
+    label = "fine-grained token" if kind == "fine-grained" else "token without a scope header (not classic)"
+    denied = []
+    for path, perm in FINE_GRAINED_READ_PROBES:
+        st, _, _ = _gh_get(base + path.format(branch=branch), token, opener)
+        if st in (401, 403, 404):
+            denied.append(f"{perm} (HTTP {st})")
+    if denied:
+        r.add("deploy", "token permissions", "fail", f"{label}: not granted on {user}/{repo}: "
+              f"{', '.join(denied)}. Edit the token: it needs {FINE_GRAINED_NEEDS} on this repository.")
+    else:
+        r.add("deploy", "token permissions", "warn", f"can't verify scopes ({label}): Contents and Actions "
+              f"read access confirmed; GitHub can't show write access without writing. Make sure the token "
+              f"has {FINE_GRAINED_NEEDS} on {user}/{repo}.")
 
 
 def check_s3_online(r: Report, uv: str | None, env):
