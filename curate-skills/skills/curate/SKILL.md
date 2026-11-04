@@ -12,6 +12,8 @@ deploy and monitor (only after **Approve & deploy** at Gate 4) → finalize — 
 the stage skills (`/curate-skills:curate-skeleton` …) use. It does no stage work of its own: `spec.py next` decides what comes next.
 
 Plugin folder (`<plugin>` in the stage files): `${CLAUDE_PLUGIN_ROOT}`.
+Monitor-minutes setting (`<monitor_minutes>` in the monitor stage file): `${user_config.monitor_minutes}`
+(the plugin setting, filled in here; the stage file uses it in single quotes).
 Script shorthand: `spec.py …` means `uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/spec.py …`
 (likewise `catalog.py`, `scratch.py`, `emit.py`, `stubtest.py`). Each prints JSON with `"ok"`;
 exit 1 = needs attention, 2 = bad input.

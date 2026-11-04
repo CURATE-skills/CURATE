@@ -447,7 +447,7 @@ def test_monitor_stage_is_read_only_and_states_the_final_rules():
     for result in ("`success`", "`success_unconfirmed`", "`failure`", "`timeout`"):
         assert result in text
     assert "Job-log text is never shown or saved" in text and "never open a `.env` file" in text
-    assert "--config-minutes '${user_config.monitor_minutes}'" in text
+    assert "--config-minutes '<monitor_minutes>'" in text
     skill = (plugin / "skills" / "curate-monitor" / "SKILL.md").read_text()
     assert "disable-model-invocation: true" in skill and "references/stages/monitor.md" in skill
     fin = " ".join((plugin / "references" / "stages" / "finalize.md").read_text().split())
@@ -460,3 +460,19 @@ def test_invoke_only_shows_the_diff_and_asks_first():
     assert "`deploy.py reuse --run <run>` **without** `--confirmed`" in text
     assert "it includes the field-by-field table of the deploy copy vs the approved bundle" in text
     assert "Only after **Yes, invoke** in the user's answer just now" in text
+
+
+def test_monitor_minutes_setting_is_bound_in_the_skills_not_the_stage_file():
+    # ${user_config.*} is filled in only in skill content, never in files the model Reads, so the
+    # skills that run the monitor stage bind it and the stage file uses the bound name.
+    plugin = Path(__file__).resolve().parents[1]
+    bind = "Monitor-minutes setting (`<monitor_minutes>` in the"
+    for skill in ("curate-monitor", "curate"):
+        text = (plugin / "skills" / skill / "SKILL.md").read_text()
+        line = next(l for l in text.splitlines() if l.startswith(bind))
+        assert line.endswith(": `${user_config.monitor_minutes}`"), skill
+    stage = (plugin / "references" / "stages" / "monitor.md").read_text()
+    assert "--config-minutes '<monitor_minutes>'" in stage
+    # No Read-only file may rely on substitution.
+    for f in (plugin / "references").rglob("*.md"):
+        assert "${user_config" not in f.read_text(), f

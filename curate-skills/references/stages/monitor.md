@@ -11,10 +11,11 @@ deploy: never read, print, echo or ask for one, and never open a `.env` file.
 
 ## 1. Poll
 
-`monitor.py poll --run <run> --config-minutes '${user_config.monitor_minutes}'` (keep the quotes
-exactly), plus `--minutes N` if the arguments contain it. One call polls for at most 9 minutes;
-the total is `monitor_minutes` (default 10, pinned for the run; an explicit `--minutes`, e.g. on
-resume, replaces it). After each call tell the user one line: the `result`, `minutes_used`, and
+`monitor.py poll --run <run> --config-minutes '<monitor_minutes>'`, with `<monitor_minutes>`
+replaced by the value the skill gives, kept inside the single quotes exactly as written, plus
+`--minutes N` if the arguments contain it. One call polls for at most 9 minutes; the total is
+`monitor_minutes` (default 10, pinned for the run; an explicit `--minutes`, e.g. on resume,
+replaces it). After each call tell the user one line: the `result`, `minutes_used`, and
 the last entry of `interim` (runs concluded, outputs present / stale / missing). While `result`
 is `pending`, call it again. Before every run has succeeded, files from an earlier invocation
 show as stale; that is progress, not a failure.

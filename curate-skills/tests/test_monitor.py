@@ -447,3 +447,16 @@ def test_download_outputs_refuses_unsafe_targets_and_skips_secrets(run, env, cap
     out = json.loads(capsys.readouterr().out)
     assert code == 1 and out["skipped"][0]["key"] == "wx-cs/station.csv" and "S3_SecretKey" in out["skipped"][0]["reason"]
     assert not (dest / "wx-cs" / "station.csv").exists() and FAKE["S3_SecretKey"] not in json.dumps(out)
+
+
+@pytest.mark.parametrize("config,expected", [
+    ("${user_config.monitor_minutes}", (10.0, "default")),  # --plugin-dir: left unsubstituted
+    ("", (10.0, "default")),
+    ("3", (3.0, "plugin setting")),
+])
+def test_config_minutes_from_skill(monkeypatch, config, expected):
+    monkeypatch.delenv("CURATE_MONITOR_MINUTES", raising=False)
+    assert M._setting(None, "CURATE_MONITOR_MINUTES", config, M.DEFAULT_MINUTES, float) == expected
+    monkeypatch.setenv("CURATE_MONITOR_MINUTES", "7")
+    assert M._setting(None, "CURATE_MONITOR_MINUTES", config, M.DEFAULT_MINUTES, float) == (7.0, "CURATE_MONITOR_MINUTES")
+    assert M._setting("2", "CURATE_MONITOR_MINUTES", config, M.DEFAULT_MINUTES, float) == (2.0, "flag")
