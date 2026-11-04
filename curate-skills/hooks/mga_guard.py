@@ -206,8 +206,13 @@ def check_bash(command, cwd, allowed):
         cwd = check_segment(segment, cwd, allowed)
 
 
+TEMPLATE_SUFFIXES = (".template", ".example", ".sample")  # .env.template etc. hold no secrets
+
+
 def _is_env_file(arg):
     base = os.path.basename(arg)
+    if base.endswith(TEMPLATE_SUFFIXES):
+        return False
     return base.startswith(".env") or base.endswith(".env")  # .env, .env.local, .envrc, prod.env
 
 

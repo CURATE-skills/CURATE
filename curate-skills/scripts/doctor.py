@@ -2,10 +2,7 @@
 """curate-doctor: is this machine ready to run curate-skills? Read-only.
 
   python3 doctor.py [--deploy [--online]] [--plugin-root DIR] [--catalog-dir DIR]
-                    [--config-catalog-dir VALUE] [--json] [--skip-background-check]
-
---skip-background-check (curate-setup's final run only) leaves out that one check, shown as "skip";
-every other core check still runs.
+                    [--config-catalog-dir VALUE] [--json]
 
 Core checks (always): uv; the python3 the write-guard hook runs (>= 3.9); uv can provide
 Python 3.13 with the stage packages and FaaSr_py; CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1;
@@ -47,8 +44,6 @@ UV_TIMEOUT = 600  # first run downloads Python 3.13 and packages
 LAUNCH = f"{FOREGROUND_VAR}=1 claude --plugin-dir <path to curate-skills>"
 CLASSIC_HOWTO = ("Create a classic token (GitHub → Settings → Developer settings → Personal access tokens → "
                  "Tokens (classic)) with scopes repo and workflow, and put it in GH_PAT")
-SKIP_BACKGROUND_WHY = ("not checked here (curate-setup): the `curate` and `curate-deploy` aliases both set it, "
-                       "and setup and deploy spawn no subagents")
 
 
 class Report:
@@ -269,8 +264,8 @@ def check_deploy_vars(r: Report, env) -> bool:
     missing += [f"{n} (or {n.upper()})" for n in S3_KEY_VARS if not _key_set(env, n)]
     branch = str(env.get("FAASR_ACTION_BRANCH", "")).strip()
     if missing:
-        r.add("deploy", "variables", "fail", f"not set: {', '.join(missing)}. Run /curate-skills:curate-setup, "
-              "fill in ~/.config/curate/.env, and launch with the deploy alias it prints.")
+        r.add("deploy", "variables", "fail", f"not set: {', '.join(missing)}. Copy curate-skills/.env.template "
+              "to ~/.config/curate/.env, fill it in, and launch with the curate-deploy alias (README, Deploy).")
     else:
         r.add("deploy", "variables", "ok", f"set: {', '.join(DEPLOY_VARS + S3_KEY_VARS)}; branch "
               f"{branch or 'main (FAASR_ACTION_BRANCH unset)'} (values not shown)")
@@ -346,7 +341,7 @@ def check_repo_online(r: Report, env, token, opener=None):
     if status != 200:
         why = {401: f"the token was rejected (expired or revoked?). {CLASSIC_HOWTO}",
                404: "not found, or the token can't see it"}.get(status, f"HTTP {status or body}")
-        r.add("deploy", "action repo", "fail", f"{user}/{repo}: {why}. Create the repo (see curate-setup) "
+        r.add("deploy", "action repo", "fail", f"{user}/{repo}: {why}. Create the repo (README, Deploy) "
               "or fix FAASR_GH_USERNAME / FAASR_ACTION_REPO / the token.")
         return
 
@@ -448,10 +443,7 @@ def run_checks(args, env=None, claude_dir: Path | None = None, opener=None) -> R
     uv = check_uv(r)
     check_hook_python(r)
     check_uv_envs(r, uv)
-    if getattr(args, "skip_background_check", False):
-        r.add("core", FOREGROUND_VAR, "skip", SKIP_BACKGROUND_WHY)
-    else:
-        check_foreground(r, env)
+    check_foreground(r, env)
     check_loaded_once(r, args.plugin_root, claude_dir, project)
     check_catalog(r, args.catalog_dir, env, args.config_catalog_dir)
     check_gitignore(r, project)
@@ -465,11 +457,11 @@ def run_checks(args, env=None, claude_dir: Path | None = None, opener=None) -> R
 
 
 def render(r: Report) -> str:
-    label = {"ok": "ok  ", "warn": "warn", "fail": "FAIL", "skip": "skip"}
+    label = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
     w = max((len(x["check"]) for x in r.rows), default=0)
     lines = [f"{label[x['status']]}  {x['group']:6s}  {x['check']:{w}s}  {x['message']}" for x in r.rows]
-    n = {s: sum(x["status"] == s for x in r.rows) for s in ("ok", "warn", "fail", "skip")}
-    lines.append(f"\n{n['ok']} ok, {n['warn']} warn, {n['fail']} FAIL" + (f", {n['skip']} skipped" if n["skip"] else "")
+    n = {s: sum(x["status"] == s for x in r.rows) for s in ("ok", "warn", "fail")}
+    lines.append(f"\n{n['ok']} ok, {n['warn']} warn, {n['fail']} FAIL"
                  + (" — fix the FAIL lines above, then run doctor again." if n["fail"] else ""))
     return "\n".join(lines)
 
@@ -485,8 +477,6 @@ def main(argv=None) -> int:
     p.add_argument("--catalog-dir", help="as /curate --catalog")
     p.add_argument("--config-catalog-dir", help="plugin setting value; empty or unsubstituted = unset")
     p.add_argument("--json", action="store_true", help="print the rows as JSON")
-    p.add_argument("--skip-background-check", action="store_true",
-                   help=f"for curate-setup only: don't check {FOREGROUND_VAR} (every other check still runs)")
     args = p.parse_args(argv)
     r = run_checks(args)
     print(json.dumps({"ok": not r.failed(), "checks": r.rows}, indent=2) if args.json else render(r))

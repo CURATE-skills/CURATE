@@ -191,6 +191,7 @@ def test_main_session_may_not_print_credentials(project, cmd):
     "env -u CLAUDE_CODE_DISABLE_BACKGROUND_TASKS uv run pytest", "set -a", "export FOO=1",
     "echo $HOME", "cat README.md", "ls .env", "git status", "gh auth status", "cat env.md", "cat my.environment",
     "(set -a; . ~/.config/curate/.env; set +a; uv run deploy.py preflight --run r)",
+    "cat .env.template", "head -20 curate-skills/.env.template", "grep GH_PAT .env.example", "cat .env.sample",
 ])
 def test_main_session_ordinary_commands_pass(project, cmd):
     proj, _ = project

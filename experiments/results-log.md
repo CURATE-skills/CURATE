@@ -1197,3 +1197,28 @@ without `--online`.
 **Not yet observed:** whether Claude actually *chooses* doctor unprompted (e.g. after a curate
 command fails with "uv is not on PATH"), and that it then leaves out `--online`. To check in a
 fresh session with a plain-language problem report, as #20/#22 did for the rewind wording.
+
+## 40. Decision: curate-setup dropped in favour of `.env.template` + doctor (2026-11-03)
+
+The interactive `/curate-skills:curate-setup` skill (P2-B, `d619281`; classic-token and
+`CURATE_ENV_FILE` changes in `f55a006`) is removed. Deploy setup is now: copy
+`curate-skills/.env.template` to `~/.config/curate/.env` (mode 600), fill it in with an editor,
+launch with the `curate-deploy` alias, check with `/curate-skills:curate-doctor --deploy --online`.
+
+**Why (user's decision):**
+- Simpler: a commented template and a README section do the same job with no skill, helper
+  script or extra tests to maintain, and secrets never go near a Claude session at all.
+- The interactive part of the skill was never tested end to end: headless runs can't answer
+  AskUserQuestion; the only headless check (session `d410c257-…`, $0.13) stopped at the first
+  question, as expected.
+- In the user's interactive test the skill had a **turn-stopping bug** (reported by the user;
+  the session stopped mid-flow instead of continuing to the next question). Not investigated,
+  since the skill is dropped.
+
+**Removed:** `skills/curate-setup/`, `scripts/setup_env.py`, `tests/test_setup_env.py`,
+`CURATE_ENV_FILE` (only setup used it), doctor's `--skip-background-check` (only setup passed it).
+**Kept:** doctor (core / `--deploy` / `--online`, classic-token messages, fine-grained warn,
+loaded-twice check), deploy's classic-token preflight note, conftest's token stub.
+**Added:** `.env.template` (every deploy variable, empty, commented; SECRET markers; classic-token
+steps; the three Actions secrets); the write guard no longer treats `*.template` / `*.example` /
+`*.sample` as `.env` files, so `cat .env.template` is allowed.

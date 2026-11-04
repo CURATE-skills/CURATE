@@ -493,7 +493,7 @@ def test_skill_invocation_policy_online_only_when_asked():
     assert "disable-model-invocation" not in front  # the first model-invocable curate skill
     desc = " ".join(front.split())
     assert "Use it on your own" in desc and "--online contacts GitHub and S3 with the user's credentials: only " \
-        "when the user asks for it or curate-setup runs it" in desc
+        "when the user asks for it." in desc
     body = " ".join(text.split())
     assert "Add `--online` **only** when the user asked for it in their own words" in body
     assert "Never add `--online` because it seems useful" in body
@@ -507,15 +507,3 @@ def test_every_token_failure_points_to_a_classic_token(monkeypatch):
     assert NAV in out["token permissions"][1]
     out, _ = run_repo(repo_status=401)
     assert NAV in out["action repo"][1]
-
-
-def test_skip_background_check_skips_only_that_check(all_ok, capsys, monkeypatch):
-    called = []
-    all_ok.setattr(doctor, "check_foreground", lambda r, env: called.append(1) or r.add("core", "bg", "fail", "x"))
-    assert doctor.main(["--skip-background-check"]) == 0 and called == []
-    out = capsys.readouterr().out
-    skip = [l for l in out.splitlines() if l.startswith("skip")]
-    assert len(skip) == 1 and "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS" in skip[0] and "curate-deploy" in skip[0]
-    assert "6 ok, 0 warn, 0 FAIL, 1 skipped" in out  # uv, python3, packages, loaded once, catalog, gitignore ran
-    assert doctor.main([]) == 1 and called == [1]  # plain doctor unchanged
-    assert "skipped" not in capsys.readouterr().out
