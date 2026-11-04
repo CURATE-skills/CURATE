@@ -74,7 +74,7 @@ def test_build_layout(built):
 def test_spec_md_content(built):
     run, _ = built
     work = (run / "functions" / "work" / "spec.md").read_text()
-    assert "Parallel Execution (RANK = 2)" in work and "stubtest.py\" run --run" in work
+    assert "Parallel Execution (RANK = 2)" in work and "<plugin>/scripts/stubtest.py run --run" in work
     assert f"Your folder (the only place you may write): `{run}/functions/work`" in work
     load_ctx = (run / "CONTEXT.md").read_text()
     assert "Every rank 1..N is run" in load_ctx and "count words" in load_ctx
@@ -180,3 +180,11 @@ def test_build_resume_keeps_finished_nodes(built, capsys):
     assert m["work"]["status"] == "passed" and m["model"]["status"] == "pending"
     ok(scratch, ["build", "--run", str(run)], capsys)  # without --resume everything is rebuilt
     assert not (run / "functions" / "work" / "work.py").exists()
+
+
+def test_spec_md_stores_no_plugin_path(built):
+    run, _ = built
+    text = (run / "functions" / "work" / "spec.md").read_text()
+    plugin = str(Path(__file__).resolve().parents[1])
+    assert f'uv run --quiet <plugin>/scripts/stubtest.py run --run "{run}" --node work' in text
+    assert plugin not in text  # not the checkout, nor a versioned plugin-cache path

@@ -66,8 +66,12 @@ def needs_generation(n: FunctionSpec) -> bool:
     return not (n.source in ("catalog", "cached") and n.code)
 
 
-def stubtest_cmd(run: Path, name: str) -> str:
-    return f'uv run "{STUBTEST}" run --run "{run}" --node {name}'
+def stubtest_cmd(run: Path, name: str, plugin: str = "<plugin>") -> str:
+    """The stub-test command for a function. spec.md stores it with a literal `<plugin>` (no
+    absolute, versioned plugin path in the run); the spawn prompt fills in the plugin folder.
+    Its form, `uv run --quiet <plugin>/scripts/...`, is the one the README's allow rule and the
+    skills' allowed-tools match."""
+    return f'uv run --quiet {plugin}/scripts/stubtest.py run --run "{run}" --node {name}'
 
 
 # ── test data seeding (context_dir.py _seed_real_input / _write_test_data) ──
@@ -361,7 +365,8 @@ faasr_secret("NEW_NAME") with an UPPER_SNAKE name — it is detected automatical
 
 ## Local Stub Test
 Test call: `{test_call}`
-Run it with exactly:
+Run it with exactly this, where `<plugin>` is the plugin folder given in your spawn prompt
+(your spawn prompt repeats the command with it filled in):
 ```bash
 {stubtest_cmd(run, spec.name)}
 ```

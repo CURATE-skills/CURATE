@@ -85,10 +85,11 @@ file if there are none.
 
 ## Local stub testing
 
-Run exactly the command in `spec.md` → "Local Stub Test":
+Run exactly the stub-test command from your spawn prompt (`spec.md` → "Local Stub Test" shows
+the same command with `<plugin>` standing for the plugin folder):
 
 ```bash
-uv run "<plugin>/scripts/stubtest.py" run --run <run dir> --node <name>
+uv run --quiet <plugin>/scripts/stubtest.py run --run "<run dir>" --node <name>
 ```
 
 It runs your function through local stand-ins for the runtime API, with your folder as

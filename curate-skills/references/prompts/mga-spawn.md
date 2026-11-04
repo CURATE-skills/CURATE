@@ -56,6 +56,9 @@ run to `gate3` (and refuses, listing them, if any node is still pending).
 
 ## Spawn prompt template
 
+Fill every `<…>` placeholder; `<plugin>` is the plugin folder (absolute, as the skill gives it),
+written without quotes so the command matches `uv run --quiet <plugin>/scripts/*`.
+
 ```
 Implement the FaaSr function `<N>` for CURATE run <run_id>.
 
@@ -67,8 +70,9 @@ Read <run>/CONTEXT.md first, then <run>/functions/<N>/spec.md.
 <rank rule>
 - Write the implementation to <run>/functions/<N>/<N>.py and the PyPI packages it imports to
   <run>/functions/<N>/<N>.deps.txt (empty file if none) before testing.
+- Plugin folder (`<plugin>` in spec.md): <plugin>
 - Validate it through the stubs with exactly:
-    <stub test command from spec.md>
+    uv run --quiet <plugin>/scripts/stubtest.py run --run "<run>" --node <N>
 - When that test passes, stop immediately and end with the MGA_RESULT block.
 <user-model block, if any>
 <retry block, if attempt > 1>

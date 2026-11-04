@@ -276,9 +276,6 @@ The plugin also declares Claude Code plugin settings (`catalog_dir`, `mga_retrie
   files are also compared with a snapshot. For a hard boundary, enable Claude Code's sandbox.
 - **Reuse is untested on a large catalog.** Catalog search (BM25) has been tried with a handful of
   functions only.
-- **Subagents' own stub-test commands may prompt.** The `curate-mga` subagent runs
-  `uv run "<plugin>/scripts/stubtest.py" …`, which the allow rule above doesn't match; the main
-  session re-runs every stub test, and its result is the one that counts.
 - Fine-grained GitHub tokens: doctor can't verify their write access (use a classic token).
 
 ## Tests

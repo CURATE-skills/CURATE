@@ -476,3 +476,19 @@ def test_monitor_minutes_setting_is_bound_in_the_skills_not_the_stage_file():
     # No Read-only file may rely on substitution.
     for f in (plugin / "references").rglob("*.md"):
         assert "${user_config" not in f.read_text(), f
+
+
+def test_stub_test_command_matches_the_allow_rule_and_stores_no_plugin_path(make_run):
+    import scratch
+    run = make_run()
+    cmd = scratch.stubtest_cmd(run, "work")
+    assert cmd == f'uv run --quiet <plugin>/scripts/stubtest.py run --run "{run}" --node work'
+    plugin = str(Path(__file__).resolve().parents[1])
+    filled = scratch.stubtest_cmd(run, "work", plugin)
+    rule_prefix = f"uv run --quiet {plugin}/scripts/"  # README / allowed-tools: Bash(<this>*)
+    assert filled.startswith(rule_prefix) and filled[len(rule_prefix):].startswith("stubtest.py run ")
+    spawn = (Path(plugin) / "references" / "prompts" / "mga-spawn.md").read_text()
+    assert 'uv run --quiet <plugin>/scripts/stubtest.py run --run "<run>" --node <N>' in spawn
+    ref = (Path(plugin) / "skills" / "faasr-reference" / "SKILL.md").read_text()
+    assert 'uv run --quiet <plugin>/scripts/stubtest.py run --run "<run dir>" --node <name>' in ref
+    assert 'uv run "' not in spawn + ref
