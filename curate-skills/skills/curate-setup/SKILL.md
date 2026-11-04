@@ -1,6 +1,6 @@
 ---
 name: curate-setup
-description: Set up deploying with curate-skills — show the prerequisites (your own action repo, a GitHub token, an S3 bucket, the repo's Actions secrets), ask for the non-secret deploy settings one at a time, write ~/.config/curate/.env (mode 600) with empty lines for the secrets, print the deploy launch alias, and finish with doctor --deploy --online. Only for users who want to deploy; run it by name.
+description: Set up deploying with curate-skills — show the prerequisites (your own action repo, a classic GitHub token, an S3 bucket, the repo's Actions secrets), ask for the non-secret deploy settings one at a time, write ~/.config/curate/.env (or $CURATE_ENV_FILE; mode 600) with empty lines for the secrets, print the deploy launch alias, and finish with doctor --deploy --online. Only for users who want to deploy; run it by name.
 argument-hint: "[--check]"
 disable-model-invocation: true
 allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/setup_env.py *), AskUserQuestion
@@ -12,6 +12,10 @@ Helper: `setup.py …` below means `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/setup_
 prints one JSON object; `ok: false` comes with an `error` that says what to do.
 
 Arguments: `$ARGUMENTS`. With `--check`, go straight to step 6.
+
+**The file** is `~/.config/curate/.env`, unless `CURATE_ENV_FILE` is set in this session's
+environment (e.g. to test setup against a temporary file); `setup.py` resolves it. Always name the
+file by the `file` path that `setup.py status` / `write` return, never by the default.
 
 ## Secrets: never in this chat
 
@@ -38,10 +42,10 @@ Show this list, then ask with AskUserQuestion "Do you have these, or want to con
    https://github.com/new — any name (e.g. `faasr-actions`), public or private, with **Add a
    README** ticked (it needs one commit and a default branch). Or in a terminal:
    `gh repo create faasr-actions --private --add-readme`. Use your own repo, not a shared one.
-2. **A GitHub token.** Classic (GitHub → Settings → Developer settings → Personal access tokens →
-   Tokens (classic)) with scopes **repo** and **workflow**; or fine-grained, limited to the action
-   repo, with **Contents, Workflows and Actions: read and write** and **Secrets: read**. (Doctor can
-   verify a classic token fully; for a fine-grained one only the read side.)
+2. **A classic GitHub token** with scopes **repo** and **workflow**: GitHub → Settings →
+   Developer settings → Personal access tokens → Tokens (classic) → Generate new token (classic).
+   Use a classic token: doctor can check its scopes; a fine-grained token's write access can't
+   be checked.
 3. **An S3 bucket** (AWS S3, or an S3-compatible service such as MinIO) and an access key pair
    that can read and write it.
 4. **Actions secrets in the action repo**, used by the workflows at run time: `GH_PAT`,
@@ -84,8 +88,8 @@ FAASR_S3_REGION. For each key you need, in that order:
 `backup` after a replace). The three secrets are written as empty lines under `# paste here`.
 
 Then tell the user, as their next step (outside this chat):
-- open the file in an editor — e.g. `open -e ~/.config/curate/.env` (macOS TextEdit) or
-  `nano ~/.config/curate/.env` — and paste each secret right after its `=` (no quotes, no spaces);
+- open the file (its `file` path) in an editor — e.g. `open -e <file>` (macOS TextEdit) or
+  `nano <file>` — and paste each secret right after its `=` (no quotes, no spaces);
 - if not done yet, add the same three as Actions secrets in the action repo (step 1, item 4).
 AskUserQuestion "Tell me when the secrets are in the file." — **Done, check now** / **Later**
 (Later: skip to step 5, then end with "Run `/curate-skills:curate-setup --check` when they are in.").
@@ -100,10 +104,10 @@ in their shell); the plain `curate` alias stays for sessions that don't deploy.
 
 `setup.py doctor --plugin-root '${CLAUDE_PLUGIN_ROOT}'` (it reads the file itself and runs doctor
 with `--deploy --online`; nothing is sourced in a shell). Show `report` verbatim in a code block.
+`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` shows as `skip` there: both aliases set it and setup and
+deploy spawn no subagents. Every other check runs.
 - `empty_secrets` not empty → the secrets aren't in the file yet: say which, and to rerun
   `/curate-skills:curate-setup --check` after pasting them.
-- A FAIL on `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` is about *this* session; the `curate-deploy`
-  alias sets it.
 - Other FAIL or warn lines: list each with the fix its message names. Don't fix anything yourself.
 End with: once doctor shows the deploy lines ok, deploy from a session started with
 `curate-deploy` (Gate 4 → **Approve & deploy**, or `/curate-skills:curate-deploy --run <run_id>`).

@@ -245,7 +245,8 @@ def test_doctor_runs_with_the_files_values_and_redacts(monkeypatch, envfile):
         return P()
     monkeypatch.setattr(S.subprocess, "run", fake_run)
     code, out = run("doctor", "--env-file", str(envfile), "--plugin-root", str(PLUGIN))
-    assert seen["cmd"][1].endswith("doctor.py") and seen["cmd"][2:5] == ["--deploy", "--online", "--plugin-root"]
+    assert seen["cmd"][1].endswith("doctor.py")
+    assert seen["cmd"][2:6] == ["--deploy", "--online", "--skip-background-check", "--plugin-root"]
     assert seen["env"]["FAASR_S3_BUCKET"] == "my-bucket.data" and seen["env"]["GH_PAT"] == FAKE_PAT
     assert "S3_AccessKey" not in seen["env"]  # empty values are not exported
     dumped = json.dumps(out)
@@ -272,3 +273,25 @@ def test_skill_text():
     assert "Never replace the file without that answer" in body and "--replace --confirmed" in body
     assert "`setup.py doctor --plugin-root '${CLAUDE_PLUGIN_ROOT}'`" in body
     assert "no valid value has those" in body
+    assert "**A classic GitHub token** with scopes **repo** and **workflow**: GitHub → Settings → " \
+        "Developer settings → Personal access tokens → Tokens (classic)" in body
+    assert "fine-grained" not in body.replace("a fine-grained token's write access can't be checked", "")
+    assert "`CURATE_ENV_FILE`" in body and "never by the default" in body
+    assert "shows as `skip` there" in body
+
+
+def test_env_file_override(monkeypatch, tmp_path):
+    target = tmp_path / "t" / ".env"
+    monkeypatch.setenv("CURATE_ENV_FILE", str(target))
+    code, out = run("write", "--new", *[x for s in SETS for x in ("--set", s)])
+    assert code == 0 and out["file"] == str(target) and target.exists() and mode(target) == "600"
+    assert run("status")[1]["file"] == str(target)
+    other = tmp_path / "o" / ".env"
+    assert run("status", "--env-file", str(other))[1]["file"] == str(other)  # --env-file wins
+    monkeypatch.delenv("CURATE_ENV_FILE")
+    assert S.default_file() == Path.home() / ".config" / "curate" / ".env"
+
+
+def test_gh_pat_hint_is_classic():
+    hint = dict(S.SECRETS)["GH_PAT"]
+    assert "classic" in hint and "repo and workflow" in hint and "fine-grained" not in hint

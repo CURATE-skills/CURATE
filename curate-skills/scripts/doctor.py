@@ -2,7 +2,10 @@
 """curate-doctor: is this machine ready to run curate-skills? Read-only.
 
   python3 doctor.py [--deploy [--online]] [--plugin-root DIR] [--catalog-dir DIR]
-                    [--config-catalog-dir VALUE] [--json]
+                    [--config-catalog-dir VALUE] [--json] [--skip-background-check]
+
+--skip-background-check (curate-setup's final run only) leaves out that one check, shown as "skip";
+every other core check still runs.
 
 Core checks (always): uv; the python3 the write-guard hook runs (>= 3.9); uv can provide
 Python 3.13 with the stage packages and FaaSr_py; CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1;
@@ -42,6 +45,10 @@ DEPLOY_VARS = ("FAASR_GH_USERNAME", "FAASR_ACTION_REPO", "FAASR_S3_ENDPOINT", "F
 S3_KEY_VARS = ("S3_AccessKey", "S3_SecretKey")  # or their upper-case spelling, as deploy.env_key
 UV_TIMEOUT = 600  # first run downloads Python 3.13 and packages
 LAUNCH = f"{FOREGROUND_VAR}=1 claude --plugin-dir <path to curate-skills>"
+CLASSIC_HOWTO = ("Create a classic token (GitHub → Settings → Developer settings → Personal access tokens → "
+                 "Tokens (classic)) with scopes repo and workflow, and put it in GH_PAT")
+SKIP_BACKGROUND_WHY = ("not checked here (curate-setup): the `curate` and `curate-deploy` aliases both set it, "
+                       "and setup and deploy spawn no subagents")
 
 
 class Report:
@@ -293,8 +300,8 @@ def check_token(r: Report, env) -> str | None:
         r.secrets["gh auth token"] = tok
         r.add("deploy", "GitHub token", "ok", "from `gh auth token` (GH_PAT unset; value not shown)")
         return tok
-    r.add("deploy", "GitHub token", "fail", "no token: GH_PAT is not set and `gh auth token` gave none. Put "
-          "your token in ~/.config/curate/.env (GH_PAT=) or run `gh auth login` in a terminal.")
+    r.add("deploy", "GitHub token", "fail", "no token: GH_PAT is not set and `gh auth token` gave none. "
+          f"{CLASSIC_HOWTO} (in ~/.config/curate/.env).")
     return None
 
 
@@ -337,7 +344,7 @@ def check_repo_online(r: Report, env, token, opener=None):
     status, headers, body = _gh_get(base, token, opener)
     headers = {k.lower(): v for k, v in headers.items()}
     if status != 200:
-        why = {401: "the token was rejected (expired or revoked?)",
+        why = {401: f"the token was rejected (expired or revoked?). {CLASSIC_HOWTO}",
                404: "not found, or the token can't see it"}.get(status, f"HTTP {status or body}")
         r.add("deploy", "action repo", "fail", f"{user}/{repo}: {why}. Create the repo (see curate-setup) "
               "or fix FAASR_GH_USERNAME / FAASR_ACTION_REPO / the token.")
@@ -367,8 +374,8 @@ def check_repo_online(r: Report, env, token, opener=None):
         lack = sorted({"repo", "workflow"} - scopes)
         if lack:
             r.add("deploy", "token permissions", "fail", f"classic token with scopes {sorted(scopes)}: lacks "
-                  f"{lack}. Deploy needs repo and workflow (workflow to write .github/workflows/). Make a new "
-                  "token with both and update GH_PAT.")
+                  f"{lack}. Deploy needs repo and workflow (workflow to write .github/workflows/). "
+                  f"{CLASSIC_HOWTO}.")
         else:
             r.add("deploy", "token permissions", "ok", "classic token with scopes repo and workflow")
         return
@@ -380,11 +387,13 @@ def check_repo_online(r: Report, env, token, opener=None):
             denied.append(f"{perm} (HTTP {st})")
     if denied:
         r.add("deploy", "token permissions", "fail", f"{label}: not granted on {user}/{repo}: "
-              f"{', '.join(denied)}. Edit the token: it needs {FINE_GRAINED_NEEDS} on this repository.")
+              f"{', '.join(denied)}. Recommended: use a classic token (repo + workflow) instead. "
+              f"{CLASSIC_HOWTO}. (A fine-grained token needs {FINE_GRAINED_NEEDS} on this repository.)")
     else:
         r.add("deploy", "token permissions", "warn", f"can't verify scopes ({label}): Contents and Actions "
-              f"read access confirmed; GitHub can't show write access without writing. Make sure the token "
-              f"has {FINE_GRAINED_NEEDS} on {user}/{repo}.")
+              "read access confirmed. Recommended: use a classic token (repo + workflow); fine-grained write "
+              f"access can't be checked. {CLASSIC_HOWTO}. Otherwise make sure this token has "
+              f"{FINE_GRAINED_NEEDS} on {user}/{repo}.")
 
 
 def check_s3_online(r: Report, uv: str | None, env):
@@ -439,7 +448,10 @@ def run_checks(args, env=None, claude_dir: Path | None = None, opener=None) -> R
     uv = check_uv(r)
     check_hook_python(r)
     check_uv_envs(r, uv)
-    check_foreground(r, env)
+    if getattr(args, "skip_background_check", False):
+        r.add("core", FOREGROUND_VAR, "skip", SKIP_BACKGROUND_WHY)
+    else:
+        check_foreground(r, env)
     check_loaded_once(r, args.plugin_root, claude_dir, project)
     check_catalog(r, args.catalog_dir, env, args.config_catalog_dir)
     check_gitignore(r, project)
@@ -453,11 +465,11 @@ def run_checks(args, env=None, claude_dir: Path | None = None, opener=None) -> R
 
 
 def render(r: Report) -> str:
-    label = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
+    label = {"ok": "ok  ", "warn": "warn", "fail": "FAIL", "skip": "skip"}
     w = max((len(x["check"]) for x in r.rows), default=0)
     lines = [f"{label[x['status']]}  {x['group']:6s}  {x['check']:{w}s}  {x['message']}" for x in r.rows]
-    n = {s: sum(x["status"] == s for x in r.rows) for s in ("ok", "warn", "fail")}
-    lines.append(f"\n{n['ok']} ok, {n['warn']} warn, {n['fail']} FAIL"
+    n = {s: sum(x["status"] == s for x in r.rows) for s in ("ok", "warn", "fail", "skip")}
+    lines.append(f"\n{n['ok']} ok, {n['warn']} warn, {n['fail']} FAIL" + (f", {n['skip']} skipped" if n["skip"] else "")
                  + (" — fix the FAIL lines above, then run doctor again." if n["fail"] else ""))
     return "\n".join(lines)
 
@@ -473,6 +485,8 @@ def main(argv=None) -> int:
     p.add_argument("--catalog-dir", help="as /curate --catalog")
     p.add_argument("--config-catalog-dir", help="plugin setting value; empty or unsubstituted = unset")
     p.add_argument("--json", action="store_true", help="print the rows as JSON")
+    p.add_argument("--skip-background-check", action="store_true",
+                   help=f"for curate-setup only: don't check {FOREGROUND_VAR} (every other check still runs)")
     args = p.parse_args(argv)
     r = run_checks(args)
     print(json.dumps({"ok": not r.failed(), "checks": r.rows}, indent=2) if args.json else render(r))

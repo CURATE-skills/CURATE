@@ -280,6 +280,7 @@ class FakeResp(io.BytesIO):
         return False
 
 
+NAV = "GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)"
 CLASSIC = "ghp_" + "C" * 36
 FINE = "github_pat_" + "F" * 60
 GH_CLI = "gho_" + "O" * 36
@@ -352,6 +353,8 @@ def test_fine_grained_token_read_ok_warns_cant_verify():
     out, opener = run_repo(token=FINE)
     st, msg = out["token permissions"]
     assert st == "warn" and msg.startswith("can't verify scopes (fine-grained token)")
+    assert "Recommended: use a classic token (repo + workflow); fine-grained write access can't be checked." in msg
+    assert NAV in msg
     assert "Contents, Workflows and Actions: read and write; Secrets: read" in msg
     assert out["action repo"][0] == "ok"
     probed = [u for _, u, _ in opener.seen]
@@ -364,7 +367,7 @@ def test_fine_grained_token_missing_read_permission_fails(denied, perm):
     out, _ = run_repo(token=FINE, denied=denied)
     st, msg = out["token permissions"]
     assert st == "fail" and "fine-grained token" in msg and f"{perm} (HTTP 403)" in msg
-    assert "Edit the token" in msg
+    assert "Recommended: use a classic token (repo + workflow) instead" in msg and NAV in msg
 
 
 def test_unknown_token_without_scope_header_is_not_called_fine_grained():
@@ -494,3 +497,25 @@ def test_skill_invocation_policy_online_only_when_asked():
     body = " ".join(text.split())
     assert "Add `--online` **only** when the user asked for it in their own words" in body
     assert "Never add `--online` because it seems useful" in body
+
+
+def test_every_token_failure_points_to_a_classic_token(monkeypatch):
+    r = doctor.Report()
+    doctor.check_token(r, {})
+    assert NAV in one(r)[1] and "scopes repo and workflow" in one(r)[1]
+    out, _ = run_repo(scopes="repo")
+    assert NAV in out["token permissions"][1]
+    out, _ = run_repo(repo_status=401)
+    assert NAV in out["action repo"][1]
+
+
+def test_skip_background_check_skips_only_that_check(all_ok, capsys, monkeypatch):
+    called = []
+    all_ok.setattr(doctor, "check_foreground", lambda r, env: called.append(1) or r.add("core", "bg", "fail", "x"))
+    assert doctor.main(["--skip-background-check"]) == 0 and called == []
+    out = capsys.readouterr().out
+    skip = [l for l in out.splitlines() if l.startswith("skip")]
+    assert len(skip) == 1 and "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS" in skip[0] and "curate-deploy" in skip[0]
+    assert "6 ok, 0 warn, 0 FAIL, 1 skipped" in out  # uv, python3, packages, loaded once, catalog, gitignore ran
+    assert doctor.main([]) == 1 and called == [1]  # plain doctor unchanged
+    assert "skipped" not in capsys.readouterr().out

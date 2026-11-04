@@ -8,6 +8,8 @@
   python3 setup_env.py alias    --plugin-root DIR [--env-file F]
   python3 setup_env.py doctor   --plugin-root DIR [--env-file F]
 
+The file is --env-file, else $CURATE_ENV_FILE, else ~/.config/curate/.env.
+
 Rules (curate-setup relies on them):
 - Only the six NON-secret keys can be given a value here. GH_PAT, S3_AccessKey and S3_SecretKey are
   always written as empty lines under a "# paste here" comment, for the user to fill in an editor.
@@ -36,7 +38,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import leakcheck  # noqa: E402
 
-DEFAULT_FILE = Path.home() / ".config" / "curate" / ".env"
+ENV_FILE_VAR = "CURATE_ENV_FILE"  # overrides the default path (e.g. to test setup against a temp file)
+
+
+def default_file() -> Path:
+    return Path(os.environ.get(ENV_FILE_VAR) or Path.home() / ".config" / "curate" / ".env").expanduser()
 FOREGROUND = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1"
 
 # Non-secret keys, in the order curate-setup asks for them: (key, hint, validator, default).
@@ -57,8 +63,8 @@ NON_SECRET = (
 )
 NON_SECRET_KEYS = tuple(k for k, *_ in NON_SECRET)
 SECRETS = (
-    ("GH_PAT", "GitHub token. Classic: scopes repo and workflow. Fine-grained: this action repo, "
-               "Contents, Workflows and Actions read and write, Secrets read"),
+    ("GH_PAT", "a classic GitHub token with scopes repo and workflow (GitHub → Settings → Developer "
+               "settings → Personal access tokens → Tokens (classic))"),
     ("S3_AccessKey", "S3 access key ID for the bucket"),
     ("S3_SecretKey", "S3 secret access key for the bucket"),
 )
@@ -242,8 +248,11 @@ def run_doctor(plugin_root: str, path: Path) -> dict:
     vals, problems = parse(path.read_text())
     env = dict(os.environ)
     env.update({k: v for k, v in vals.items() if v})
+    # --skip-background-check: the curate and curate-deploy aliases both set that variable, and setup
+    # and deploy spawn no subagents; every other core check still runs (deploy needs them).
     proc = subprocess.run([sys.executable, str(SCRIPT_DIR / "doctor.py"), "--deploy", "--online",
-                           "--plugin-root", plugin_root], capture_output=True, text=True, env=env, timeout=900)
+                           "--skip-background-check", "--plugin-root", plugin_root],
+                          capture_output=True, text=True, env=env, timeout=900)
     secrets = {k: v for k, v in vals.items() if k in SECRET_KEYS and v}
     out = leakcheck.redact(proc.stdout, extra_values=secrets)  # doctor redacts too; belt and braces
     return {"ok": proc.returncode == 0, "exit": proc.returncode, "file_problems": problems, "report": out,
@@ -255,7 +264,8 @@ def main(argv=None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
     for name in ("status", "write", "alias", "doctor"):
         q = sub.add_parser(name)
-        q.add_argument("--env-file", default=str(DEFAULT_FILE))
+        q.add_argument("--env-file", default=None,
+                       help=f"default: ${ENV_FILE_VAR}, else ~/.config/curate/.env")
         if name in ("alias", "doctor"):
             q.add_argument("--plugin-root", required=True)
         if name == "write":
@@ -277,7 +287,7 @@ def main(argv=None) -> int:
         elif args.cmd == "validate":
             out = {"ok": True, "key": args.key, "value": validate(args.key, args.value)}
         else:
-            path = Path(args.env_file).expanduser()
+            path = Path(args.env_file).expanduser() if args.env_file else default_file()
             if args.cmd == "status":
                 out = status(path)
             elif args.cmd == "write":

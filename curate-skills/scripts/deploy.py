@@ -601,7 +601,9 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
         else:
             scopes = headers.get("X-OAuth-Scopes") or headers.get("x-oauth-scopes")
             if scopes is None:
-                out["token_scopes"] = "fine-grained (needs Contents and Workflows: read and write)"
+                out["token_scopes"] = ("fine-grained: write access can't be checked (needs Contents, Workflows "
+                                       "and Actions: read and write). Recommended: a classic token with repo + "
+                                       "workflow")
             else:
                 have = {x.strip() for x in scopes.split(",") if x.strip()}
                 out["token_scopes"] = sorted(have)

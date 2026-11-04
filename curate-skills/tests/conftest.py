@@ -9,7 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 # Cleared for every test, so a developer's shell (settings, a loaded deploy .env) can't change
 # results. Names are matched without regard to case, as the scripts do (S3_ACCESSKEY).
 ENV_VARS = ("CURATE_CATALOG_DIR", "CURATE_MGA_RETRIES", "CURATE_STUBTEST_MODE",
-            "CURATE_DEPLOY_NAME_SUFFIX", "CURATE_MONITOR_MINUTES", "GH_PAT", "GITHUB_REPOSITORY")
+            "CURATE_DEPLOY_NAME_SUFFIX", "CURATE_MONITOR_MINUTES", "GH_PAT", "GITHUB_REPOSITORY",
+            "CURATE_ENV_FILE")
 ENV_PREFIXES = ("FAASR_", "S3_", "AWS_")
 
 
