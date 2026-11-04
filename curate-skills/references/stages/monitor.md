@@ -6,8 +6,9 @@ Precondition: `spec.py begin --run <run> --stage monitor` returned `ok` (the dep
 the workflow and recorded its InvocationID).
 
 The monitor only reads: GitHub Actions runs (GET) and S3 (head/get). It never writes to GitHub or
-S3 and never deploys again. Credentials are read by `monitor.py` itself from the environment, as in
-deploy: never read, print, echo or ask for one, and never open a `.env` file.
+S3 and never deploys again. Credentials are read by `monitor.py` itself, from the environment or
+`~/.config/curate/.env`, as in deploy: never read, print, echo or ask for one, and never open a
+`.env` file.
 
 ## 1. Poll
 

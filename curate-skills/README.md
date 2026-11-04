@@ -153,26 +153,22 @@ and keys.
 **Never paste a secret into a Claude Code session** (or any chat). They go only into that file and
 the repo's Actions secrets. If you did paste one, revoke it and make a new one.
 
-**3. The deploy alias.** Add to `~/.zshrc` / `~/.bashrc`, next to `curate`:
-
-```bash
-alias curate-deploy='(set -a; . "$HOME/.config/curate/.env"; set +a; CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 exec claude --plugin-dir /absolute/path/to/skill-curate/curate-skills)'
-```
-
-The parentheses run it in a subshell: the settings exist only for that Claude Code session and
-are gone when it exits; your own shell never holds them. Don't `source` the file in your shell.
-
-**4. Check before the first deploy.** Start `curate-deploy`, then:
+**3. Check before the first deploy.** In a `curate` session:
 
 ```
 /curate-skills:curate-doctor --deploy --online
 ```
 
-It checks the variables (names only), the token (classic: repo + workflow), that the repo and
+It checks the settings file (and that it is mode 600), which variables came from the file and
+which from the environment (names only), the token (classic: repo + workflow), that the repo and
 branch are readable and pushable, and that the bucket answers. It only reads; values are never
 shown.
 
-**5. Deploy.** In a `curate-deploy` session, answer Gate 4 with **approve & deploy** (or run
+deploy, monitor and doctor read `~/.config/curate/.env` themselves, on every call; nothing needs
+to be loaded into your shell and no other alias is needed. A variable set in the environment
+overrides the file.
+
+**4. Deploy.** Answer Gate 4 with **approve & deploy** (or run
 `/curate-skills:curate-deploy --run <run_id>` on a run approved that way). Deploy:
 - runs a read-only **preflight** and shows every path it would write — all under a `-cs` name
   (`<Workflow>-cs`), so it never overwrites another deployment — and refuses if any exists;
@@ -180,7 +176,7 @@ shown.
   files), **upload** (the deploy copy of `workflow.json`), **register** (the GitHub Actions
   files), **invoke** (start the workflow). A yes to one is never a yes to the next.
 
-**6. Monitor.** After invoke, curate-monitor watches the run read-only — the Actions runs, FaaSr's
+**5. Monitor.** After invoke, curate-monitor watches the run read-only — the Actions runs, FaaSr's
 logs, and that every declared output was freshly written to S3 — for up to 10 minutes. Results:
 `success`, `success_unconfirmed` (a run matched by time only; you're asked at Gate 5), `failure`,
 or `timeout`. After a timeout it stops with a resume command; continue with a new budget:
@@ -199,7 +195,8 @@ or `timeout`. After a timeout it stops with a resume command; continue with a ne
 | Monitor time | `--minutes N` (curate-monitor) | `CURATE_MONITOR_MINUTES` | `10` |
 | Deploy name suffix | — | `CURATE_DEPLOY_NAME_SUFFIX` | `-cs` |
 
-A flag beats the environment variable, which beats the default. A run pins the first three when
+A flag beats the environment variable, which beats the default. `CURATE_DEPLOY_NAME_SUFFIX` and
+`CURATE_MONITOR_MINUTES` can also go in `~/.config/curate/.env` (the environment overrides it). A run pins the first three when
 it starts and the monitor time when monitoring starts. `strict` tests every rank of a parallel
 step, installs the function's packages in an isolated environment and requires every declared
 output; `parity` is the original CURATE behaviour (rank 1 only, no installs).
@@ -218,7 +215,8 @@ The plugin also declares Claude Code plugin settings (`catalog_dir`, `mga_retrie
   only secret **names** are written.
 - The catalog folder (`~/.curate/catalog` by default): `functions/<uuid>.json`,
   `workflows/<uuid>.json`, in the original prototype's format.
-- `~/.config/curate/.env`: your deploy settings (mode 600; only the `curate-deploy` alias reads it).
+- `~/.config/curate/.env`: your deploy settings (mode 600), read by deploy, monitor and doctor; an
+  environment variable of the same name overrides it.
 - `.curate/mga_guard.log`: writes the guard denied.
 
 ## Troubleshooting
@@ -232,7 +230,7 @@ The plugin also declares Claude Code plugin settings (`catalog_dir`, `mga_retrie
 | Claude Code asks for permission during a run? | That's expected. Choose **Yes** (or **Yes, and don't ask again** for this project). Choosing **No** stops that step. |
 | Skills appear twice / doctor says "loaded twice" | The plugin is also installed via `/plugin`; uninstall that copy or drop `--plugin-dir`. |
 | Emit says the FaaSr_py validator could not run | uv couldn't fetch FaaSr_py (offline?); emit used its built-in checks instead. Rerun when online. |
-| Deploy preflight lists missing variables | Start the session with `curate-deploy`, and check `~/.config/curate/.env` with `/curate-skills:curate-doctor --deploy`. |
+| Deploy preflight lists missing variables | Fill them in `~/.config/curate/.env`, then check with `/curate-skills:curate-doctor --deploy`. |
 | Deploy refuses: a path already exists | Another deployment uses that name. Set `CURATE_DEPLOY_NAME_SUFFIX` (e.g. `-cs-yourname`) in the `.env`. |
 | Monitor ended with `timeout` | Resume with `/curate-skills:curate-monitor --run <run_id> --minutes N`. |
 | A run stopped | `/curate-skills:curate --resume <run_id>`. |

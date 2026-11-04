@@ -26,6 +26,15 @@ def _isolated_curate_env(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_settings_file(monkeypatch, tmp_path_factory):
+    """deploy.py, monitor.py and doctor read ~/.config/curate/.env; no test may read the real one.
+    Tests that need a file pass `path=` or patch envfile.default_path themselves."""
+    import envfile
+    missing = tmp_path_factory.mktemp("no-settings") / ".env"
+    monkeypatch.setattr(envfile, "default_path", lambda: missing)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_github_token(monkeypatch):
     """With GH_PAT cleared, deploy.get_token (and doctor's token check) would fall back to
     `gh auth token` and could pick up the developer's real token. Every test gets a stub that

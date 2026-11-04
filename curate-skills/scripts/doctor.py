@@ -31,6 +31,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
+import envfile  # noqa: E402  (standard library only)
 import leakcheck  # noqa: E402  (standard library only)
 
 PLUGIN_NAME = "curate-skills"
@@ -259,16 +260,44 @@ def _key_set(env, name) -> bool:
     return bool(env.get(name) or env.get(name.upper()))
 
 
-def check_deploy_vars(r: Report, env) -> bool:
+def check_settings_file(r: Report, info: dict, deploy: bool):
+    """The settings file itself: present, mode 600, readable lines. Names and line numbers only."""
+    path = info["path"]
+    if not info["exists"]:
+        if deploy:
+            r.add("deploy", "settings file", "warn", f"{path} not found. Unless every deploy variable is set in the "
+                  "environment, copy curate-skills/.env.template there, chmod 600 it and fill it in.")
+        return
+    notes = []
+    if info.get("mode") != "600":
+        notes.append(f"mode is {info.get('mode')}, not 600: anyone on this machine may read your token and "
+                     f"keys. Run: chmod 600 {path}")
+    if info.get("problems"):
+        notes.append("lines not read: " + "; ".join(info["problems"]))
+    if notes:
+        r.add("deploy", "settings file", "warn", f"{path}: " + " ".join(notes))
+    else:
+        r.add("deploy", "settings file", "ok", f"{path}, mode 600")
+
+
+def _source(sources: dict, name: str) -> str:
+    for k, v in sources.items():
+        if k.upper() == name.upper():
+            return f"{k} ({'environment' if v == 'env' else 'file'})"
+    return name
+
+
+def check_deploy_vars(r: Report, env, sources: dict | None = None) -> bool:
+    sources = sources or {}
     missing = [n for n in DEPLOY_VARS if not str(env.get(n, "")).strip()]
     missing += [f"{n} (or {n.upper()})" for n in S3_KEY_VARS if not _key_set(env, n)]
     branch = str(env.get("FAASR_ACTION_BRANCH", "")).strip()
     if missing:
         r.add("deploy", "variables", "fail", f"not set: {', '.join(missing)}. Copy curate-skills/.env.template "
-              "to ~/.config/curate/.env, fill it in, and launch with the curate-deploy alias (README, Deploy).")
+              "to ~/.config/curate/.env, chmod 600 it and fill it in (README, Deploy).")
     else:
-        r.add("deploy", "variables", "ok", f"set: {', '.join(DEPLOY_VARS + S3_KEY_VARS)}; branch "
-              f"{branch or 'main (FAASR_ACTION_BRANCH unset)'} (values not shown)")
+        r.add("deploy", "variables", "ok", "set: " + ", ".join(_source(sources, n) for n in DEPLOY_VARS + S3_KEY_VARS)
+              + f"; branch {branch or 'main (FAASR_ACTION_BRANCH unset)'} (values not shown)")
     for n in ("GITHUB_REPOSITORY", "GITHUB_REF_NAME"):
         if env.get(n):
             r.add("deploy", "variables", "fail", f"{n} is set here; CURATE's deploy code would use it instead of "
@@ -284,11 +313,12 @@ def gh_cli_token() -> str | None:
     return out.strip() if code == 0 and out.strip() else None
 
 
-def check_token(r: Report, env) -> str | None:
+def check_token(r: Report, env, sources: dict | None = None) -> str | None:
     tok = str(env.get("GH_PAT", "")).strip()
     if tok:
         r.secrets["GH_PAT"] = tok
-        r.add("deploy", "GitHub token", "ok", "from GH_PAT (value not shown)")
+        where = {"env": " (environment)", "file": " (file)"}.get((sources or {}).get("GH_PAT"), "")
+        r.add("deploy", "GitHub token", "ok", f"from GH_PAT{where} (value not shown)")
         return tok
     tok = gh_cli_token()
     if tok:
@@ -447,9 +477,14 @@ def run_checks(args, env=None, claude_dir: Path | None = None, opener=None) -> R
     check_loaded_once(r, args.plugin_root, claude_dir, project)
     check_catalog(r, args.catalog_dir, env, args.config_catalog_dir)
     check_gitignore(r, project)
-    if args.deploy or args.online:
-        check_deploy_vars(r, env)
-        token = check_token(r, env)
+    deploy = args.deploy or args.online
+    # Fill unset deploy variables from ~/.config/curate/.env, as deploy.py and monitor.py do
+    # (environment wins). Only with --deploy; the file's own check runs whenever it exists.
+    info = envfile.load(env if deploy else {}, getattr(args, "env_file", None))
+    check_settings_file(r, info, deploy)
+    if deploy:
+        check_deploy_vars(r, env, info["sources"])
+        token = check_token(r, env, info["sources"])
         if args.online:
             check_repo_online(r, env, token, opener)
             check_s3_online(r, uv, env)

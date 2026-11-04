@@ -32,31 +32,19 @@ def _alias(name):
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="no bash")
-def test_aliases_as_written(tmp_path):
+def test_one_alias_as_written(tmp_path):
+    assert "alias curate-deploy" not in README and "curate-deploy`" not in README.replace(
+        "`curate-deploy`, `curate-monitor`", "")  # the skill is listed; there is no deploy alias
     home, bindir = tmp_path / "home", tmp_path / "bin"
-    (home / ".config" / "curate").mkdir(parents=True)
+    home.mkdir()
     bindir.mkdir()
-    env_file = home / ".config" / "curate" / ".env"
-    text = (PLUGIN / ".env.template").read_text()
-    env_file.write_text(text.replace("GH_PAT=\n", "GH_PAT=dummy-value-x\n")
-                        .replace("FAASR_S3_BUCKET=\n", "FAASR_S3_BUCKET=my-faasr-data\n"))
-    (bindir / "claude").write_text('#!/bin/sh\necho "in: $* bg=$CLAUDE_CODE_DISABLE_BACKGROUND_TASKS '
-                                   'pat=${GH_PAT:+set} bucket=$FAASR_S3_BUCKET"\n')
+    (bindir / "claude").write_text('#!/bin/sh\necho "in: $* bg=$CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"\n')
     (bindir / "claude").chmod(0o755)
     rc = home / ".bashrc"
-    rc.write_text("\n".join(_alias(n).replace(PLACEHOLDER, str(PLUGIN)) for n in ("curate", "curate-deploy")) + "\n")
-    env = {"PATH": f"{bindir}:{os.environ['PATH']}", "HOME": str(home)}
-
-    def run(cmd):
-        return subprocess.run(["bash", "--rcfile", str(rc), "-i", "-c",
-                               cmd + '; echo "after: pat=${GH_PAT:-unset} bucket=${FAASR_S3_BUCKET:-unset}"'],
-                              capture_output=True, text=True, timeout=30, env=env).stdout
-
-    out = run("curate")
-    assert f"in: --plugin-dir {PLUGIN} bg=1 pat= bucket=" in out and "after: pat=unset bucket=unset" in out
-    out = run("curate-deploy")
-    assert f"in: --plugin-dir {PLUGIN} bg=1 pat=set bucket=my-faasr-data" in out
-    assert "after: pat=unset bucket=unset" in out  # the subshell leaves the shell clean
+    rc.write_text(_alias("curate").replace(PLACEHOLDER, str(PLUGIN)) + "\n")
+    out = subprocess.run(["bash", "--rcfile", str(rc), "-i", "-c", "curate"], capture_output=True, text=True,
+                         timeout=30, env={"PATH": f"{bindir}:{os.environ['PATH']}", "HOME": str(home)}).stdout
+    assert f"in: --plugin-dir {PLUGIN} bg=1" in out
 
 
 def test_template_copy_command_matches_the_template():
@@ -65,6 +53,9 @@ def test_template_copy_command_matches_the_template():
     assert (PLUGIN / ".env.template").exists()
     assert "Never paste a secret into a Claude Code session" in README
     assert "/curate-skills:curate-doctor --deploy --online" in README
+    deploy = README[README.index("## Deploy"):README.index("## Settings")]
+    assert "deploy, monitor and doctor read `~/.config/curate/.env` themselves" in " ".join(deploy.split())
+    assert "A variable set in the environment overrides the file." in " ".join(deploy.split())
 
 
 def test_permission_rules_live_in_docs_not_the_install_flow():

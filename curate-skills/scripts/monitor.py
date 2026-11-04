@@ -37,6 +37,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import deploy as D  # noqa: E402
+import envfile  # noqa: E402
 import leakcheck  # noqa: E402
 from vendor.faasr_runtime.artifacts import build_artifact_list  # noqa: E402
 
@@ -598,6 +599,7 @@ def main(argv=None, opener=None, s3_factory=None, clock=time.monotonic, sleep=ti
     q.add_argument("--run", required=True)
     q.add_argument("--confirmed", action="store_true")
     args = p.parse_args(argv)
+    envfile.load()  # ~/.config/curate/.env fills deploy variables the environment leaves unset
     token, _ = D.get_token() if args.cmd == "poll" else (None, None)
     extra = {"gh_token": token} if token else None
     try:

@@ -54,6 +54,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
+import envfile  # noqa: E402
 import leakcheck  # noqa: E402
 
 NATIVE_CONTAINERS = SCRIPT_DIR / "vendor" / "curate_deploy" / "native_containers.txt"
@@ -1219,6 +1220,7 @@ def main(argv=None, opener=None, s3_factory=boto3_s3) -> int:
     q.add_argument("--confirmed", action="store_true")
     sub.add_parser("status", help="which deploy steps are done").add_argument("--run", required=True)
     args = p.parse_args(argv)
+    envfile.load()  # ~/.config/curate/.env fills deploy variables the environment leaves unset
     if args.cmd == "status":
         try:
             return _print(deploy_status(args.run))
