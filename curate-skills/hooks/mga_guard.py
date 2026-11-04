@@ -20,6 +20,10 @@ that uses curate (it has a `.curate/` folder) gets one more heuristic — comman
 print a credential are denied: `gh auth token`, `printenv`, a bare `env`/`set`/`export`,
 `echo $GH_PAT` (or any credential variable, any case), and reading a `.env*` / `*.env` file with
 cat/less/head/tail/grep/…. Credentials are read only inside deploy.py and monitor.py.
+In a project that uses curate, every caller (main session and curate-mga) is also denied Read,
+and Grep with a `path` or `glob`, aimed at an env file (`.env`, `.env.*`, `*.env`; `*.template`,
+`*.example`, `*.sample` exempt) or at ~/.config/curate: "curate never reads your .env; scripts
+load it themselves." Glob only lists names, so it is not checked.
 Write/Edit calls outside curate-mga, and any call in a project without `.curate/`, are allowed
 after parsing the payload and at most one directory check (no command parsing, no log writes).
 Standard library only; runs on Python 3.9+.
@@ -256,9 +260,48 @@ def uses_curate(project):
     return os.path.isdir(os.path.join(project, ".curate"))
 
 
+ENV_READ_MSG = "curate never reads your .env; scripts load it themselves."
+
+
+def _settings_dir():
+    return os.path.realpath(os.path.expanduser("~/.config/curate"))
+
+
+def check_env_read(data, cwd):
+    """Read / Grep aimed at an env file (any *.env / .env*, templates exempt) or at the curate
+    settings folder (~/.config/curate). A heuristic: a Grep over a parent folder isn't caught."""
+    tool, ti = data.get("tool_name"), data.get("tool_input") or {}
+    if tool == "Read":
+        targets = [ti.get("file_path")]
+    elif tool == "Grep":
+        targets = [ti.get("path"), ti.get("glob")]
+    else:
+        return
+    settings = _settings_dir()
+    for raw in targets:
+        if not raw or not isinstance(raw, str):
+            continue
+        if _is_env_file(raw):
+            raise Deny(ENV_READ_MSG)
+        if not any(c in raw for c in "*?[{"):
+            target = resolve(raw, cwd)
+            if target == settings or inside(target, settings):
+                raise Deny(ENV_READ_MSG)
+
+
 def decide(data, env):
     """Return None to allow (no opinion), or a deny reason."""
     project = env.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd()
+    if data.get("tool_name") in ("Read", "Grep"):
+        if not uses_curate(project):
+            return None  # an ordinary session: no opinion
+        try:
+            check_env_read(data, data.get("cwd") or project)
+        except Deny as e:
+            return str(e)
+        except Exception:  # never block a read over a parse problem
+            return None
+        return None
     if not is_mga(data):
         if data.get("tool_name") != "Bash" or not uses_curate(project):
             return None  # an ordinary call: no opinion

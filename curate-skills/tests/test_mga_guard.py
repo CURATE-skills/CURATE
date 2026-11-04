@@ -43,7 +43,7 @@ def guard(proj, tool, tool_input, agent="curate-skills:curate-mga", cwd=None, en
 def test_hooks_json_shape():
     cfg = json.loads(HOOKS_JSON.read_text())
     (entry,) = cfg["hooks"]["PreToolUse"]
-    assert set(entry["matcher"].split("|")) == {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"}
+    assert set(entry["matcher"].split("|")) == {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "Read", "Grep"}
     (hook,) = entry["hooks"]
     assert hook["onFailure"] == "block" and "${CLAUDE_PLUGIN_ROOT}" in hook["command"]
 
@@ -237,3 +237,54 @@ def test_project_dir_falls_back_to_payload_cwd(tmp_path):
         proc = subprocess.run([SYSTEM_PY, str(GUARD)], input=json.dumps({**payload, "cwd": str(cwd)}),
                               capture_output=True, text=True, env={"PATH": os.environ["PATH"]}, timeout=10)
         assert proc.returncode == 0 and bool(proc.stdout.strip()) is denied
+
+
+# ── curate projects: the settings file and other .env files are never read ──
+
+MSG = "curate never reads your .env; scripts load it themselves."
+HOME_ENV = os.path.expanduser("~/.config/curate/.env")
+
+
+@pytest.mark.parametrize("agent", [None, "curate-skills:curate-mga"])
+@pytest.mark.parametrize("tool,tool_input", [
+    ("Read", {"file_path": HOME_ENV}),
+    ("Read", {"file_path": "~/.config/curate/.env"}),
+    ("Read", {"file_path": "~/.config/curate/other-notes.txt"}),
+    ("Read", {"file_path": ".env"}),
+    ("Read", {"file_path": "config/prod.env"}),
+    ("Read", {"file_path": ".env.local"}),
+    ("Grep", {"pattern": "GH_PAT", "path": HOME_ENV}),
+    ("Grep", {"pattern": "GH_PAT", "path": "~/.config/curate"}),
+    ("Grep", {"pattern": "KEY", "glob": "*.env"}),
+    ("Grep", {"pattern": "KEY", "path": ".", "glob": ".env*"}),
+])
+def test_curate_project_env_reads_denied(project, tool, tool_input, agent):
+    proj, _ = project
+    assert guard(proj, tool, tool_input, agent=agent) == MSG
+
+
+@pytest.mark.parametrize("tool,tool_input", [
+    ("Read", {"file_path": ".env.template"}),
+    ("Read", {"file_path": "curate-skills/.env.example"}),
+    ("Read", {"file_path": "x/.env.sample"}),
+    ("Read", {"file_path": "README.md"}),
+    ("Read", {"file_path": "env.md"}),
+    ("Grep", {"pattern": "def ", "path": "."}),
+    ("Grep", {"pattern": "x", "glob": "*.py"}),
+    ("Glob", {"pattern": "**/.env"}),  # names only; not checked
+])
+def test_curate_project_other_reads_allowed(project, tool, tool_input):
+    proj, _ = project
+    assert guard(proj, tool, tool_input, agent=None) is None
+
+
+@pytest.mark.parametrize("tool,tool_input", [
+    ("Read", {"file_path": HOME_ENV}), ("Read", {"file_path": ".env"}),
+    ("Grep", {"pattern": "GH_PAT", "path": "~/.config/curate"}), ("Grep", {"pattern": "K", "glob": "*.env"}),
+])
+@pytest.mark.parametrize("agent", [None, "general-purpose"])
+def test_outside_curate_projects_reads_pass_through(tmp_path, tool, tool_input, agent):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert guard(plain, tool, tool_input, agent=agent) is None
+    assert list(plain.iterdir()) == []

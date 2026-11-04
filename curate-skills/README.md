@@ -242,8 +242,10 @@ The plugin also declares Claude Code plugin settings (`catalog_dir`, `mga_retrie
   without a `--confirmed` flag — but nothing technically stops a model from passing it.
 - **The credential guard is a heuristic.** In any folder that has a `.curate/` folder, the hook
   denies main-session Bash commands that would print a credential (`printenv`, `cat .env`,
-  `echo $GH_PAT`, …). It parses commands; it can be bypassed, and it applies to every session in
-  such a folder, not only curate's.
+  `echo $GH_PAT`, …), and Read or Grep aimed at a `.env` file or `~/.config/curate/` ("curate
+  never reads your .env; scripts load it themselves"; `.env.template` and the like are allowed).
+  It checks names and commands, so it can be bypassed (e.g. a Grep over a parent folder), and it
+  applies to every session in such a folder, not only curate's.
 - **The write guard is a heuristic too.** A `curate-mga` subagent may write only inside its
   function's folder; Bash commands are checked by parsing, so after every subagent the run's
   files are also compared with a snapshot. For a hard boundary, enable Claude Code's sandbox.
