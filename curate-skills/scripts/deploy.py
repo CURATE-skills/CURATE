@@ -80,15 +80,20 @@ def get_token() -> tuple[str | None, str]:
     tok = os.environ.get("GH_PAT", "").strip()
     if tok:
         return tok, "GH_PAT"
+    tok = gh_cli_token()
+    return (tok, "gh auth token") if tok else (None, "none")
+
+
+def gh_cli_token() -> str | None:
+    """The GitHub CLI's token (`gh auth token`), or None. Tests replace this (conftest)."""
     gh = shutil.which("gh")
-    if gh:
-        try:
-            p = subprocess.run([gh, "auth", "token"], capture_output=True, text=True, timeout=20)
-        except (OSError, subprocess.TimeoutExpired):
-            return None, "none"
-        if p.returncode == 0 and p.stdout.strip():
-            return p.stdout.strip(), "gh auth token"
-    return None, "none"
+    if not gh:
+        return None
+    try:
+        p = subprocess.run([gh, "auth", "token"], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return p.stdout.strip() if p.returncode == 0 and p.stdout.strip() else None
 
 
 class GitHub:

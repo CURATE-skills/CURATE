@@ -9,8 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 # Cleared for every test, so a developer's shell (settings, a loaded deploy .env) can't change
 # results. Names are matched without regard to case, as the scripts do (S3_ACCESSKEY).
 ENV_VARS = ("CURATE_CATALOG_DIR", "CURATE_MGA_RETRIES", "CURATE_STUBTEST_MODE",
-            "CURATE_DEPLOY_NAME_SUFFIX", "CURATE_MONITOR_MINUTES", "GH_PAT")
-ENV_PREFIXES = ("FAASR_", "S3_")
+            "CURATE_DEPLOY_NAME_SUFFIX", "CURATE_MONITOR_MINUTES", "GH_PAT", "GITHUB_REPOSITORY")
+ENV_PREFIXES = ("FAASR_", "S3_", "AWS_")
 
 
 def isolated_env_names(names) -> list[str]:
@@ -23,6 +23,15 @@ def _isolated_curate_env(monkeypatch):
     import os
     for v in isolated_env_names(list(os.environ)):
         monkeypatch.delenv(v, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_github_token(monkeypatch):
+    """With GH_PAT cleared, deploy.get_token would fall back to `gh auth token` and could pick up
+    the developer's real token. Every test gets a stub that returns None; a test that needs the
+    fallback replaces it again with monkeypatch."""
+    import deploy
+    monkeypatch.setattr(deploy, "gh_cli_token", lambda: None)
 
 
 @pytest.fixture
