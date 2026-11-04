@@ -31,6 +31,9 @@ def test_no_test_can_reach_a_real_github_token(monkeypatch):
         AssertionError("subprocess.run reached: " + repr(a))))
     assert deploy.get_token() == (None, "none")
     assert monitor.D.get_token() == (None, "none")
+    import doctor
+    r = doctor.Report()
+    assert doctor.check_token(r, {}) is None and r.rows[0]["status"] == "fail"
     assert calls == []
     # GH_PAT is cleared, so nothing else can supply one.
     assert "GH_PAT" not in os.environ and deploy.gh_cli_token() is None

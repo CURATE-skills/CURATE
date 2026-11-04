@@ -27,11 +27,13 @@ def _isolated_curate_env(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_real_github_token(monkeypatch):
-    """With GH_PAT cleared, deploy.get_token would fall back to `gh auth token` and could pick up
-    the developer's real token. Every test gets a stub that returns None; a test that needs the
-    fallback replaces it again with monkeypatch."""
+    """With GH_PAT cleared, deploy.get_token (and doctor's token check) would fall back to
+    `gh auth token` and could pick up the developer's real token. Every test gets a stub that
+    returns None; a test that needs the fallback replaces it again with monkeypatch."""
     import deploy
+    import doctor
     monkeypatch.setattr(deploy, "gh_cli_token", lambda: None)
+    monkeypatch.setattr(doctor, "gh_cli_token", lambda: None)
 
 
 @pytest.fixture
