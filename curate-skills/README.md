@@ -211,8 +211,10 @@ use the flag or the environment variable there.
   check is a heuristic; after every subagent `/curate` also compares file snapshots of the run,
   the catalog and the project, and fails the attempt on any write outside the folder.
 - The hook runs on every Write/Edit/Bash call in sessions where the plugin is enabled (about
-  30 ms each; other agents pass straight through). It fails closed: if it cannot run, the call
-  is blocked.
+  20 ms each, almost all of it Python starting up). Outside a `curate-mga` subagent it allows
+  every call, with one exception: in a project that has a `.curate/` folder, main-session Bash
+  commands that would print a credential (`printenv`, `cat .env`, `echo $GH_PAT`, …) are denied.
+  It fails closed: if it cannot run (e.g. no `python3`), the call is blocked.
 - Stub tests run with deployment and model-provider credentials removed from the environment.
 - For a hard boundary, also enable Claude Code's sandbox with filesystem write restrictions.
 

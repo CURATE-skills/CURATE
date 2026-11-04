@@ -15,10 +15,13 @@ The Bash check is a heuristic; /curate's snapshot diff (scratch.py verify-writes
 is the backstop. Any error while checking a curate-mga call denies it. curate-mga may
 never run deploy.py or monitor.py (deploying is the user's decision, step by step).
 
-For every other caller (the main session), one more heuristic: Bash commands that would
-print a credential are denied — `gh auth token`, `printenv`, a bare `env`/`set`/`export`,
+Every other caller passes through untouched, with one exception: a Bash call in a project
+that uses curate (it has a `.curate/` folder) gets one more heuristic — commands that would
+print a credential are denied: `gh auth token`, `printenv`, a bare `env`/`set`/`export`,
 `echo $GH_PAT` (or any credential variable, any case), and reading a `.env*` / `*.env` file with
 cat/less/head/tail/grep/…. Credentials are read only inside deploy.py and monitor.py.
+Write/Edit calls outside curate-mga, and any call in a project without `.curate/`, are allowed
+after parsing the payload and at most one directory check (no command parsing, no log writes).
 Standard library only; runs on Python 3.9+.
 """
 import json
@@ -244,11 +247,16 @@ def check_credential_print(command):
                        "monitor.py read credentials from the environment themselves")
 
 
+def uses_curate(project):
+    return os.path.isdir(os.path.join(project, ".curate"))
+
+
 def decide(data, env):
     """Return None to allow (no opinion), or a deny reason."""
+    project = env.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd()
     if not is_mga(data):
-        if data.get("tool_name") != "Bash":
-            return None
+        if data.get("tool_name") != "Bash" or not uses_curate(project):
+            return None  # an ordinary call: no opinion
         try:
             check_credential_print(str((data.get("tool_input") or {}).get("command") or ""))
         except Deny as e:
@@ -256,7 +264,6 @@ def decide(data, env):
         except Exception:  # the main session is not blocked by a parse problem
             return None
         return None
-    project = env.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd()
     try:
         allowed, _ = load_lock(project)
         tool = data.get("tool_name")

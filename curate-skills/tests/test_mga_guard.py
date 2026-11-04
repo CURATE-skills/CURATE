@@ -195,3 +195,44 @@ def test_main_session_may_not_print_credentials(project, cmd):
 def test_main_session_ordinary_commands_pass(project, cmd):
     proj, _ = project
     assert guard(proj, "Bash", {"command": cmd}, agent=None) is None
+
+
+# ── ordinary sessions: the hook has no opinion ──
+
+ORDINARY_CALLS = [
+    ("Write", {"file_path": "/etc/hosts", "content": "x"}),
+    ("Edit", {"file_path": "src/app.py", "old_string": "a", "new_string": "b"}),
+    ("MultiEdit", {"file_path": "src/app.py", "edits": []}),
+    ("NotebookEdit", {"notebook_path": "nb.ipynb", "new_source": "x"}),
+    ("Bash", {"command": "rm -rf build && git commit -am wip > /tmp/out"}),
+    ("Bash", {"command": "printenv"}),  # credential check applies only in projects that use curate
+    ("Bash", {"command": "cat .env"}),
+    ("Bash", {"command": "echo 'unterminated"}),
+]
+
+
+@pytest.mark.parametrize("tool,tool_input", ORDINARY_CALLS)
+@pytest.mark.parametrize("agent", [None, "general-purpose"])
+def test_ordinary_session_is_allowed_and_untouched(tmp_path, tool, tool_input, agent):
+    proj = tmp_path / "plain"  # no .curate/ folder: a session that has nothing to do with curate
+    proj.mkdir()
+    assert guard(proj, tool, tool_input, agent=agent) is None
+    assert list(proj.iterdir()) == []  # nothing created (no .curate/, no log)
+
+
+@pytest.mark.parametrize("tool,tool_input", ORDINARY_CALLS[:5])
+def test_curate_project_main_session_write_edit_bash_allowed(project, tool, tool_input):
+    proj, _ = project
+    assert guard(proj, tool, tool_input, agent=None) is None
+    assert not (proj / ".curate" / "mga_guard.log").exists()
+
+
+def test_project_dir_falls_back_to_payload_cwd(tmp_path):
+    plain, curate_proj = tmp_path / "plain", tmp_path / "cp"
+    plain.mkdir()
+    (curate_proj / ".curate").mkdir(parents=True)
+    payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "printenv"}}
+    for cwd, denied in ((plain, False), (curate_proj, True)):
+        proc = subprocess.run([SYSTEM_PY, str(GUARD)], input=json.dumps({**payload, "cwd": str(cwd)}),
+                              capture_output=True, text=True, env={"PATH": os.environ["PATH"]}, timeout=10)
+        assert proc.returncode == 0 and bool(proc.stdout.strip()) is denied
