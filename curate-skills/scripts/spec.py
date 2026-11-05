@@ -2149,6 +2149,29 @@ def resume_commands(s: dict) -> dict:
     return out
 
 
+def gate1_outline(spec: WorkflowSpec) -> tuple[list[str], list[str]]:
+    """Gate 1's step blocks (in order, copies, the description wrapped) and the graph lines: the
+    same text in the printed display and in the question."""
+    blocks = []
+    for i, name in enumerate(topo_order(spec), 1):
+        n = next(x for x in spec.nodes if x.name == name)
+        blocks.append(f"{i}. {n.name}  · {_copies(n)}")
+        blocks += textwrap.wrap(" ".join(n.description.split()) or "—", 96,
+                                initial_indent="   ", subsequent_indent="   ") + [""]
+    return blocks[:-1], dag_lines(spec)
+
+
+def gate1_question(s: dict) -> str:
+    """Experiment (results log #51): the full Gate 1 outline inside the question text itself, so the
+    menu carries it even when the printed message is skipped. Plain text, no markdown fences."""
+    spec = spec_of((s.get("skeleton_draft") or {}).get("spec"))
+    q = GATE_QUESTION[1] + ' (Type in "Other" to request changes.)'
+    if spec is None:
+        return q
+    blocks, graph = gate1_outline(spec)
+    return "\n".join([f"{spec.name}", "", *blocks, "", *[g.strip() for g in graph], "", q])
+
+
 def show_gate(s: dict, gate: int) -> str:
     out: list[str] = []
     if gate == 1:
@@ -2159,14 +2182,9 @@ def show_gate(s: dict, gate: int) -> str:
             out += ["", f"> {draft['parse_error']}"]
         if spec is None:
             return "\n".join(out + ["", "No valid skeleton yet."])
-        out += ["", f"**{spec.name}** — {spec.description}", "", "```text"]
-        for i, name in enumerate(topo_order(spec), 1):
-            n = next(x for x in spec.nodes if x.name == name)
-            out.append(f"{i}. {n.name}  · {_copies(n)}")
-            out += textwrap.wrap(" ".join(n.description.split()) or "—", 96,
-                                 initial_indent="   ", subsequent_indent="   ") + [""]
-        out[-1] = "```"
-        out += ["", "```", *dag_lines(spec), "```"]
+        blocks, graph = gate1_outline(spec)
+        out += ["", f"**{spec.name}** — {spec.description}", "", "```text", *blocks, "```",
+                "", "```", *graph, "```"]
         return "\n".join(out)
 
     spec = spec_of(s.get("spec"))
@@ -2242,13 +2260,28 @@ def show_gate(s: dict, gate: int) -> str:
             out.append(f"- functions whose stub test failed: {', '.join(failed)}")
         out.append(f"- deploying: {DEPLOY_ADVICE}")
         ext = external_inputs(spec)
-        out += ["", "Files to upload before running:"] + (
+        out += ["", "Input files you must provide in S3 (none = nothing to do):"] + (
             [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
+        out += ["", "### Deploy would write", "", "If you choose **Approve & deploy** (nothing is written now; "
+                "the deploy asks before each step):", ""] + deploy_plan(s)
         out += ["", "Files in the bundle:"] + (bundle_files(s.get("bundle_dir")) or ["- none yet"])
         return "\n".join(out)
     if gate == 5:
         return "\n".join([summary_md(s), "", *save_preview(s)])
     raise InputError("--gate must be 1-5")
+
+
+def deploy_plan(s: dict) -> list[str]:
+    """Gate 4's "Deploy would write" (deploy.plan_lines: local, read-only)."""
+    run = s.get("run_dir")
+    if not run or not s.get("bundle_dir"):
+        return ["- (no bundle yet)"]
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import deploy as D
+        return D.plan_lines(run)
+    except Exception as e:  # noqa: BLE001 — informational; the deploy preflight checks everything
+        return [f"- (could not work it out: {e})"]
 
 
 DEPLOY_ADVICE = ("Placeholders are filled from your settings at deploy; run "
@@ -2368,7 +2401,7 @@ def summary_md(s: dict) -> str:
                    f"{', '.join(n.dependencies) or '—'} | {', '.join(n.secrets) or '—'} |")
     out += ["", "```", *dag_lines(spec), "```"]
     ext = external_inputs(spec)
-    out += ["", "Files to upload before running:"] + (
+    out += ["", "Input files you must provide in S3 (none = nothing to do):"] + (
         [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
     coded = [(nm, a) for nm in topo_order(spec) for a in (mga.get(nm) or {}).get("assumptions") or []]
     if spec.assumptions or spec.presentation_assumptions or coded:  # only what Gates 2 and 3 showed
@@ -2428,6 +2461,8 @@ def cmd_show(args) -> dict:
         review.parent.mkdir(parents=True, exist_ok=True)
         review.write_text(md + ("\n\n" + full_code(s) if args.gate == 3 else "") + "\n")
     q = GATE_QUESTION[args.gate] + ("" if args.gate == 5 else ' (Type in "Other" to request changes.)')
+    if args.gate == 1 and not getattr(args, "full", False):
+        q = gate1_question(s)  # the outline is in the question text too (not a preview)
     return {"ok": True, "markdown": md, "marker": marker, "question": q, "header": f"Gate {args.gate}",
             "options": GATE_OPTIONS[args.gate], "review_file": str(review), "review_line": f"Full review: {review}"}
 

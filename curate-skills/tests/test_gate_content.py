@@ -258,3 +258,63 @@ def test_every_skill_and_stage_file_asks_for_the_plain_script_form():
                     "assignments, no `&&` chains, no subshells.") in text
         else:
             assert rule in text, f.relative_to(ROOT)
+
+# ── Gate 1: the outline in the question text (experiment, results log #51) ──
+
+def test_gate1_question_carries_the_whole_outline_verbatim(make_run, capsys):
+    run = make_run(skeleton_draft={"spec": json.loads(weather().model_dump_json())})
+    out = show(run, 1, capsys)
+    q = out["question"]
+    assert q.startswith("weather\n\n1. download  · 1 copy\n   Download the station CSV.\n\n2. process  · 3 copies")
+    assert q.endswith('Approve this skeleton (the steps and their order)? (Type in "Other" to request changes.)')
+    assert "download → process ×3" in q and "```" not in q  # graph included; plain text, no fences
+    blocks = out["markdown"].split("```text\n")[1].split("\n```")[0]
+    assert blocks in q  # the same step blocks as the printed display
+    assert not out["markdown"].endswith(q)  # the printed content is kept as well
+    skel = " ".join((ROOT / "references" / "stages" / "skeleton.md").read_text().split())
+    assert "pass it as the question text **exactly as returned**" in skel and "still print the `markdown`" in skel
+
+
+def test_other_gates_keep_the_short_question(make_run, capsys):
+    run = make_run(spec=weather(), validation={"ok": True, "level": "faasr_py"}, bundle_dir="/b")
+    assert show(run, 2, capsys)["question"] == 'Approve the reuse decisions, files and data flow? (Type in "Other" to request changes.)'
+
+
+# ── Gate 4: what Approve & deploy would write ──
+
+def test_gate4_lists_what_deploy_would_write_without_any_network_call(make_run, capsys, tmp_path, monkeypatch):
+    import emit
+    monkeypatch.setenv("FAASR_GH_USERNAME", "alice")
+    monkeypatch.setenv("FAASR_ACTION_REPO", "faasr-actions")
+    monkeypatch.setenv("FAASR_S3_BUCKET", "my-bucket")
+    run = make_run(spec=weather())
+    out = emit.main(["bundle", "--run", str(run), "--out", str(tmp_path / "faasr_output")])
+    capsys.readouterr()
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(AssertionError("network")))
+    md = show(run, 4, capsys)["markdown"]
+    run_id = json.loads((run / "state.json").read_text())["run_id"]
+    sfx = f"-{run_id[4:8]}-{run_id[9:13]}"
+    section = md.split("### Deploy would write")[1].split("\n\n— end of Gate 4")[0]
+    assert "If you choose **Approve & deploy** (nothing is written now" in section
+    assert f"Deploys as: `weather{sfx}` (name from: Gate 4 approval in run {run_id})" in section
+    assert "GitHub (`alice/faasr-actions`, branch `main`):" in section
+    for path in (f"functions/weather{sfx}/download.py", f"workflows/weather{sfx}.json",
+                 f".github/workflows/weather{sfx}-download.yml"):
+        assert f"- `{path}`" in section, path
+    assert "S3 (`my-bucket`), written when the workflow runs:" in section
+    assert f"- logs folder: `FaaSrLog/weather{sfx}/`" in section and "- outputs folder: `" in section
+    assert "Input files you must provide in S3 (none = nothing to do):\n- none" in md
+    assert "Files to upload before running" not in md
+
+
+def test_gate4_deploy_section_marks_settings_not_set_yet(make_run, capsys, tmp_path, monkeypatch):
+    import emit
+    for k in ("FAASR_GH_USERNAME", "FAASR_ACTION_REPO", "FAASR_S3_BUCKET"):
+        monkeypatch.delenv(k, raising=False)
+    run = make_run(spec=weather())
+    emit.main(["bundle", "--run", str(run), "--out", str(tmp_path / "faasr_output")])
+    capsys.readouterr()
+    section = show(run, 4, capsys)["markdown"].split("### Deploy would write")[1]
+    assert "GitHub (`<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>`" in section
+    assert "Not set yet in your deploy settings:" in section and "FAASR_S3_BUCKET" in section

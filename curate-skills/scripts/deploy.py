@@ -905,6 +905,32 @@ def diff_md(p: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def plan_lines(run: str) -> list[str]:
+    """What Approve & deploy would write, for Gate 4: the deploy name, the repo files and the S3
+    folders — the preflight's list without its checks. Local only: reads the run, its bundle and
+    the deploy settings (~/.config/curate/.env); no GitHub or S3 call."""
+    envfile.load()
+    name = resolve_suffix(run, os.environ.get("CURATE_DEPLOY_NAME_SUFFIX") or None, None)
+    s, bundle = load_run(run)
+    filled_wf, _, unset = fill_placeholders(json.loads((bundle / "workflow.json").read_text()))
+    user = os.environ.get("FAASR_GH_USERNAME", "").strip() or "<FAASR_GH_USERNAME>"
+    repo = os.environ.get("FAASR_ACTION_REPO", "").strip() or "<FAASR_ACTION_REPO>"
+    branch = os.environ.get("FAASR_ACTION_BRANCH", "").strip() or "main"
+    copy_wf, targets, s3_targets = deploy_copy(filled_wf, name["suffix"], user, repo, branch)
+    lines = [f"Deploys as: `{copy_wf['WorkflowName']}` (name from: {name['source']})", "",
+             f"GitHub (`{user}/{repo}`, branch `{branch}`):"] + [f"- `{t['path']}`" for t in targets]
+    by_bucket: dict[str, list[dict]] = {}
+    for t in s3_targets:
+        if t["prefix"]:
+            by_bucket.setdefault(t["bucket"] or "<FAASR_S3_BUCKET>", []).append(t)
+    for bucket, ts in by_bucket.items():
+        lines += ["", f"S3 (`{bucket}`), written when the workflow runs:"]
+        lines += [f"- {t['kind']} folder: `{t['prefix']}`" for t in ts]
+    if unset:
+        lines += ["", f"Not set yet in your deploy settings: {', '.join(unset)} (shown as placeholders above)."]
+    return lines
+
+
 # ── the four deploy steps ────────────────────────────────────────────────────
 # Each one writes only after the user said yes to it (--confirmed), re-runs the preflight first
 # (bundle hash, deploy-copy rule, names, existing paths), records each path it wrote in the deploy

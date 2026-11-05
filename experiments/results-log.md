@@ -1525,3 +1525,27 @@ non-decision answer, print the content again" (back to "go back to step 2").
 **Kept:** `58f5700` (Gate 1 block layout; the plain-form script rule in every skill and stage
 file); the end-of-gate marker line (from `ab9682e`; harmless without the hooks — one line at the
 end of each display, nothing checks it); #49 stays in this log as the record. Suite: 602 passed.
+
+## 51. Gate 1 outline in the question text (experiment); Gate 4 "Deploy would write" (2026-11-05)
+
+**Gate 1 (experiment, no hooks).** Gate 1 skipped its printed content in 3/3 interactive runs
+(latest: weather-fresh4); Ctrl+O shows it, buried among other tool output. `spec.py show --gate 1`
+now returns a `question` holding the whole outline — the step blocks and the graph, the same text
+as the printed display, plain (no fences) — followed by the usual question; skeleton.md and
+gates.md say to pass it exactly as returned (not as a preview) and still print the `markdown`.
+Other gates keep the short question. Size: for the weather sketch's Gate 1 drafts ~1–2 KB; the
+longest case seen (weather-fresh4's resolved spec rendered the same way) is 4.3 KB / 57 lines.
+To check live: whether the interactive menu shows a long question in full or truncates it.
+
+**Gate 4.** New "Deploy would write" section (if you choose Approve & deploy; nothing is written):
+the deploy name and where it came from, the repo files and the S3 folders, the same plain list as
+the deploy preflight, from `deploy.plan_lines` — local only (run, bundle, deploy settings file), no
+GitHub or S3 call; settings not filled yet show as `<FAASR_…>` with a note. Checked read-only on
+weather-fresh2's run (folder unchanged): `corvallis-winter-weather-comparison-1104-2324`, 7 repo
+files, outputs and logs folders in `test-curate`. "Files to upload before running" is now "Input
+files you must provide in S3 (none = nothing to do)" (Gate 4, the run summary, the bundle README).
+
+**Proposed, not built** (if the question text turns out truncated): "present first, then record"
+for Gate 1 — the outline is shown as Claude's proposal in its own message before `spec.py
+skeleton` records it, and `spec.py skeleton --shown <file>` refuses unless the recorded outline
+matches the text that was shown (hash of the rendered blocks).

@@ -30,7 +30,8 @@ asked to see something, and after the user answered in chat:
    The content ends with its marker line (`— end of Gate N · run <id> —`); print that too.
 2. **Ask with AskUserQuestion whenever it is available** — never switch to plain chat because the
    previous answer came in chat or through "Other". Keep the menu short: the returned `question`
-   and `header`, and the returned `options` as the options (labels only). **Never give an option a
+   and `header`, and the returned `options` as the options (labels only). At Gate 1 the
+   `question` also holds the outline: use it exactly as returned. **Never give an option a
    `preview`** — the full content is already printed above. Typing in "Other" requests changes.
 3. If the answer is not a decision (e.g. "show me the table", "show me the code"), show what was
    asked and go back to step 2 — with AskUserQuestion again. **Show the full code** (Gate 3):

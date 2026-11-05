@@ -16,7 +16,10 @@ If the run is already at `gate1`, skip to step 4.
    and re-run.
 4. **Gate 1**: `spec.py show --run <run> --gate 1`, print its `markdown` verbatim as a message — never re-formatted (the user does not see tool results) — then its `review_line` (`Full review: <path>`) on its own line. **Print the content first, then ask; never ask before printing it**
    with AskUserQuestion — the returned `question`, `header` and `options`, no previews — every time, also after a change request or a
-   question from the user (`<plugin>/references/gates.md`, "Asking at a gate").
+   question from the user (`<plugin>/references/gates.md`, "Asking at a gate"). At Gate 1 the
+   returned `question` holds the whole outline (the step blocks and the graph) followed by the
+   question: pass it as the question text **exactly as returned** — don't shorten it, don't move
+   the outline into a preview, and still print the `markdown` before asking.
    - Approve → `spec.py approve --run <run> --gate 1`.
    - Changes → `spec.py directive --run <run> --gate 1 --text "<verbatim>"`, then go back to step 2
      (still this stage).

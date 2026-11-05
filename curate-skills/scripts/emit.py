@@ -423,7 +423,7 @@ def _bundle_readme(spec: WorkflowSpec, wf: dict, ext: list[dict], validation: di
               "and the repo's Actions secrets."]
     lines += ["", "## Actions secrets the repo needs (names only)", ""]
     lines += [f"- `{s}`" for s in secret_names(spec)]
-    lines += ["", "## Files to upload before running", ""]
+    lines += ["", "## Input files you must provide in S3 (none = nothing to do)", ""]
     lines += [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"]
     lines += ["", "## Placeholders (filled at deploy from your settings)", ""]
     lines += [f"- `{_placeholder(v)}` — from `{v}`" for v in placeholders] or ["- none"]
