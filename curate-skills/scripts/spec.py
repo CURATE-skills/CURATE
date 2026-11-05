@@ -2128,7 +2128,7 @@ def show_gate(s: dict, gate: int) -> str:
         if spec is None:
             return "\n".join(out + ["", "No valid skeleton yet."])
         out += ["", f"**{spec.name}** — {spec.description}", "",
-                "| # | Function | Rank | What it does |", "|---|---|---|---|"]
+                "| # | Function | Parallel copies | What it does |", "|---|---|---|---|"]
         for i, name in enumerate(topo_order(spec), 1):
             n = next(x for x in spec.nodes if x.name == name)
             out.append(f"| {i} | `{n.name}` | {n.rank} | {n.description} |")
@@ -2141,7 +2141,7 @@ def show_gate(s: dict, gate: int) -> str:
     if gate == 2:
         out += [f"## Gate 2 — Candidates and data flow  (iteration {s['iteration']}/{s['max_iterations']})",
                 "", f"**{spec.name}** — {spec.description}", "",
-                "| Function | Source | Rank | Inputs | Outputs | Deps | Secrets |",
+                "| Function | Reuse decision | Parallel copies | Inputs | Outputs | Packages | Secrets |",
                 "|---|---|---|---|---|---|---|"]
         for name in topo_order(spec):
             n = next(x for x in spec.nodes if x.name == name)
@@ -2176,10 +2176,24 @@ def show_gate(s: dict, gate: int) -> str:
         if warn:
             out += ["", "Needs attention:"] + [f"- `{k}`: {mga[k]['status']} — {_last_line(mga[k].get('last_output_tail'))}"
                                                for k in warn]
+        for name in topo_order(spec):
+            n = next(x for x in spec.nodes if x.name == name)
+            m = mga.get(name, {})
+            kept = m.get("status") in ("reused", "reused_failed")
+            out += ["", f"### `{name}` — " + ("kept (not regenerated); " if kept else "")
+                    + f"stub test: {STATUS_LABELS.get(m.get('status'), m.get('status') or 'pending')}"]
+            if m.get("status") in ("failed", "reused_failed", "external_only") and m.get("last_output_tail"):
+                out.append(f"Last line of its stub test: {_last_line(m.get('last_output_tail'))}")
+            out += ["", "```python", (n.code or "# (no code)").rstrip("\n"), "```"]
         return "\n".join(out)
     if gate == 4:
         v = s.get("validation") or {}
-        out += ["## Gate 4 — Bundle", "", f"- bundle: `{s.get('bundle_dir')}`",
+        out += ["## Gate 4 — Bundle", "", f"**{spec.name}** — {spec.description}", ""]
+        for i, name in enumerate(topo_order(spec), 1):
+            n = next(x for x in spec.nodes if x.name == name)
+            out.append(f"{i}. `{n.name}`" + (f" ×{n.rank} (parallel copies)" if n.rank > 1 else "")
+                       + f" — {_cut(n.description, 120)}")
+        out += ["", "```", *dag_lines(spec), "```", "", f"- bundle: `{s.get('bundle_dir')}`",
                 f"- validation: {'passed' if v.get('ok') else 'FAILED'} (level `{v.get('level')}`)"]
         if v.get("error"):
             out.append(f"- error: {v['error']}")
@@ -2199,8 +2213,44 @@ def show_gate(s: dict, gate: int) -> str:
         ext = external_inputs(spec)
         out += ["", "Files to upload before running:"] + (
             [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
+        out += ["", "Files in the bundle:"] + (bundle_files(s.get("bundle_dir")) or ["- none yet"])
         return "\n".join(out)
-    raise InputError("--gate must be 1-4")
+    if gate == 5:
+        return "\n".join([summary_md(s), "", *save_preview(s)])
+    raise InputError("--gate must be 1-5")
+
+
+BUNDLE_SKIP = re.compile(r"(^|/)(\.DS_Store|Thumbs\.db|desktop\.ini|\._[^/]*|__pycache__(/.*)?)$")
+
+
+def bundle_files(bundle_dir) -> list[str]:
+    root = Path(bundle_dir) if bundle_dir else None
+    if not root or not root.is_dir():
+        return []
+    files = sorted(p for p in root.rglob("*") if p.is_file() and not BUNDLE_SKIP.search(p.relative_to(root).as_posix()))
+    return [f"- `{p.relative_to(root).as_posix()}` ({p.stat().st_size:,} bytes)" for p in files]
+
+
+def save_preview(s: dict) -> list[str]:
+    """Gate 5: what saving would store (the catalog's own dry runs; nothing is written)."""
+    out = ["### What would be saved", "", f"Catalog: `{s.get('catalog_dir')}`"]
+    try:
+        C = catalog_mod
+        spec = spec_of(s.get("spec"))
+        cat = C.Catalog(Path(s["catalog_dir"]).expanduser())
+        fns = C.save_functions(cat, spec, s, only_verified=True, dry_run=True)
+        wf = C.save_workflow(cat, spec, dry_run=True)
+        blocked = C.deployed_run_problem(s)
+    except Exception as e:  # noqa: BLE001 — the preview is informational; finalize runs the real dry runs
+        return out + [f"- (could not preview: {type(e).__name__}: {e})"]
+    out += ["", "Functions (only verified ones are saved):"]
+    out += [f"- `{x['name']}` — would be stored (keywords: {', '.join(x['keywords'])})" for x in fns["stored"]]
+    out += [f"- `{x['name']}` — skipped: {x['reason']}" for x in fns["skipped"]]
+    out += ["", f"Workflow `{spec.name}`: " + ("would update the entry with the same name" if wf.get("updated")
+                                             else "would be a new entry")]
+    if blocked:
+        out += ["", f"**Saving is refused for now:** {blocked}"]
+    return out
 
 
 def summary_md(s: dict) -> str:
@@ -2281,6 +2331,11 @@ def gate_compact(s: dict, gate: int) -> str:
             status = STATUS_LABELS.get(m.get("status"), m.get("status") or "pending")
             lines.append(f"{n.name} | {_origin(n)} | {status} | attempts {m.get('attempts', 0)}")
         return "\n".join(lines)
+    if gate == 5:
+        mga = s.get("mga") or {}
+        return "\n".join([f"{spec.name}", f"run: {s['run_id']}"] + [
+            f"{n.name} | {STATUS_LABELS.get((mga.get(n.name) or {}).get('status'), (mga.get(n.name) or {}).get('status') or '—')}"
+            for n in order])
     if gate == 4:
         v = s.get("validation") or {}
         missing = [n.name for n in spec.nodes if not n.code]
@@ -2293,14 +2348,21 @@ def gate_compact(s: dict, gate: int) -> str:
 GATE_QUESTION = {1: "Approve this skeleton (the steps and their order)?",
                  2: "Approve the reuse decisions, files and data flow?",
                  3: "Approve the generated code?",
-                 4: "Approve this FaaSr bundle, and deploy it?"}
+                 4: "Approve this FaaSr bundle, and deploy it?",
+                 5: "Save to the catalog?"}
 
 
 def cmd_show(args) -> dict:
+    """The gate's full content (`markdown`: print it as a message BEFORE asking), also written to
+    <run>/review/gate<N>.md (`review_line`: print it after the content)."""
     s = load_state(args.run)
-    return {"ok": True, "markdown": show_gate(s, args.gate), "compact": gate_compact(s, args.gate),
-            "question": GATE_QUESTION[args.gate] + ' (Type in "Other" to request changes.)',
-            "header": f"Gate {args.gate}"}
+    md = show_gate(s, args.gate)
+    review = Path(args.run) / "review" / f"gate{args.gate}.md"
+    review.parent.mkdir(parents=True, exist_ok=True)
+    review.write_text(md + "\n")
+    q = GATE_QUESTION[args.gate] + ("" if args.gate == 5 else ' (Type in "Other" to request changes.)')
+    return {"ok": True, "markdown": md, "compact": gate_compact(s, args.gate), "question": q,
+            "header": f"Gate {args.gate}", "review_file": str(review), "review_line": f"Full review: {review}"}
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -2359,7 +2421,7 @@ def build_parser() -> argparse.ArgumentParser:
     with_run("set-cap").add_argument("--max", type=int, required=True)
     with_run("confirm-start")
     with_run("set-stage").add_argument("--stage", required=True, choices=STAGES)
-    with_run("show").add_argument("--gate", type=int, required=True, choices=[1, 2, 3, 4])
+    with_run("show").add_argument("--gate", type=int, required=True, choices=[1, 2, 3, 4, 5])
     with_run("summary")
     sp = sub.add_parser("start")
     sp.add_argument("--at", required=True, choices=STAGE_NAMES)

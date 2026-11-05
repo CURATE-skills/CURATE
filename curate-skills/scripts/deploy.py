@@ -292,8 +292,9 @@ def deploy_diff(wf: dict, copy_wf: dict, filled: dict) -> tuple[list[dict], list
         if path in filled:
             reason = "placeholder " + ", ".join(f"${v}" for v in filled[path]) + (f"; {reason}" if reason else "")
         if reason is None:
-            problems.append(f"the deploy copy differs from the approved bundle at {path}, which is not an "
-                            "allowed deploy change (refusing: the deploy must run what Gate 4 approved)")
+            problems.append(f"the deploy copy differs from the approved bundle at {path} "
+                            f"({_short(old)} → {_short(new)}), which is not an allowed deploy change "
+                            "(refusing: the deploy must run what Gate 4 approved)")
         rows.append({"field": path, "approved": old, "deploy": new, "reason": reason or "NOT ALLOWED"})
     return rows, problems
 
@@ -789,6 +790,15 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
     out["overwrite_paths"] = [t["path"] for t in targets if t.get("overwrite")] + \
         [f"s3://{t['bucket']}/{t['prefix']}" for t in s3_targets if t.get("overwrite")]
     out.update(ok=not problems, problems=problems, warnings=warnings)
+    try:  # the full comparison, for anyone who wants it; never shown in the summary
+        diff_path = Path(run) / "deploy" / "preflight-diff.md"
+        text = diff_md(out)
+        if not leakcheck.find_leaks(text):
+            diff_path.parent.mkdir(parents=True, exist_ok=True)
+            diff_path.write_text(text)
+            out["diff_file"] = str(diff_path)
+    except OSError:
+        pass
     out["summary"] = preflight_summary(out)
     out["_copy_wf"] = copy_wf  # for the deploy steps; never printed
     return out
@@ -802,6 +812,11 @@ def _new_or_own(overwrite_own: bool) -> str:
             "use --overwrite-own-deploy)")
 
 
+def _short(v, n: int = 60) -> str:
+    text = "(absent)" if v is None else v if isinstance(v, str) else json.dumps(v)
+    return repr(text if len(text) <= n else text[:n - 1] + "…")
+
+
 def _cell(v) -> str:
     text = "(absent)" if v is None else v if isinstance(v, str) else json.dumps(v)
     return "`" + text.replace("|", "\\|").replace("`", "'") + "`"
@@ -813,67 +828,81 @@ def _dig(obj, path: str):
     return obj
 
 
+def _file_state(t: dict) -> str:
+    if t.get("reused_from"):
+        return f"deployed by run {t['reused_from']}, reused"
+    if t.get("written"):
+        return "written by this deploy"
+    if t.get("exists") is None:
+        return "not checked"
+    if not t["exists"]:
+        return "new"
+    if t.get("overwrite"):
+        return "exists, in this run's deploy log — will be overwritten (--overwrite-own-deploy)"
+    return ("already exists (earlier curate-skills deploy) — refused" if t.get("ours")
+            else "already exists, NOT OURS — refused")
+
+
+def _s3_state(t: dict, reuse: bool) -> str:
+    if t.get("exists") is None:
+        return "not checked"
+    if not t["exists"]:
+        return "new"
+    if t.get("overwrite"):
+        return ("exists (this deployment's earlier outputs) — the new invocation rewrites them" if reuse
+                else "exists, in this run's deploy log — will be overwritten (--overwrite-own-deploy)")
+    return "already exists — refused"
+
+
 def preflight_summary(p: dict) -> str:
-    lines = [f"**Deploy preflight — {'ready' if p['ok'] else 'not ready'}** (read-only; nothing was written)",
-             "", f"- Approved bundle: `{p['bundle']}` (workflow `{p['approved_name']}`)",
-             f"- Deploys as: `{p['deploy_name']}` to `{p['repo']}` branch `{p['branch']}` "
-             f"(token: {p['token_source']}; GitHub {'checked' if p['github_checked'] else 'not checked'})"
-             + (f"\n- Name from: {p['name_source']}" if p.get("name_source") else "")]
-    by_step: dict[str, list[str]] = {}
-    for t in p["targets"]:
-        if t.get("reused_from"):
-            state = f"deployed by run {t['reused_from']}, reused"
-        elif t.get("written"):
-            state = "written by this deploy"
-        elif t.get("exists") is None:
-            state = "not checked"
-        elif not t["exists"]:
-            state = "new"
-        elif t.get("overwrite"):
-            state = "exists, in this run's deploy log — will be overwritten (--overwrite-own-deploy)"
-        else:
-            state = "EXISTS (earlier curate-skills deploy) — refused" if t.get("ours") else \
-                "EXISTS, NOT OURS — refused"
-        by_step.setdefault(t["step"], []).append(f"`{t['path']}` ({state})")
-    for step in ("publish", "upload", "register"):
-        if step in by_step:
-            lines.append(f"- {step}: " + "; ".join(by_step[step]))
-    lines.append("- invoke: workflow_dispatch of the entry action (FaaSr Scheduler), as CURATE")
-    s3 = p.get("s3") or {}
+    """What the deploy will write, one line per file or folder. The field-by-field comparison with
+    the approved bundle runs silently (a field outside the allowed changes is a problem, one line);
+    the full comparison is written to the run's deploy folder (diff_md)."""
+    lines = [f"**Deploy preflight — {'ready' if p['ok'] else 'not ready'}** (read-only; nothing was written "
+             "to GitHub or S3)", "",
+             f"Deploys as: `{p['deploy_name']}`" + (f" (name from: {p['name_source']})" if p.get("name_source") else ""),
+             "", f"GitHub (`{p['repo']}`, branch `{p['branch']}`):"]
+    lines += [f"- `{t['path']}` — {_file_state(t)}" for t in p["targets"]]
+    by_bucket: dict[str, list[dict]] = {}
     for t in p.get("s3_targets") or []:
-        if t["prefix"] is None:
-            continue
-        state = ("not checked" if t.get("exists") is None else "new" if not t["exists"] else
-                 ("exists (this deployment's earlier outputs) — the new invocation rewrites them"
-                  if p.get("reuse_from") else
-                  "exists, in this run's deploy log — will be overwritten (--overwrite-own-deploy)")
-                 if t.get("overwrite") else "EXISTS — refused")
-        lines.append(f"- S3 ({t['kind']}, written by the run): `s3://{t['bucket']}/{t['prefix']}` ({state})")
-    if s3.get("key_vars"):
-        lines.append("- S3 keys read from: " + ", ".join(f"`{v}`" for v in s3["key_vars"].values()))
-    if p["curate_files"]:
-        lines.append(f"- CURATE's own files found and left untouched: {', '.join(p['curate_files'])}")
-    if s3.get("curate_prefixes"):
-        lines.append(f"- CURATE's own S3 data found and left untouched: {', '.join(s3['curate_prefixes'])}")
-    if p.get("refused_paths"):
-        lines.append("- **Paths that already exist (refused):** " + ", ".join(f"`{x}`" for x in p["refused_paths"]))
-    if p.get("overwrite_paths"):
-        lines.append("- Paths from this run's own deploy log that will be overwritten: "
-                     + ", ".join(f"`{x}`" for x in p["overwrite_paths"]))
+        if t["prefix"]:
+            by_bucket.setdefault(t["bucket"], []).append(t)
+    for bucket, ts in by_bucket.items():
+        lines += ["", f"S3 (`{bucket}`), written when the workflow runs:"]
+        lines += [f"- {'outputs' if t['kind'] == 'outputs' else 'logs'} folder: `{t['prefix']}` — "
+                  f"{_s3_state(t, bool(p.get('reuse_from')))}" for t in ts]
+    lines += ["", "Then invoke starts the workflow (a workflow_dispatch of the entry action, as CURATE)."]
+    if (p.get("s3") or {}).get("key_vars"):
+        lines += ["", "- S3 keys read from: " + ", ".join(f"`{v}`" for v in p["s3"]["key_vars"].values())]
     sec = p["secrets"]
-    lines.append(f"- GitHub secrets needed: {', '.join(sec['required'])}"
-                 + (f" — missing: {', '.join(sec['missing'])}" if sec.get("missing") else
-                    " — all present" if "present" in sec else " — not checked"))
-    lines += [f"- **Problem:** {x}" for x in p["problems"]]
+    lines += ["", f"- GitHub secrets needed: {', '.join(sec['required'])}"
+              + (f" — missing: {', '.join(sec['missing'])}" if sec.get("missing") else
+                 " — all present" if "present" in sec else " — not checked")]
+    if p["curate_files"] or (p.get("s3") or {}).get("curate_prefixes"):
+        lines.append("- CURATE's own deployment found and left untouched: "
+                     + ", ".join(f"`{x}`" for x in p["curate_files"] + (p.get("s3") or {}).get("curate_prefixes", [])))
+    refused = set(p.get("refused_paths") or [])
+    exists_problems = [x for x in p["problems"] if any(r in x for r in refused)]
+    if exists_problems:
+        lines.append(f"- **Problem:** {len(refused)} path(s) above already exist; "
+                     + _new_or_own(p.get("overwrite_own", False)))
+    lines += [f"- **Problem:** {x}" for x in p["problems"] if x not in exists_problems]
     lines += [f"- Note: {x}" for x in p["warnings"]]
-    if p.get("deploy_diff"):
-        lines += ["", "**Deploy copy vs approved bundle** (the approved bundle is not changed)", "",
-                  "| Field | Approved bundle | Deploy copy | Why |", "|---|---|---|---|"]
-        lines += [f"| `{r['field']}` | {_cell(r['approved'])} | {_cell(r['deploy'])} | {r['reason']} |"
-                  for r in p["deploy_diff"]]
-        lines += [f"| {d['what']} (derived from the name) | `{d['approved']}` | `{d['deploy']}` | deploy name |"
-                  for d in p.get("derived_changes") or []]
+    if p.get("diff_file"):
+        lines.append(f"- Full comparison with the approved bundle: `{p['diff_file']}`")
     return "\n".join(lines)
+
+
+def diff_md(p: dict) -> str:
+    """The full field-by-field comparison (kept in the run's deploy folder, not shown)."""
+    lines = [f"# Deploy copy vs approved bundle — `{p['deploy_name']}`", "",
+             f"Approved bundle: `{p['bundle']}` (workflow `{p['approved_name']}`). The approved bundle is not changed.",
+             "", "| Field | Approved bundle | Deploy copy | Why |", "|---|---|---|---|"]
+    lines += [f"| `{r['field']}` | {_cell(r['approved'])} | {_cell(r['deploy'])} | {r['reason']} |"
+              for r in p.get("deploy_diff") or []]
+    lines += [f"| {d['what']} (derived from the name) | `{d['approved']}` | `{d['deploy']}` | deploy name |"
+              for d in p.get("derived_changes") or []]
+    return "\n".join(lines) + "\n"
 
 
 # ── the four deploy steps ────────────────────────────────────────────────────

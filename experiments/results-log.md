@@ -1348,3 +1348,28 @@ outside, and the same command then ran; a control session without the rule was d
 (A first attempt in auto mode was inconclusive: an explicit "retry it" in the prompt let the
 classifier allow the second attempt even without the rule.) `~/.claude/settings.json` itself was
 not written in the test; the docs cover it.
+
+## 45. Gates show their full content first; plain deploy preflight (2026-11-05)
+
+**Gates.** `spec.py show --gate N` (now 1–5) returns the full content, writes the same text to
+`<run>/review/gate<N>.md` and returns `review_line` ("Full review: <path>"). Gate 1: steps in
+order, parallel copies, what each does. Gate 2: reuse decision, parallel copies, inputs, outputs,
+packages, secrets, data flow (columns renamed from Source/Rank/Deps). Gate 3: the table, then each
+function's full code in a code block with its stub-test result (and last stub-test line when it
+failed); kept functions are headed "kept (not regenerated)". Gate 4: workflow summary (steps,
+parallel copies, DAG) and every file in the bundle with its size. Gate 5 (new): the run summary
+plus "What would be saved" (the catalog's own dry runs: stored / skipped with reason, workflow
+new or updated, and why saving is refused if it is). gates.md and every stage file (skeleton,
+resolve, generate, emit, finalize) say: print the content, then the review line, then ask —
+never ask before printing. Checked on the real weather runs (rendered, nothing written): Gate 3
+≈ 9 KB with 3 code blocks; Gate 5 lists the three functions as already in the catalog.
+
+**Deploy preflight.** The summary is now: "Deploys as" (with where the name came from); GitHub
+(repo, branch) with one line per file and its state; S3 (bucket) with the outputs and logs
+folders; secrets; problems. The field-by-field comparison with the approved bundle still runs; a
+field outside the allowed changes is one problem line with both values; the full table goes to
+`<run>/deploy/preflight-diff.md` (leak-checked; the one local file preflight writes). Duplicates
+removed: on the real run each refused path had appeared three times (its step line, "Paths that
+already exist", its own problem line) and the S3-folder row once per action; now each path is one
+line and the nine "already exists" problems are one line (the JSON keeps all nine). The workflow
+file goes to the repo (upload step), not S3; the README said S3 and was corrected.

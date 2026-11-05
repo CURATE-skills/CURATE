@@ -44,8 +44,9 @@ already be in the repo:
 1. `deploy.py reuse --run <run>` **without** `--confirmed`. It writes nothing. It checks that
    every deployed file is byte-identical to what this run would deploy (function files, the
    deploy copy of workflow.json, and the Actions files regenerated with CURATE's generator).
-2. Print its `preflight_summary` exactly — it includes the field-by-field table of the deploy copy
-   vs the approved bundle — then tell the user the `plan`: the reused run, the identical files,
+2. Print its `preflight_summary` exactly — what this run uses on GitHub and in S3, one line each
+   (the comparison with the approved bundle runs silently; its full table is in the run's deploy
+   folder) — then tell the user the `plan`: the reused run, the identical files,
    and that the new invocation rewrites the deployment's earlier outputs in the S3 paths listed.
    If it returned `problems` instead, show them exactly and stop (step 4); nothing is reused.
 3. Ask with AskUserQuestion — question `Invoke only: start <deploy_name> again (nothing is
@@ -59,10 +60,11 @@ Otherwise go on with the preflight.
 ## 1. Preflight (read-only)
 
 `deploy.py preflight --run <run>`. **Print its `summary` exactly as a message** (the user does not
-see tool results; never re-format it). It lists every path the deploy writes, all under the
-run's own deploy name (`<Workflow>-<MMDD-HHMM>` of the run that approved Gate 4, or the name the
-summary's "Name from" line gives), and a table of how the deploy copy differs from the approved
-bundle.
+see tool results; never re-format it). It says the deploy name, then every file it writes on
+GitHub and the S3 folders the run writes, one line each with its state. The comparison of the
+deploy copy with the approved bundle runs silently: only a field outside the allowed changes
+(placeholders, the deploy name, per-deployment paths) shows, as a problem. The full comparison is
+in the run's `deploy/preflight-diff.md`; show it only if the user asks.
 If `ok` is false: say the deploy cannot start, list the `problems` exactly, and stop (step 4).
 
 ## 2. The four steps

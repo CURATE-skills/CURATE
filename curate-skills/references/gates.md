@@ -19,8 +19,11 @@ CURATE has five human gates. Each stage skill ends at its own gate (curate-reuse
 Do all three, at every gate, every time — including after a change request, after the user
 asked to see something, and after the user answered in chat:
 
-1. `spec.py show --run <run> --gate N`. **Print its `markdown` exactly as a message** — the user
-   does not see tool results, so the table must be in your own message. Copy it verbatim: never
+1. `spec.py show --run <run> --gate N` (N = 1–5). **Print its `markdown` exactly as a message,
+   then its `review_line`** (`Full review: <path>`, the same content saved in the run's
+   `review/gate<N>.md`) on its own line. **Print the content first, then ask — never ask before
+   printing it**, and never leave it only in a tool result: the user does not see tool results
+   (they are collapsed), so the content must be in your own message. Copy it verbatim: never
    re-format, re-order, summarize or rebuild it (e.g. as one field per line), and add nothing
    inside it. When the user asks to see a gate's table again, run `spec.py show` again and print
    its `markdown` verbatim — not your own rendering of it.

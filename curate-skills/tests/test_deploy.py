@@ -288,7 +288,8 @@ def test_preflight_fills_placeholders_in_the_deploy_copy_only(run, env, capsys, 
                                           "DataStores.S3.Bucket": "$FAASR_S3_BUCKET = b"}
     assert s3.made_with[0]["Bucket"] == "b" and s3.made_with[1:] == (FAKE["S3_AccessKey"], FAKE["S3_SecretKey"])
     assert "<FAASR_S3_BUCKET>" in wf_path.read_text()  # the approved bundle is unchanged
-    assert "| `DataStores.S3.Bucket` | `<FAASR_S3_BUCKET>` | `b` | placeholder $FAASR_S3_BUCKET |" in out["summary"]
+    assert "| `DataStores.S3.Bucket` | `<FAASR_S3_BUCKET>` | `b` | placeholder $FAASR_S3_BUCKET |" in \
+        Path(out["diff_file"]).read_text()
 
 
 def test_preflight_refuses_existing_s3_paths_and_reports_curates(run, env, capsys):
@@ -299,7 +300,7 @@ def test_preflight_refuses_existing_s3_paths_and_reports_curates(run, env, capsy
     assert out["existing_paths"] == ["s3://b/weather_data-cs/", "s3://b/FaaSrLog/weather-cs/"]
     assert sum("already holds objects" in x for x in out["problems"]) == 2
     assert out["s3"]["curate_prefixes"] == ["weather_data/", "FaaSrLog/weather/"]
-    assert "Paths that already exist (refused)" in out["summary"]
+    assert "path(s) above already exist; every path the deploy writes must be new" in out["summary"]
     assert {c[0] for c in s3.calls} == {"head_bucket", "list_objects_v2"}  # read-only
 
 
@@ -331,7 +332,9 @@ def test_preflight_never_prints_or_writes_secrets(run, env, capsys):
     text = json.dumps(out)
     assert all(v not in text for v in FAKE.values())
     after = {p: p.read_bytes() for p in run.parent.parent.parent.rglob("*") if p.is_file()}
-    assert before == after  # nothing written locally either
+    diff = run / "deploy" / "preflight-diff.md"  # the one local file: the full comparison
+    assert {k: v for k, v in after.items() if k != diff} == before and out["diff_file"] == str(diff)
+    assert all(v.encode() not in after[diff] for v in FAKE.values())
 
 
 def test_preflight_leaves_curate_files_alone_and_reports_them(run, env, capsys):
@@ -351,7 +354,7 @@ def test_preflight_refuses_targets_that_are_not_ours(run, env, capsys):
         "functions/weather-cs/plot_weather.py": "Add plot (faasr-agents)"}))
     assert code == 1 and not out["ok"]
     refused = [x for x in out["problems"] if "does not belong" in x]
-    assert len(refused) == 3 and "EXISTS, NOT OURS" in out["summary"]
+    assert len(refused) == 3 and "already exists, NOT OURS — refused" in out["summary"]
 
 
 def test_preflight_refuses_even_its_own_earlier_deployment(run, env, capsys):
@@ -449,10 +452,11 @@ def test_summary_diffs_the_deploy_copy_field_by_field(run, env, capsys, monkeypa
     assert rows["DataStores.S3.Bucket"]["reason"] == "placeholder $FAASR_S3_BUCKET"
     assert rows["ActionList.plot.Arguments.folder"]["reason"] == "deploy name (S3 folder)"
     assert {d["what"]: d["deploy"] for d in out["derived_changes"]}["S3 log prefix (FaaSr)"] == "FaaSrLog/weather-cs/"
-    summary = out["summary"]
-    assert "**Deploy copy vs approved bundle**" in summary
-    assert "| `ActionList.plot.Arguments.folder` | `weather_data` | `weather_data-cs` | deploy name (S3 folder) |" in summary
-    assert "| S3 log prefix (FaaSr) (derived from the name) | `FaaSrLog/weather/` | `FaaSrLog/weather-cs/` |" in summary
+    summary, full = out["summary"], Path(out["diff_file"]).read_text()
+    assert "Deploy copy vs approved bundle" not in summary and "| Field |" not in summary  # checked silently
+    assert f"Full comparison with the approved bundle: `{out['diff_file']}`" in summary
+    assert "| `ActionList.plot.Arguments.folder` | `weather_data` | `weather_data-cs` | deploy name (S3 folder) |" in full
+    assert "| S3 log prefix (FaaSr) (derived from the name) | `FaaSrLog/weather/` | `FaaSrLog/weather-cs/` |" in full
 
 
 def test_a_diff_outside_the_allowed_fields_is_refused(run, env, capsys, monkeypatch):
@@ -464,9 +468,36 @@ def test_a_diff_outside_the_allowed_fields_is_refused(run, env, capsys, monkeypa
         return wf, targets, s3
     monkeypatch.setattr(D, "deploy_copy", tampered)
     code, out = pre(capsys, run, FakeGitHub())
-    assert code == 1 and any("ActionList.plot.Arguments.output1, which is not an allowed" in p
+    assert code == 1 and any("ActionList.plot.Arguments.output1 ('plot.png' → " in p and "which is not an allowed" in p
                              for p in out["problems"])
     assert {r["field"]: r["reason"] for r in out["deploy_diff"]}["ActionList.plot.Arguments.output1"] == "NOT ALLOWED"
+    lines = [l for l in out["summary"].splitlines() if "ActionList.plot.Arguments.output1" in l]
+    assert lines == ["- **Problem:** the deploy copy differs from the approved bundle at "
+                     "ActionList.plot.Arguments.output1 ('plot.png' → 'other.png'), which is not an allowed deploy "
+                     "change (refusing: the deploy must run what Gate 4 approved)"]
+
+
+def test_the_preflight_lists_what_will_be_written_once_each(run, env, capsys):
+    taken = {"functions/weather-cs/plot_weather.py": "x"}
+    code, out = pre(capsys, run, FakeGitHub(files=taken, commits={}),
+                    s3=FakeS3(objects={"weather_data-cs/old.csv"}))
+    summary = out["summary"]
+    head = summary.split("\n\n")
+    assert head[1] == "Deploys as: `weather-cs` (name from: CURATE_DEPLOY_NAME_SUFFIX / --name-suffix)"
+    assert head[2].splitlines() == [
+        "GitHub (`alice/faasr-actions`, branch `main`):",
+        "- `functions/weather-cs/download_station.py` — new",
+        "- `functions/weather-cs/plot_weather.py` — already exists, NOT OURS — refused",
+        "- `workflows/weather-cs.json` — new",
+        "- `.github/workflows/weather-cs-download.yml` — new",
+        "- `.github/workflows/weather-cs-plot.yml` — new"]
+    assert head[3].splitlines() == ["S3 (`b`), written when the workflow runs:",
+                                    "- outputs folder: `weather_data-cs/` — already exists — refused",
+                                    "- logs folder: `FaaSrLog/weather-cs/` — new"]
+    for path in ("functions/weather-cs/plot_weather.py", "weather_data-cs/"):
+        assert summary.count(path) == 1, path  # once: no "paths that exist" list, no per-path problem line
+    assert summary.count("**Problem:** 2 path(s) above already exist") == 1
+    assert len(out["problems"]) == 2  # the JSON keeps every problem
 
 
 # ── retrying a partial deploy: --overwrite-own-deploy ──
@@ -843,7 +874,7 @@ def test_reuse_without_confirmed_shows_the_diff_and_writes_nothing(reusable, env
     assert sorted(out["plan"]["identical"]) == sorted(files) and out["plan"]["reused_from"] == "r0"
     assert "nothing is written to GitHub" in out["plan"]["what"]
     summary = out["preflight_summary"]
-    assert "**Deploy copy vs approved bundle**" in summary and "deployed by run r0, reused" in summary
+    assert "| Field |" not in summary and "deployed by run r0, reused" in summary
     assert "the new invocation rewrites them" in summary
     assert fake.puts == [] and "invoke" not in runners and not (run / "deploy" / "deploy-log.jsonl").exists()
 

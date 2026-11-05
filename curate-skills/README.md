@@ -185,7 +185,7 @@ Bash(uv run --quiet /absolute/path/to/skill-curate/curate-skills/scripts/monitor
 At Gate 4, choose **approve & deploy** (or run `/curate-skills:curate-deploy --run <run_id>`).
 After a read-only preflight, deploy asks before each of four steps:
 1. **Publish:** function files to the repo
-2. **Upload:** `workflow.json` to S3
+2. **Upload:** `workflow.json` to the repo
 3. **Register:** GitHub Actions files
 4. **Invoke:** start the workflow
 

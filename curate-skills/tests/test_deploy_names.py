@@ -93,7 +93,7 @@ def test_default_name_is_the_workflow_and_the_approving_runs_date_time(project, 
     assert out["deploy_name"] == "weather-1105-0930" and out["suffix"] == "-1105-0930"
     assert out["name_source"] == f"Gate 4 approval in run {A}"
     assert [t["prefix"] for t in out["s3_targets"]] == ["weather_data-1105-0930/", "FaaSrLog/weather-1105-0930/"]
-    assert "-cs" not in json.dumps(out) and f"Name from: Gate 4 approval in run {A}" in out["summary"]
+    assert "-cs" not in json.dumps(out) and f"Deploys as: `weather-1105-0930` (name from: Gate 4 approval in run {A})" in out["summary"]
 
 
 def test_a_second_run_of_the_same_workflow_gets_its_own_name(project, plain, capsys):

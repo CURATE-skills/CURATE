@@ -464,7 +464,7 @@ def test_invoke_only_shows_the_diff_and_asks_first():
     plugin = Path(__file__).resolve().parents[1]
     text = " ".join((plugin / "references" / "stages" / "deploy.md").read_text().split())
     assert "`deploy.py reuse --run <run>` **without** `--confirmed`" in text
-    assert "it includes the field-by-field table of the deploy copy vs the approved bundle" in text
+    assert "the comparison with the approved bundle runs silently; its full table is in the run's deploy folder" in text
     assert "Only after **Yes, invoke** in the user's answer just now" in text
 
 
