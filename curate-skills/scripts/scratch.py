@@ -609,6 +609,15 @@ def cmd_harvest(args) -> dict:
     return {"ok": True, "node": args.node, **harvested}
 
 
+def read_assumptions(path: Path) -> list[str]:
+    """curate-mga's interpretations while coding: one per line in its folder's assumptions.txt
+    ("<topic> -> <reading used>"); a missing file, blank lines and "none" mean none."""
+    if not path.is_file():
+        return []
+    lines = [" ".join(l.lstrip("-*• ").split()) for l in path.read_text(errors="replace").splitlines()]
+    return [l for l in lines if l and l.lower() not in ("none", "none.")][:20]
+
+
 def cmd_record(args) -> dict:
     run = Path(args.run).resolve()
     s = load_state(run)
@@ -620,6 +629,7 @@ def cmd_record(args) -> dict:
         entry["attempts"] = args.attempts
     log = node_dir(run, args.node) / "stubtest.log"
     entry["last_output_tail"] = log.read_text()[-6000:] if log.exists() else ""
+    entry["assumptions"] = read_assumptions(node_dir(run, args.node) / "assumptions.txt")
     if args.note:
         entry["note"] = args.note
     node = next((n for n in (s.get("spec") or {}).get("nodes", []) if n["name"] == args.node), None)

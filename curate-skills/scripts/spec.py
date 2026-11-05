@@ -534,9 +534,10 @@ def parse_workflow_spec(data: dict, skeleton: bool = False) -> WorkflowSpec:
     if unknown and skeleton:
         raise InputError(f"edges reference unknown nodes: {unknown}")
     data_flow = [DataFlowEdge(**df) for df in data.get("data_flow", [])]
+    assumptions = [" ".join(str(a).split()) for a in (data.get("assumptions") or []) if str(a).strip()]
     return WorkflowSpec(
         name=data.get("name", "workflow"), description=data.get("description", ""),
-        nodes=nodes, edges=edges, data_flow=data_flow,
+        nodes=nodes, edges=edges, data_flow=data_flow, assumptions=assumptions,
         entry=data.get("entry") or nodes[0].name,
         folder=data.get("folder", "workflow_data"),
         compute_target=data.get("compute_target", "GH"),
@@ -926,8 +927,14 @@ def cmd_merge_resolved(args) -> dict:
     enriched = spec_of(s.get("enriched_spec"))
     if enriched is None:
         raise InputError("no candidates applied yet (run apply-candidates)")
+    raw = read_json_file(args.json)
+    if not isinstance(raw, dict) or not isinstance(raw.get("assumptions"), list) \
+            or not all(isinstance(a, str) for a in raw["assumptions"]):
+        raise InputError('resolved.json needs an "assumptions" list of strings, one line each: '
+                         '"<sketch phrase or topic> -> <reading used>" for every interpretation the design '
+                         'relies on that the sketch did not state ([] if there are none)')
     try:
-        resolved = parse_workflow_spec(read_json_file(args.json))
+        resolved = parse_workflow_spec(raw)
     except ValidationError as e:
         raise InputError(f"resolved.json is not a valid WorkflowSpec:\n{e}") from e
     names = {n.name for n in resolved.nodes}
@@ -2159,6 +2166,9 @@ def show_gate(s: dict, gate: int) -> str:
         problems = check_spec(spec)
         if problems:
             out += ["", "Check:"] + [f"- **{p['severity']}**: {p['message']}" for p in problems]
+        out += ["", "### Assumptions", "",
+                "Readings of the sketch the design relies on (to change one, ask for it as a change):"]
+        out += [f"- {a}" for a in spec.assumptions] or ["- none"]
         return "\n".join(out)
     if gate == 3:
         out += [f"## Gate 3 — Code  (iteration {s['iteration']}/{s['max_iterations']}, "
@@ -2176,6 +2186,9 @@ def show_gate(s: dict, gate: int) -> str:
         if warn:
             out += ["", "Needs attention:"] + [f"- `{k}`: {mga[k]['status']} — {_last_line(mga[k].get('last_output_tail'))}"
                                                for k in warn]
+        out += ["", "### Assumptions made while coding", ""]
+        coded = [(name, a) for name in topo_order(spec) for a in (mga.get(name) or {}).get("assumptions") or []]
+        out += [f"- `{name}`: {a}" for name, a in coded] or ["- none"]
         for name in topo_order(spec):
             n = next(x for x in spec.nodes if x.name == name)
             m = mga.get(name, {})
@@ -2278,6 +2291,10 @@ def summary_md(s: dict) -> str:
     ext = external_inputs(spec)
     out += ["", "Files to upload before running:"] + (
         [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
+    coded = [(nm, a) for nm in topo_order(spec) for a in (mga.get(nm) or {}).get("assumptions") or []]
+    if spec.assumptions or coded:  # only what Gates 2 and 3 already showed
+        out += ["", "Assumptions (shown at Gates 2 and 3):"] + [f"- {a}" for a in spec.assumptions] \
+            + [f"- `{nm}`: {a}" for nm, a in coded]
     mon = s.get("monitor") or {}
     if mon.get("summary"):
         out += ["", mon["summary"]]

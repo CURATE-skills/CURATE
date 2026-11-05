@@ -1373,3 +1373,33 @@ removed: on the real run each refused path had appeared three times (its step li
 already exist", its own problem line) and the S3-folder row once per action; now each path is one
 line and the nine "already exists" problems are one line (the JSON keeps all nine). The workflow
 file goes to the repo (upload step), not S3; the README said S3 and was corrected.
+
+## 46. Assumptions shown at Gate 2 (resolve) and Gate 3 (curate-mga) (2026-11-05)
+
+**Why run 20261104-223221 showed its readings only at Gate 3.** Not a code regression: no prompt
+ever asked for interpretations. On 20 Oct (run 20261020-215732) resolve happened to write an
+"Interpretation: …" into `process_weather_variable`'s description (window ±30 days, PRCP tenths
+of mm → mm, missing values ignored), and the main model added its own paragraph after the Gate 2
+table ("These assumptions are written into the function specs: …"); the user changed two of them
+at Gate 2. Later that day `2a4d222` made gates print `spec.py show` verbatim and add nothing, and
+the Gate 2 table never showed descriptions. On 4 Nov resolve copied the sketch's words ("extend
+that window by 30 days") without stating a reading, so the choices (window end only, PRCP → mm,
+Feb 29 dropped) first appeared in code at Gate 3. The resolve prompts are unchanged since 17 Oct.
+
+**Fix.** `WorkflowSpec.assumptions` (list of one-line `"<sketch phrase or topic> -> <reading
+used>"`); `wca-resolve.md` asks for every unstated interpretation (windows, ranges, units, leap
+days, missing/flagged data, aggregation, …) and to write the same reading into the node
+description; `merge-resolved` refuses a resolved.json without the list (`[]` allowed). Gate 2
+prints "### Assumptions" (or "- none") as part of its standard display; a change is an ordinary
+change request. curate-mga writes `<its folder>/assumptions.txt` (or `none`); `scratch.py record`
+reads it into `mga[<fn>].assumptions`; Gate 3 prints "### Assumptions made while coding" (or
+"- none"). The run summary repeats only those already shown. Fake tests.
+
+**Live check** (headless, Gates 1-2 of the weather sketch, empty temporary catalog so every step
+is designed by resolve; session `61433c0a`, $0.35 + $0.77): Gate 2 listed 12 assumptions, among
+them `"extend that window by 30 days" -> 30 days added after the end date (Mar 1 -> Mar 31),
+baseline (10-year average) only`, `leap days -> … Feb 29 (2016, 2020, 2024) dropped`,
+`precipitation units -> tenths of mm in the data, converted to mm`, plus missing and
+quality-flagged values. The orchestrator added one sentence after the review line pointing at the
+window reading as the one most worth checking (outside the verbatim display; no extra question).
+Gate 3 not run.

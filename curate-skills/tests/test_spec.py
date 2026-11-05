@@ -200,6 +200,7 @@ def test_candidates_must_cover_all_nodes(make_run, capsys):
 # ── resolve ──
 
 RESOLVED = {
+    "assumptions": ["\"count words\" -> whitespace-separated tokens, case-insensitive"],
     "name": "word_count", "description": "count words", "entry": "split_text",
     "nodes": [
         {"name": "split_text", "inputs": ["WRONG.txt"], "outputs": ["chunk_{rank}.txt"]},

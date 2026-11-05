@@ -61,7 +61,12 @@ guard denies the command. Do not install packages with pip; list them in `<name>
      exists nowhere, build a representative one in YOUR `test_data/` first
    - the ONLY acceptable failure is a genuine external fetch (API, URL, database) that
      needs network or credentials unavailable here
-6. When the test passes, stop. Do not modify other functions, and do not keep
+6. Write `<your folder>/assumptions.txt`: one line per interpretation YOU made while
+   coding that neither the spec nor CONTEXT.md states (e.g. how a window's ends are
+   counted, a unit conversion, leap days, missing or flagged values, rounding),
+   `<topic> -> <reading used>`. Don't repeat readings already in your spec. Write `none`
+   if there were none. The user sees these at Gate 3.
+7. When the test passes, stop. Do not modify other functions, and do not keep
    polishing.
 
 ## Report
@@ -77,6 +82,7 @@ files_written: <comma-separated paths inside your folder>
 deps: <comma-separated packages, or none>
 secrets: <comma-separated secret names, or none>
 stub_test: PASS | FAIL | EXTERNAL_ONLY
+assumptions: <number of lines in assumptions.txt, or none>
 notes: <one or two sentences: what you verified, or why it fails>
 ```
 

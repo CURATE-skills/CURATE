@@ -6,6 +6,7 @@ import pytest
 
 import spec as S
 from conftest import ok
+from test_spec import seeded_catalog  # noqa: F401  (fixture)
 from curate_models import FunctionSpec, WorkflowSpec
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -107,3 +108,74 @@ def test_every_gate_prints_the_content_then_asks():
         assert "review_line" in text and "never ask before printing it" in text, stage
     fin = " ".join((ROOT / "references" / "stages" / "finalize.md").read_text().split())
     assert fin.index("`spec.py show --run <run> --gate 5`") < fin.index("**Gate 5 — ask**")
+
+
+# ── assumptions: resolve records them (Gate 2), curate-mga reports more (Gate 3) ──
+
+WINDOW = '"extend that window by 30 days" -> 30 days added after the end date, baseline only'
+UNITS = "precipitation units -> tenths of mm in the data, converted to mm"
+
+
+def test_merge_resolved_requires_the_assumptions_list(make_run, capsys, seeded_catalog, monkeypatch):
+    import test_spec as T
+    saved = dict(T.RESOLVED)
+    monkeypatch.setattr(T, "RESOLVED", {k: v for k, v in saved.items() if k != "assumptions"})
+    run, (code, out) = T.resolved_run(make_run, capsys, seeded_catalog)
+    assert code == 2 and 'needs an "assumptions" list' in out["error"] and "[] if there are none" in out["error"]
+    monkeypatch.setattr(T, "RESOLVED", {**saved, "assumptions": ["  leap days ->  29 Feb dropped "]})
+    run, (code, out) = T.resolved_run(make_run, capsys, seeded_catalog)
+    assert code == 0, out
+    assert json.loads((run / "state.json").read_text())["spec"]["assumptions"] == ["leap days -> 29 Feb dropped"]
+    monkeypatch.setattr(T, "RESOLVED", {**saved, "assumptions": []})  # empty is fine; the field is required
+    run, (code, out) = T.resolved_run(make_run, capsys, seeded_catalog)
+    assert code == 0, out
+
+
+def test_gate2_prints_the_assumptions_section(make_run, capsys):
+    spec = weather().model_copy(update={"assumptions": [WINDOW, UNITS]})
+    md = show(make_run(spec=spec), 2, capsys)["markdown"]
+    section = md.split("### Assumptions")[1]
+    assert section.strip().splitlines()[1:] == [f"- {WINDOW}", f"- {UNITS}"]
+    assert "ask for it as a change" in section
+    md = show(make_run(spec=weather()), 2, capsys)["markdown"]
+    assert md.split("### Assumptions")[1].strip().endswith("- none")
+
+
+def test_mga_assumptions_are_recorded_and_listed_at_gate3(make_run, capsys):
+    import scratch
+    run = make_run(spec=weather(), mga={"download": {"status": "pending"}, "process": {"status": "pending"},
+                                        "plot": {"status": "reused"}})
+    for name, text in (("download", "none\n"),
+                       ("process", "- leap days -> 29 Feb dropped from the baseline\n\nmissing values -> skipped\n")):
+        (run / "functions" / name).mkdir(parents=True, exist_ok=True)
+        (run / "functions" / name / "assumptions.txt").write_text(text)
+        ok(scratch, ["record", "--run", str(run), "--node", name, "--status", "passed"], capsys)
+    mga = json.loads((run / "state.json").read_text())["mga"]
+    assert mga["download"]["assumptions"] == []
+    assert mga["process"]["assumptions"] == ["leap days -> 29 Feb dropped from the baseline", "missing values -> skipped"]
+    md = show(run, 3, capsys)["markdown"]
+    section = md.split("### Assumptions made while coding")[1].split("### `")[0].strip().splitlines()
+    assert section == ["- `process`: leap days -> 29 Feb dropped from the baseline", "- `process`: missing values -> skipped"]
+    nothing = make_run(spec=weather(), mga={"download": {"status": "passed"}})
+    assert "### Assumptions made while coding\n\n- none" in show(nothing, 3, capsys)["markdown"]
+
+
+def test_the_summary_repeats_only_assumptions_already_shown(make_run, capsys):
+    spec = weather().model_copy(update={"assumptions": [WINDOW]})
+    run = make_run(spec=spec, stage="finalize", validation={"ok": True, "level": "faasr_py"},
+                   mga={"process": {"status": "passed", "assumptions": ["leap days -> dropped"]}})
+    md = ok(S, ["summary", "--run", str(run)], capsys)["markdown"]
+    section = md.split("Assumptions (shown at Gates 2 and 3):")[1].split("\n\n")[0].strip().splitlines()
+    assert section == [f"- {WINDOW}", "- `process`: leap days -> dropped"]
+    assert "Assumptions" not in ok(S, ["summary", "--run", str(make_run(spec=weather(), stage="finalize"))],
+                                   capsys)["markdown"]
+
+
+def test_prompts_ask_for_assumptions():
+    resolve = " ".join((ROOT / "references" / "prompts" / "wca-resolve.md").read_text().split())
+    assert '"assumptions": [' in resolve and "`<sketch phrase or topic> -> <reading used>`" in resolve
+    for topic in ("time windows", "units", "leap days", "missing or flagged data"):
+        assert topic in resolve, topic
+    assert "the field itself is required" in resolve and "ordinary change request" in resolve
+    mga = " ".join((ROOT / "agents" / "curate-mga.md").read_text().split())
+    assert "Write `<your folder>/assumptions.txt`" in mga and "assumptions: <number of lines" in mga

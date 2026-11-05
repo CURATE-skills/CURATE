@@ -113,6 +113,9 @@ class WorkflowSpec(BaseModel):
     compute_target: str = "GH"  # key into ComputeServers
     data_store: str = "S3"  # key into DataStores
     folder: str = "workflow_data"  # S3 folder prefix
+    # Interpretations the design relies on that the sketch didn't state, one line each:
+    # "<sketch phrase or topic> -> <reading used>" (resolve writes them; shown at Gate 2).
+    assumptions: list[str] = Field(default_factory=list)
 
 
 # Run-state / provenance fields that describe how a particular run sourced a
