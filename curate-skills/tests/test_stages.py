@@ -443,7 +443,13 @@ def test_monitor_stage_is_read_only_and_states_the_final_rules():
     plugin = Path(__file__).resolve().parents[1]
     text = " ".join((plugin / "references" / "stages" / "monitor.md").read_text().split())
     assert "never writes to GitHub or S3 and never deploys again" in text
-    assert "written after the dispatch" in text and "**stale**" in text
+    assert "written after the dispatch" in text
+    assert "Nothing is concluded while any Actions run of this invocation is queued or in progress" in text
+    assert "every run counts" in text and "60-second grace period" in text
+    assert "print each entry of `lines` on its own line, exactly as returned, and nothing else" in text
+    assert "no tables, no output-file states, no poll counts" in text
+    assert "re-checks the same invocation (nothing is redeployed) and can replace the verdict" in text
+    assert "never in the background" in text
     for result in ("`success`", "`success_unconfirmed`", "`failure`", "`timeout`"):
         assert result in text
     assert "Job-log text is never shown or saved" in text and "never open a `.env` file" in text

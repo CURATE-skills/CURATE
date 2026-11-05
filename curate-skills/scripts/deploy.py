@@ -766,6 +766,12 @@ def preflight_summary(p: dict) -> str:
 # log as soon as it is written, and records the step in state.json. A finished step is skipped.
 
 STEPS = ("publish", "upload", "register", "invoke")
+STEP_DONE = {"publish": "published", "upload": "uploaded", "register": "registered", "invoke": "invoked"}
+
+
+def progress_line(done) -> str:
+    """The deploy steps finished so far, as shown to the user: `published · uploaded · …`."""
+    return " · ".join(STEP_DONE[x] for x in STEPS if x in done)
 STEP_WHAT = {
     "publish": "write the function files to the action repo",
     "upload": "write the deploy copy of workflow.json to the action repo",
@@ -1021,7 +1027,8 @@ def deploy_step(run: str, step: str, suffix: str, gh: GitHub | None, token: str 
     s = _update_state(run_p, finish)
     done = [x for x in STEPS if s["deploy"]["steps"].get(x, {}).get("ok")]
     nxt = next((x for x in STEPS if x not in done), None)
-    out = {**base, "ok": True, "done": done, "next_step": nxt, **detail, "next_stage": s["stage"]}
+    out = {**base, "ok": True, "done": done, "progress": progress_line(done), "next_step": nxt, **detail,
+           "next_stage": s["stage"]}
     if step == "invoke":
         out.update(next_skill="curate-skills:curate-monitor",
                    message=f"Deployed: {new}, invocation {detail['invocation_id']}. Next: curate-monitor checks "
@@ -1178,7 +1185,7 @@ def deploy_status(run: str) -> dict:
         except StepError:
             pass
     return {"ok": True, "stage": s.get("stage"), "deploy_choice": s.get("deploy_choice"), "done": done,
-            "reuse_possible": reuse_possible,
+            "progress": progress_line(done), "reuse_possible": reuse_possible,
             "failed": failed, "next_step": next((x for x in STEPS if x not in done), None),
             "deploy_name": rec.get("deploy_name"), "invocation_id": rec.get("invocation_id"),
             "deploy_log": str(Path(run) / DEPLOY_LOG) if (Path(run) / DEPLOY_LOG).is_file() else None}

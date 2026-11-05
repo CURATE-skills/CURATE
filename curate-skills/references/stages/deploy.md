@@ -63,9 +63,10 @@ are skipped). For that step:
 4. Only if the user chose **Yes** for this step in their answer just now:
    `deploy.py <step> --run <run> --confirmed`. Anything else is not a yes: **Stop here** → step 4
    below; a question → answer it, then ask again (3).
-5. Show the result in one line, then go back to `deploy.py status` for the next step.
-   After invoke, print the returned `message` (the deploy name and `invocation_id`); the run
-   moves on to `monitor`, which checks the Actions runs, FaaSr logs and outputs read-only.
+5. Show the result as the returned `progress` line, exactly (e.g. `published · uploaded`), then
+   go back to `deploy.py status` for the next step. After invoke, also print the returned
+   `message` (the deploy name and `invocation_id`); the run moves on to `monitor`, which checks
+   the Actions runs, FaaSr logs and outputs read-only.
 
 Never pass `--confirmed` without the user's yes to that step in their latest answer, and never
 pass `--overwrite-own-deploy` unless the user chose it (below).

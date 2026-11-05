@@ -190,8 +190,10 @@ After a read-only preflight, deploy asks before each of four steps:
 Everything is named `<Workflow>-cs`, and deploy refuses to overwrite an existing deployment.
 
 ### 5. Monitor
-Under `/curate`, monitoring starts after invoke and watches the run for up to 10 minutes.
-On success, finalize follows. On failure or timeout, the run stops; to keep watching:
+Under `/curate`, monitoring starts after invoke and watches the run for up to 10 minutes,
+with one line per function as it changes (`… running`, `✓ succeeded`, `✗ failed: <reason>`).
+On success, finalize follows. On failure or timeout, the run stops; to re-check the same
+invocation (nothing is redeployed; the new result replaces the old one):
 ```
 /curate-skills:curate-monitor --run <run_id> --minutes 20
 ```

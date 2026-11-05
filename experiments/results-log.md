@@ -1222,3 +1222,52 @@ loaded-twice check), deploy's classic-token preflight note, conftest's token stu
 **Added:** `.env.template` (every deploy variable, empty, commented; SECRET markers; classic-token
 steps; the three Actions secrets); the write guard no longer treats `*.template` / `*.example` /
 `*.sample` as `.env` files, so `cat .env.template` is allowed.
+
+## 41. Monitor: false FAILURE on a fan-in step; fixes and a real re-check (2026-11-04)
+
+**What happened.** Run `20261104-210753-corvallis-winter-weather-comparison` (invoke only, reusing
+run 20261101-172823's deployment; InvocationID `2026-11-04-21-09-11`) ended with monitor
+**FAILURE**: "declared output(s) corvallis_winter_weather-cs/corvallis_winter_comparison.png
+(stale)", at 05:11:37Z, after 154 s. All Actions runs were green.
+
+**Why.** `plot-weather-comparison` is a fan-in step: each of the three
+`process-weather-variable` ranks dispatches it, so it runs three times (the finding in #38). The
+monitor kept only the first `expected` (= 1) concluded run per action (`[:expected]`), so once
+that early run had concluded it counted the action as done. It judged outputs while a later plot
+run was still in progress; that run wrote the PNG at 05:11:57Z and concluded at 05:12:02Z. The
+FaaSr plot log at the verdict still read "running" (no `.done` yet).
+
+**Fixes (monitor.py).**
+1. Nothing is concluded while any Actions run in the invocation's window is queued or in progress
+   (of any action, matched or not yet matched). Every run of an action counts; no `[:expected]`.
+2. Per action, in workflow order: failed (a bad conclusion or FaaSr `[ERROR]`) / running / waiting
+   / succeeded (all runs `success`, at least `expected` of them, predecessors succeeded, outputs
+   fresh). Outputs still stale or missing get a **60 s grace period** after the action's last run
+   (`updated_at`); after that: "succeeded but did not write <file>".
+3. **Re-check:** after `failure` or `timeout`, `curate-monitor --run <id>` (begin resumes into
+   monitor) polls the same invocation with a fresh budget; the new verdict replaces the old one
+   and is recorded in history ("re-checked after FAILURE"). Before, a recorded failure was a no-op.
+4. **Display:** `poll` returns after `--chunk-seconds` (default 60; `--budget` kept as an alias)
+   with `lines`, one per change per function (`… running (1/3)`, `✓ … succeeded (3/3)`,
+   `✗ … failed: <one-line reason from the logs>`), ending with `✓ workflow succeeded` or
+   `✗ workflow failed: <function>: <reason>`. No present/stale/missing or poll tables are shown;
+   the full report goes to `deploy/monitor-report.md` (and state.json). Deploy steps show as
+   `published · uploaded · registered · invoked` (`progress`).
+
+**Re-check of the real run (read-only: GET to GitHub, head/get to S3).** `spec.py begin` →
+resume into monitor; one `monitor.py poll` (12 polls in the run's total, 5.8 s this call):
+
+```
+✓ download-ghcn-station succeeded
+✓ process-weather-variable succeeded (3/3)
+✓ plot-weather-comparison succeeded
+✓ workflow succeeded
+```
+
+Plot: 3 runs, all `success`, all confirmed by InvocationID (41972372940 at 05:11:36Z, 41972375741
+at 05:11:41Z, 41972363367 at 05:12:02Z); PNG written 05:11:57Z (fresh, 297097 bytes); 5/5
+outputs fresh. The run moved to `finalize`; history: `failed` then `succeeded` ("re-checked
+after FAILURE"). state.json before the re-check was backed up outside the repo.
+
+**Not exercised live:** the 60 s grace path, a real failure line, chunked progress on a running
+invocation (the invocation had long finished): covered by fake tests.

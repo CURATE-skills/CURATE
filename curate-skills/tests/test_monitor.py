@@ -2,6 +2,7 @@
 import io
 import json
 import urllib.error
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -148,6 +149,12 @@ def _resp(body):
     return R()
 
 
+def at(iso, clock=None, plus=0):
+    """A wall clock for the grace period: `iso` + `plus` seconds + the fake clock's time."""
+    base = M._iso(iso)
+    return lambda: base + timedelta(seconds=plus + (clock.t if clock else 0))
+
+
 class Clock:
     def __init__(self, on_sleep=None):
         self.t = 0.0
@@ -162,15 +169,20 @@ class Clock:
             self.on_sleep()
 
 
-def poll(capsys, run, world, *extra, clock=None):
+def poll(capsys, run, world, *extra, clock=None, now=None):
     clock = clock or Clock()
     code = M.main(["poll", "--run", str(run), *extra], opener=world, s3_factory=world.reader,
-                  clock=clock, sleep=clock.sleep)
+                  clock=clock, sleep=clock.sleep, now=now)
     return code, json.loads(capsys.readouterr().out)
 
 
 def state(run):
     return json.loads((run / "state.json").read_text())
+
+
+def report(out):
+    """The full report: deploy/monitor-report.md (recorded) or `report` (report only)."""
+    return Path(out["details"]).read_text() if out.get("details") else out["report"]
 
 
 # ── the weather workflow's units and outputs ──
@@ -191,7 +203,7 @@ def test_success_is_recorded_and_goes_to_finalize(run, env, capsys):
     s = state(run)
     assert s["stage"] == "finalize" and s["monitor"]["result"] == "success" and s["monitor"]["success"]
     assert s["history"][-1]["decision"] == "succeeded"
-    md = out["summary"]
+    md = report(out)
     assert "**Actions:** all succeeded" in md and "**Outputs:** 5/5 declared files present and fresh" in md
     assert "plot) is not judged" in md
     for key in OUTPUTS:
@@ -203,6 +215,7 @@ def test_success_is_recorded_and_goes_to_finalize(run, env, capsys):
 def test_a_failed_action_stops_with_a_redacted_excerpt(run, env, capsys):
     world = World()
     world.add_run("download")
+    world.s3["wx-cs/station.csv"] = ("data", AFTER)
     world.add_run("process")
     world.add_run("process", conclusion="failure")
     world.add_run("process")
@@ -214,11 +227,11 @@ def test_a_failed_action_stops_with_a_redacted_excerpt(run, env, capsys):
     assert "[ERROR] in its FaaSr log" in out["failed"]["why"]
     text = json.dumps(out) + (run / "state.json").read_text()
     text += "".join(p.read_text() for p in (run / "deploy" / "monitor").iterdir())
-    assert FAKE["GH_PAT"] not in text and "[REDACTED:" in out["summary"]
+    assert FAKE["GH_PAT"] not in text and "[REDACTED:" in report(out)
     s = state(run)
     assert s["stage"] == "stopped" and s["stopped_from"] == "monitor"
     assert out["resume_command"] == "/curate-skills:curate --resume r1"
-    assert "**Failed: `process(2)`**" in out["summary"]
+    assert "**Failed: `process(2)`**" in report(out)
 
 
 @pytest.mark.parametrize("case,state_word", [("missing", "missing"), ("stale", "stale")])
@@ -232,7 +245,7 @@ def test_a_missing_or_stale_output_fails_the_outputs_check_only(run, env, capsys
     assert code == 1 and out["result"] == "failure"
     assert out["actions_ok"] is True and out["outputs_ok"] is False  # reported separately
     assert f"wx-cs/cmp_3.csv ({state_word})" in out["failed"]["why"]
-    assert f"`wx-cs/cmp_3.csv` — {state_word}" in out["summary"] and "4/5 declared files" in out["summary"]
+    assert f"`wx-cs/cmp_3.csv` — {state_word}" in report(out) and "4/5 declared files" in report(out)
 
 
 def test_all_outputs_stale_from_an_earlier_invocation(run, env, capsys):
@@ -240,7 +253,7 @@ def test_all_outputs_stale_from_an_earlier_invocation(run, env, capsys):
     for key in OUTPUTS:
         world.s3[key] = ("old", BEFORE)
     code, out = poll(capsys, run, world)
-    assert out["result"] == "failure" and "0/5 declared files" in out["summary"]
+    assert out["result"] == "failure" and "0/5 declared files" in report(out)
 
 
 def test_timeout_then_resume_continues_the_same_invocation(run, env, capsys):
@@ -252,7 +265,7 @@ def test_timeout_then_resume_continues_the_same_invocation(run, env, capsys):
     assert out["resume_command"] == "/curate-skills:curate --resume r1"
     s = state(run)
     assert s["stage"] == "stopped" and s["stopped_from"] == "monitor" and s["history"][-1]["decision"] == "timed-out"
-    assert "not finished (timed out)" in out["summary"]
+    assert "not finished (timed out)" in report(out)
     # resume: begin re-enters monitor (never deploy), and the same invocation is polled again
     S.main(["begin", "--run", str(run), "--stage", "monitor"])
     assert json.loads(capsys.readouterr().out)["mode"] == "resume" and state(run)["stage"] == "monitor"
@@ -317,8 +330,8 @@ def test_runs_without_a_log_are_success_unconfirmed_and_need_the_users_acceptanc
     world.logs[world.runs["process"][1]["id"]] = None  # its job log is gone
     code, out = poll(capsys, run, world)
     assert code == 0 and out["result"] == "success_unconfirmed" and out["unconfirmed"]
-    assert "success, unconfirmed match" in out["summary"] and "time only" in out["summary"]
-    assert "Gate 5 asks you to accept" in out["summary"]
+    assert "success, unconfirmed match" in report(out) and "time only" in report(out)
+    assert "Gate 5 asks you to accept" in report(out)
     s = state(run)
     assert s["stage"] == "finalize" and s["monitor"]["accepted"] is None
     assert "accept" in catalog.deployed_run_problem(s)
@@ -392,13 +405,12 @@ def test_interim_polls_show_earlier_outputs_as_stale_until_rewritten(run, env, c
         for key in OUTPUTS:
             world.s3[key] = ("new", AFTER)
     clock = Clock(on_sleep=the_run_finishes)
-    code, out = poll(capsys, run, world, clock=clock)
+    code, out = poll(capsys, run, world, clock=clock, now=at(AFTER, clock))
     assert code == 0 and out["result"] == "success"
-    first, last = out["interim"]
+    first, last = state(run)["monitor"]["poll_log"]
     assert first["runs_concluded"] == 4 and first["outputs"] == {"stale": 5}
     assert last["runs_concluded"] == 5 and last["outputs"] == {"present": 5}
-    assert "| 1 | 0 | 4/5 | 0 / 5 / 0 |" in out["summary"] and "| 2 | 10 | 5/5 | 5 / 0 / 0 |" in out["summary"]
-    assert state(run)["monitor"]["poll_log"] == out["interim"]
+    assert "| 1 | 0 | 4/5 | 0 / 5 / 0 |" in report(out) and "| 2 | 10 | 5/5 | 5 / 0 / 0 |" in report(out)
 
 
 def test_minutes_given_on_resume_replace_the_pinned_value(run, env, capsys):
@@ -460,3 +472,135 @@ def test_config_minutes_from_skill(monkeypatch, config, expected):
     monkeypatch.setenv("CURATE_MONITOR_MINUTES", "7")
     assert M._setting(None, "CURATE_MONITOR_MINUTES", config, M.DEFAULT_MINUTES, float) == (7.0, "CURATE_MONITOR_MINUTES")
     assert M._setting("2", "CURATE_MONITOR_MINUTES", config, M.DEFAULT_MINUTES, float) == (2.0, "flag")
+
+
+# ── fan-in runs, the grace period, re-check, the display (run 20261104-210753) ──
+
+def _all_but_plot_output(world):
+    world.s3["wx-cs/fig.png"] = ("last week's figure", BEFORE)  # an earlier invocation's file
+    return world
+
+
+def test_an_extra_fan_in_run_in_progress_is_waited_for(run, env, capsys):
+    # plot is triggered once per predecessor: one run concluded (it found its inputs incomplete and
+    # exited), another is still running. All 5 expected runs are green and fig.png is stale; the
+    # grace period is long over. Nothing may be judged yet.
+    world = _all_but_plot_output(World().finish_all())
+    late = world.add_run("plot", status="in_progress", conclusion=None)
+    code, out = poll(capsys, run, world, "--chunk-seconds", "20")
+    assert code == 0 and out["result"] == "pending" and state(run)["stage"] == "monitor"
+    assert out["lines"] == ["✓ download succeeded", "✓ process succeeded (3/3)", "… plot running"]
+    assert not out["failed"]
+    # the second run finishes and writes the figure
+    world.runs["plot"][-1].update(status="completed", conclusion="success")
+    world.s3["wx-cs/fig.png"] = ("new figure", AFTER)
+    code, out = poll(capsys, run, world)
+    assert code == 0 and out["result"] == "success" and state(run)["stage"] == "finalize"
+    assert out["lines"] == ["✓ plot succeeded", "✓ workflow succeeded"]
+    assert str(late) in state(run)["monitor"]["matches"]
+
+
+def test_an_unconfirmed_run_in_progress_of_any_action_blocks_the_verdict(run, env, capsys):
+    world = World().finish_all()
+    world.add_run("download", status="queued", conclusion=None)
+    code, out = poll(capsys, run, world, "--chunk-seconds", "10")
+    assert out["result"] == "pending" and "✓ workflow succeeded" not in out["lines"]
+
+
+def test_a_late_output_within_the_grace_period_succeeds(run, env, capsys):
+    world = _all_but_plot_output(World().finish_all())
+
+    def written_later():
+        if clock.t >= 30:
+            world.s3["wx-cs/fig.png"] = ("new figure", AFTER)
+    clock = Clock(on_sleep=written_later)
+    code, out = poll(capsys, run, world, clock=clock, now=at(AFTER, clock, plus=5))
+    assert code == 0 and out["result"] == "success"
+    assert out["lines"] == ["✓ download succeeded", "✓ process succeeded (3/3)", "… plot running",
+                            "✓ plot succeeded", "✓ workflow succeeded"]
+
+
+def test_an_output_still_missing_after_the_grace_period_fails_in_plain_words(run, env, capsys):
+    world = _all_but_plot_output(World().finish_all())
+    clock = Clock()
+    code, out = poll(capsys, run, world, clock=clock, now=at(AFTER, clock, plus=5))
+    assert code == 1 and out["result"] == "failure" and clock.t >= M.GRACE_SECONDS - 5
+    assert out["lines"][-2:] == ["✗ plot succeeded but did not write fig.png",
+                                 "✗ workflow failed: plot: succeeded but did not write fig.png"]
+    assert "wx-cs/fig.png (stale)" in out["failed"]["why"]  # the details: in the report and state
+    assert "`wx-cs/fig.png` — stale" in report(out)
+
+
+def test_recheck_after_a_failure_polls_the_same_invocation_and_can_replace_the_verdict(run, env, capsys):
+    import spec as S
+    world = _all_but_plot_output(World().finish_all())
+    late = world.add_run("plot", status="in_progress", conclusion=None)
+    world.runs["plot"].remove(next(r for r in world.runs["plot"] if r["id"] == late))
+    code, out = poll(capsys, run, world)  # the old false FAILURE: the late run not listed yet
+    assert out["result"] == "failure" and state(run)["stage"] == "stopped"
+    assert out["recheck_command"] == "/curate-skills:curate-monitor --run r1"
+    # curate-monitor --run r1: begin resumes monitor; poll re-checks the same invocation
+    S.main(["begin", "--run", str(run), "--stage", "monitor"])
+    assert json.loads(capsys.readouterr().out)["mode"] == "resume"
+    world.add_run("plot")
+    world.s3["wx-cs/fig.png"] = ("new figure", AFTER)
+    requests_before = len(world.requests)
+    code, out = poll(capsys, run, world)
+    assert code == 0 and out["result"] == "success" and out["rechecked"] == "failure"
+    assert out["lines"] == ["✓ download succeeded", "✓ process succeeded (3/3)", "✓ plot succeeded",
+                            "✓ workflow succeeded"]  # every line again, then the new verdict
+    s = state(run)
+    assert s["stage"] == "finalize" and s["monitor"]["result"] == "success"
+    assert [h["decision"] for h in s["history"] if h["gate"] == "monitor"] == ["failed", "succeeded"]
+    assert "re-checked after FAILURE" in s["history"][-1]["text"]
+    assert s["deploy"]["invocation_id"] == INV and all(r.get_method() == "GET" for r in world.requests[requests_before:])
+
+
+def test_lines_show_each_change_once_and_one_call_returns_after_its_chunk(run, env, capsys):
+    world = World()
+    world.add_run("download")
+    world.s3["wx-cs/station.csv"] = ("data", AFTER)
+    world.add_run("process")
+    world.add_run("process", status="in_progress", conclusion=None)
+    world.add_run("process", status="in_progress", conclusion=None)
+    clock = Clock()
+    code, out = poll(capsys, run, world, clock=clock)
+    assert out["result"] == "pending" and 60 <= clock.t <= 70 and out["minutes_used"] <= 70 / 60
+    assert out["lines"] == ["✓ download succeeded", "… process running (1/3)"]
+    code, out = poll(capsys, run, world, "--chunk-seconds", "10")
+    assert out["result"] == "pending" and out["lines"] == []  # nothing changed: nothing shown
+    for r in world.runs["process"]:
+        r.update(status="completed", conclusion="success")
+    world.add_run("plot")
+    for key in OUTPUTS:
+        world.s3[key] = ("data", AFTER)
+    code, out = poll(capsys, run, world)
+    assert out["lines"] == ["✓ process succeeded (3/3)", "✓ plot succeeded", "✓ workflow succeeded"]
+    shown = "\n".join(out["lines"]) + out["summary"]
+    for word in ("present", "stale", "missing", "| Poll |"):
+        assert word not in shown
+    assert out["summary"].startswith("✓ download succeeded\n✓ process succeeded (3/3)\n✓ plot succeeded\n"
+                                     "✓ workflow succeeded")
+
+
+def test_a_failure_line_names_the_function_and_the_reason_from_its_log(run, env, capsys):
+    world = World()
+    world.add_run("download")
+    world.s3["wx-cs/station.csv"] = ("data", AFTER)
+    for c in ("success", "failure", "success"):
+        world.add_run("process", conclusion=c)
+    world.s3[f"{FOLDER}/process(2).txt"] = ("[1.0] [INFO] start\n[2.5] [ERROR] KeyError: 'TMAX' not in columns\n", AFTER)
+    code, out = poll(capsys, run, world)
+    assert out["lines"] == ["✓ download succeeded", "✗ process failed: KeyError: 'TMAX' not in columns",
+                            "✗ workflow failed: process(2): KeyError: 'TMAX' not in columns"]
+    # without a FaaSr [ERROR] line: the job log's last error-like line, else the conclusion
+    assert M.one_line_reason({"conclusion": "failure", "excerpt": [
+        "2026-11-05T05:10:01.1Z ##[error]Process completed with exit code 1.", "2026-11-05T05:10:02Z Cleaning up"]},
+        None) == "Process completed with exit code 1."
+    assert M.one_line_reason({"conclusion": "timed_out", "excerpt": []}, None) == "its Actions run ended with timed_out"
+
+
+def test_deploy_progress_line():
+    assert M.D.progress_line(["publish"]) == "published"
+    assert M.D.progress_line(["invoke", "publish", "upload", "register"]) == \
+        "published · uploaded · registered · invoked"

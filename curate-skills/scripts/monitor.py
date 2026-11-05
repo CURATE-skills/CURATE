@@ -16,9 +16,16 @@ For the run's InvocationID it finds, per action and in workflow order:
   - every output file the deploy copy declares (`output<N>` under the action's `folder`); a file
     counts only if it was written at or after the dispatch (older files are "stale").
 
+Nothing is judged while any Actions run in the window is queued or in progress, and every run of
+an action counts (a fan-in step may run once per predecessor). Outputs still stale or missing get
+GRACE_SECONDS after the action's last run before they count as not written.
+
 Results: success / success_unconfirmed (Gate 5 asks the user to accept it) / failure / pending
-(timeout after `monitor_minutes`). It never writes to GitHub or S3. It records state.json only
-for a run at stage `monitor`; for any other run it is report-only and writes nothing.
+(timeout after `monitor_minutes`). `poll` returns after `--chunk-seconds` with `lines` (one per
+change, per action) for the stage to print; the full report goes to deploy/monitor-report.md.
+After a failure or timeout, polling again re-checks the same invocation and replaces the verdict.
+It never writes to GitHub or S3. It records state.json only for a run at stage `monitor`; for any
+other run it is report-only and writes nothing.
 Prints JSON with "ok"; exit 1 = needs attention, 2 = bad input.
 """
 from __future__ import annotations
@@ -44,6 +51,10 @@ from vendor.faasr_runtime.artifacts import build_artifact_list  # noqa: E402
 FAILED_RX = re.compile(r"\[[\d\.]+?\] \[ERROR\]")  # vendored faasr_function.FaaSrFunction.failed_regex
 BAD_CONCLUSIONS = {"failure", "cancelled", "timed_out", "startup_failure", "action_required", "stale"}
 MAX_CALL_SECONDS = 540  # one call stays under the 10-minute Bash limit
+DEFAULT_CHUNK = 60  # seconds per call: the stage prints progress between calls
+GRACE_SECONDS = 60  # outputs still stale or missing this long after an action's last run finished: failed
+REASON_MAX = 160
+ERRORISH_RX = re.compile(r"error|exception|traceback|failed", re.I)
 DEFAULT_MINUTES = 10
 DEFAULT_INTERVAL = 10  # seconds, as CURATE's WorkflowRunner(check_interval=10)
 WINDOW_BEFORE = timedelta(minutes=2)  # clock skew allowance before dispatched_at
@@ -63,13 +74,10 @@ def _rank_of(entry: str) -> tuple[str, int]:
     return (m.group(1), int(m.group(2))) if m else (entry.strip(), 1)
 
 
-def units(wf: dict) -> list[dict]:
-    """Each action rank in workflow order (topological, entry first), as CURATE's
-    WorkflowRunner names them: `action` or `action(r)` (ranks from InvokeNext, as FaaSr_py's
-    build_adjacency_graph reads them)."""
-    actions = wf.get("ActionList") or {}
+def _graph(wf: dict) -> tuple[dict, dict]:
+    """(rank count per action named in an InvokeNext, successors per action)."""
     ranks, succ = {}, {}
-    for a, d in actions.items():
+    for a, d in (wf.get("ActionList") or {}).items():
         nxt = d.get("InvokeNext") or []
         nxt = [nxt] if isinstance(nxt, str) else nxt
         names = []
@@ -80,6 +88,15 @@ def units(wf: dict) -> list[dict]:
                     ranks[n] = max(ranks.get(n, 1), r)
                     names.append(n)
         succ[a] = names
+    return ranks, succ
+
+
+def units(wf: dict) -> list[dict]:
+    """Each action rank in workflow order (topological, entry first), as CURATE's
+    WorkflowRunner names them: `action` or `action(r)` (ranks from InvokeNext, as FaaSr_py's
+    build_adjacency_graph reads them)."""
+    actions = wf.get("ActionList") or {}
+    ranks, succ = _graph(wf)
     # Topological order (each action after all its predecessors), entry action first.
     preds = {a: {p for p, ns in succ.items() if a in ns} for a in actions}
     ready = sorted((a for a in actions if not preds[a]), key=lambda a: a != wf.get("FunctionInvoke"))
@@ -229,36 +246,69 @@ def job_log_matches(gh: D.GitHub, opener, repo: str, run_id: int, needle: str, e
 
 # ── one poll ─────────────────────────────────────────────────────────────────
 
+def _predecessors(wf: dict) -> dict[str, list[str]]:
+    _, succ = _graph(wf)
+    return {a: [p for p, ns in succ.items() if a in ns] for a in (wf.get("ActionList") or {})}
+
+
+def _clean(line: str) -> str:
+    line = re.sub(r"^\d{4}-\d\d-\d\dT[\d:.]+Z\s*", "", line.strip())  # Actions log timestamp
+    line = re.sub(r"^(##\[error\]|\[[\d.]+\] \[ERROR\]\s*)", "", line).strip()
+    return line if len(line) <= REASON_MAX else line[:REASON_MAX - 1] + "…"
+
+
+def one_line_reason(bad: dict | None, err: dict | None) -> str:
+    """Why an action failed, in one line: its FaaSr [ERROR] line, else the job log's last error-like
+    line, else the Actions conclusion. From redacted excerpts only."""
+    if err:
+        hit = next((x for x in reversed(err.get("excerpt") or []) if FAILED_RX.search(x)), None)
+        if hit and _clean(hit):
+            return _clean(hit)
+    if bad:
+        hit = next((x for x in reversed(bad.get("excerpt") or []) if ERRORISH_RX.search(x) and _clean(x)), None)
+        return _clean(hit) if hit else f"its Actions run ended with {bad['conclusion']}"
+    return "[ERROR] in its FaaSr log"
+
+
 def poll_once(ctx: dict, matches: dict) -> dict:
-    """A snapshot of the invocation: per action its matched runs, per rank its FaaSr status, and
-    (once every expected run concluded) the outputs. `matches` caches each run's classification."""
+    """A snapshot of the invocation and a verdict per action, in workflow order.
+
+    An action has succeeded when none of its Actions runs is queued or in progress, every run of it
+    for this invocation concluded `success` (a fan-in step may run once per predecessor: all of them
+    count, not just the first), its predecessors have succeeded, and its declared outputs were
+    written after the dispatch. Outputs that are still stale or missing are waited for for
+    GRACE_SECONDS after the action's last run finished before the action counts as failed. The
+    invocation is never judged while any run is queued or in progress. `matches` caches each
+    run's classification."""
     wf, dep, gh, s3, extra = ctx["wf"], ctx["deploy"], ctx["gh"], ctx["s3"], ctx["extra"]
+    now = ctx.get("now", lambda: datetime.now(timezone.utc))()
     inv, since = dep["invocation_id"], _iso(dep["dispatched_at"]) - WINDOW_BEFORE
     counts = rank_counts(wf)
+    preds = _predecessors(wf)
     actions = []
     for action in dict.fromkeys(u["action"] for u in units(wf)):
         wf_file = f"{dep['deploy_name']}-{action}.yml"
-        runs = []
+        runs, active = [], 0
         for r in list_runs(gh, dep["repo"], wf_file, since):
             key = str(r["id"])
             m = matches.get(key)
-            done = r.get("status") == "completed"
-            if m is None and done:
+            if r.get("status") != "completed":
+                active += 1  # not matchable yet (its log is incomplete): wait for it whoever's it is
+                continue
+            if m is None:
                 hit, excerpt = job_log_matches(gh, ctx["opener"], dep["repo"], r["id"], inv, extra)
                 m = {"action": action, "match": {True: "confirmed", False: "other", None: "time_only"}[hit],
                      "excerpt": excerpt if r.get("conclusion") in BAD_CONCLUSIONS else []}
                 matches[key] = m
-            if m and m["match"] == "other":
+            if m["match"] == "other":
                 continue  # another invocation's run
             runs.append({"id": r["id"], "status": r.get("status"), "conclusion": r.get("conclusion"),
                          "url": r.get("html_url"), "created_at": r.get("created_at"),
-                         "match": m["match"] if m else "pending", "excerpt": (m or {}).get("excerpt", [])})
-        confirmed = [x for x in runs if x["match"] == "confirmed"]
-        time_only = [x for x in runs if x["match"] == "time_only"]
-        pending = [x for x in runs if x["match"] == "pending"]
-        chosen = (confirmed + time_only)[:counts[action]]
-        actions.append({"action": action, "expected": counts[action], "runs": chosen,
-                        "in_progress": len(pending), "extra_runs": max(0, len(confirmed + time_only) - counts[action])})
+                         "updated_at": r.get("updated_at") or r.get("created_at"),
+                         "match": m["match"], "excerpt": m.get("excerpt", [])})
+        ok = sum(x["conclusion"] == "success" for x in runs)
+        actions.append({"action": action, "expected": counts[action], "runs": runs, "in_progress": active,
+                        "succeeded": ok, "extra_runs": max(0, len(runs) - counts[action])})
 
     folder = invocation_folder(wf, inv, dep["invocation_timestamp"])
     faasr = []
@@ -272,23 +322,6 @@ def poll_once(ctx: dict, matches: dict) -> dict:
         faasr.append({"label": u["label"], "action": u["action"], "status": status, "excerpt": excerpt,
                       "log": leakcheck.redact(text, extra_values=extra) if text else None})
 
-    failed = None
-    for a in actions:
-        bad = next((r for r in a["runs"] if r["conclusion"] in BAD_CONCLUSIONS), None)
-        err = next((f for f in faasr if f["action"] == a["action"] and f["status"] == "error"), None)
-        if bad or err:
-            failed = {"action": a["action"], "label": (err or {}).get("label") or a["action"],
-                      "why": (f"Actions run concluded {bad['conclusion']}" if bad else "")
-                             + (" and " if bad and err else "") + ("[ERROR] in its FaaSr log" if err else ""),
-                      "url": (bad or {}).get("url"),
-                      "excerpt": (err or {}).get("excerpt") or (bad or {}).get("excerpt") or [],
-                      "excerpt_from": "FaaSr log" if err and err.get("excerpt") else "job log (redacted)"}
-            break
-
-    all_concluded = all(len(a["runs"]) == a["expected"] and all(r["status"] == "completed" for r in a["runs"])
-                        for a in actions)
-    actions_ok = all_concluded and all(r["conclusion"] == "success" for a in actions for r in a["runs"])
-    # Output states every poll (shown as interim progress); judged only once every Actions run succeeded.
     dispatched = _iso(dep["dispatched_at"])
     outputs_now = []
     for o in declared_outputs(wf):
@@ -297,26 +330,90 @@ def poll_once(ctx: dict, matches: dict) -> dict:
                  "stale" if h.get("last_modified") and _iso(h["last_modified"]) < dispatched else "present")
         outputs_now.append({**o, "state": state, **({"size": h.get("size"), "last_modified": h.get("last_modified")}
                                                      if h else {})})
-    outputs, outputs_ok = [], None
-    if actions_ok and not failed:
-        outputs = outputs_now
-        outputs_ok = all(o["state"] == "present" for o in outputs)
-        if not outputs_ok:
-            bad = [o for o in outputs if o["state"] != "present"]
-            failed = {"action": bad[0]["action"], "label": bad[0]["action"],
-                      "why": "declared output(s) " + ", ".join(f"{o['key']} ({o['state']})" for o in bad),
-                      "url": None, "excerpt": [], "excerpt_from": None}
 
+    verdicts, failed = {}, None
+    for a in actions:
+        name = a["action"]
+        fa = [f for f in faasr if f["action"] == name]
+        bad = next((r for r in a["runs"] if r["conclusion"] in BAD_CONCLUSIONS), None)
+        err = next((f for f in fa if f["status"] == "error"), None)
+        v = {"action": name, "expected": a["expected"], "done": min(a["succeeded"], a["expected"])}
+        if bad or err:
+            v.update(state="failed", reason=one_line_reason(bad, err))
+            failed = failed or {
+                "action": name, "label": (err or {}).get("label") or name, "reason": v["reason"],
+                "why": (f"Actions run concluded {bad['conclusion']}" if bad else "")
+                       + (" and " if bad and err else "") + ("[ERROR] in its FaaSr log" if err else ""),
+                "url": (bad or {}).get("url"), "excerpt": (err or {}).get("excerpt") or (bad or {}).get("excerpt") or [],
+                "excerpt_from": "FaaSr log" if err and err.get("excerpt") else "job log (redacted)"}
+        elif (a["in_progress"] or a["succeeded"] < a["expected"]
+              or any(verdicts[p]["state"] != "succeeded" for p in preds.get(name, []) if p in verdicts)):
+            started = a["runs"] or a["in_progress"] or any(f["status"] != "not started" for f in fa)
+            v["state"] = "running" if started else "waiting"
+        else:
+            unwritten = [o for o in outputs_now if o["action"] == name and o["state"] != "present"]
+            last = max(_iso(r["updated_at"]) for r in a["runs"])
+            if not unwritten:
+                v["state"] = "succeeded"
+            elif (now - last).total_seconds() < GRACE_SECONDS:
+                v.update(state="running", waiting_for_outputs=[o["key"] for o in unwritten])
+            else:
+                files = [o["key"].rsplit("/", 1)[-1] for o in unwritten]
+                v.update(state="no_output", files=files, reason="succeeded but did not write " + ", ".join(files))
+                failed = failed or {
+                    "action": name, "label": name, "reason": v["reason"],
+                    "why": "declared output(s) " + ", ".join(f"{o['key']} ({o['state']})" for o in unwritten),
+                    "url": None, "excerpt": [], "excerpt_from": None}
+        verdicts[name] = v
+
+    active = sum(a["in_progress"] for a in actions)
+    actions_ok = not active and all(a["succeeded"] >= a["expected"] and all(r["conclusion"] == "success"
+                                                                           for r in a["runs"]) for a in actions)
+    outputs_ok = all(o["state"] == "present" for o in outputs_now) if actions_ok else None
     unconfirmed = any(r["match"] == "time_only" for a in actions for r in a["runs"])
-    if failed:
+    if active:
+        result = "pending"  # never judged while any run is queued or in progress
+    elif failed:
         result = "failure"
-    elif actions_ok and outputs_ok:
+    elif all(v["state"] == "succeeded" for v in verdicts.values()):
         result = "success_unconfirmed" if unconfirmed else "success"
     else:
         result = "pending"
-    return {"result": result, "actions": actions, "faasr": faasr, "outputs": outputs, "outputs_now": outputs_now,
-            "actions_ok": actions_ok, "outputs_ok": outputs_ok, "failed": failed,
-            "unconfirmed": unconfirmed, "invocation_folder": folder}
+    return {"result": result, "actions": actions, "verdicts": list(verdicts.values()), "faasr": faasr,
+            "outputs": outputs_now if actions_ok else [], "outputs_now": outputs_now, "actions_ok": actions_ok,
+            "outputs_ok": outputs_ok, "failed": failed, "unconfirmed": unconfirmed, "in_progress": active,
+            "invocation_folder": folder}
+
+
+# ── what the user sees ───────────────────────────────────────────────────────
+
+def function_line(v: dict) -> str | None:
+    """One line per action: running / ✓ succeeded / ✗ failed; a count for fan-out steps."""
+    name, n = v["action"], (f" ({v['done']}/{v['expected']})" if v["expected"] > 1 else "")
+    return {"running": f"… {name} running{n}", "succeeded": f"✓ {name} succeeded{n}",
+            "failed": f"✗ {name} failed: {v.get('reason')}",
+            "no_output": f"✗ {name} {v.get('reason')}"}.get(v["state"])
+
+
+def final_line(result: str, snap: dict, minutes: float) -> str | None:
+    f = snap.get("failed") or {}
+    if result == "success":
+        return "✓ workflow succeeded"
+    if result == "success_unconfirmed":
+        return "✓ workflow succeeded (some runs matched by time only: Gate 5 asks you to accept them)"
+    if result == "failure":
+        return f"✗ workflow failed: {f.get('label') or f.get('action')}: {f.get('reason')}"
+    if result == "timeout":
+        busy = [v["action"] for v in snap["verdicts"] if v["state"] in ("running", "waiting")]
+        return f"… not finished after {minutes:g} min" + (f": {', '.join(busy)} still running" if busy else "")
+    return None
+
+
+def status_block(snap: dict, result: str, minutes: float) -> str:
+    """The current state of every action plus the verdict: what finalize shows."""
+    lines = [x for x in (function_line(v) for v in snap["verdicts"]) if x]
+    end = final_line(result, snap, minutes)
+    return "\n".join(lines + ([end] if end else []) + ["", f"_{PLOT_NOTE}_"])
 
 
 # ── the report ───────────────────────────────────────────────────────────────
@@ -418,8 +515,14 @@ def _recording(s: dict, report_only: bool) -> bool:
     return not report_only and s.get("stage") == "monitor"
 
 
-def poll(run: str, budget: int | None = None, report_only: bool = False, minutes=None, interval=None,
-         config_minutes=None, opener=None, s3_factory=None, clock=time.monotonic, sleep=time.sleep) -> dict:
+def poll(run: str, chunk: int | None = None, report_only: bool = False, minutes=None, interval=None,
+         config_minutes=None, opener=None, s3_factory=None, clock=time.monotonic, sleep=time.sleep,
+         now=None) -> dict:
+    """Poll for up to `chunk` seconds (default DEFAULT_CHUNK), save progress, return. While the
+    result is `pending` the stage calls again, until a verdict or the `minutes` budget is spent.
+
+    `lines` holds one line per change, per action, since the previous call (and the verdict at the
+    end); the full details go to deploy/monitor-report.md and state.json."""
     run_p = Path(run)
     s, _ = D.load_run(run)
     record = _recording(s, report_only)
@@ -428,17 +531,20 @@ def poll(run: str, budget: int | None = None, report_only: bool = False, minutes
         # Resume after success: nothing to poll again.
         s = D._update_state(run_p, lambda st: st.update(stage="finalize", begun=None))
         return {"ok": True, "result": mon["result"], "no_op": True, "stage": s["stage"],
-                "summary": mon.get("summary", ""), "next_skill": "curate-skills:wda-finalize"}
-    if record and mon.get("result") == "failure":
-        return {"ok": False, "result": "failure", "no_op": True, "stage": s["stage"],
-                "summary": mon.get("summary", ""), "failed": mon.get("failed")}
+                "lines": [], "summary": mon.get("summary", ""), "next_skill": "curate-skills:wda-finalize"}
 
     s, ctx, extra = _context(run, opener, s3_factory)
+    if now is not None:
+        ctx["now"] = now
     dep = ctx["deploy"]
     if record and mon.get("invocation_id") not in (None, dep["invocation_id"]):
         mon = {}  # a new deployment of this run: start over
-    if record and mon.get("result") == "timeout":
-        mon.update(result="pending", seconds_used=0)  # a resumed run gets a fresh budget
+    recheck = None
+    if record and mon.get("result") in ("failure", "timeout"):
+        # Re-check the SAME invocation (nothing is redeployed) with a fresh budget; the new verdict
+        # replaces the old one. Every action's line is shown again.
+        recheck = mon["result"]
+        mon.update(result="pending", seconds_used=0, shown={})
     settings = dict(mon.get("settings") or {})
     settings_changed = None
     if settings and minutes not in (None, "") and float(minutes) != settings["minutes"]:
@@ -451,31 +557,43 @@ def poll(run: str, budget: int | None = None, report_only: bool = False, minutes
         settings = {"minutes": m, "minutes_source": m_src, "interval": i, "interval_source": i_src}
     used = float(mon.get("seconds_used") or 0)
     remaining_total = settings["minutes"] * 60 - used
-    call_budget = min(budget or MAX_CALL_SECONDS, MAX_CALL_SECONDS, max(remaining_total, 0))
+    call_budget = min(chunk or DEFAULT_CHUNK, MAX_CALL_SECONDS, max(remaining_total, 0))
     matches = dict(mon.get("matches") or {})
+    shown = dict(mon.get("shown") or {}) if record else {}
 
-    start, polls, interim = clock(), 0, []
+    start, polls, interim, lines = clock(), 0, [], []
     while True:
         snap = poll_once(ctx, matches)
         polls += 1
         interim.append(_interim(snap, round(used + clock() - start)))
+        for v in snap["verdicts"]:
+            line = function_line(v)
+            if line and shown.get(v["action"]) != line:
+                lines.append(line)
+                shown[v["action"]] = line
         if snap["result"] != "pending" or clock() - start + settings["interval"] > call_budget:
             break
         sleep(settings["interval"])
     used += clock() - start
     timed_out = snap["result"] == "pending" and used >= settings["minutes"] * 60 - 1e-6
     result = "timeout" if timed_out else snap["result"]
+    end = final_line(result, snap, settings["minutes"])
+    if end:
+        lines.append(end)
     mode = "recording" if record else "report only"
-    summary = summary_md({**snap, "result": result}, dep, mode, used / 60, interim)
+    summary = status_block(snap, result, settings["minutes"])
+    report = summary_md({**snap, "result": result}, dep, mode, used / 60, interim)
     resume = f"/curate-skills:curate --resume {s['run_id']}"
-    out = {"ok": result not in ("failure", "timeout"), "result": result, "mode": mode,
+    out = {"ok": result not in ("failure", "timeout"), "result": result, "lines": lines, "mode": mode,
            "polls": polls, "minutes_used": round(used / 60, 2), "settings": settings,
            "actions_ok": snap["actions_ok"], "outputs_ok": snap["outputs_ok"], "unconfirmed": snap["unconfirmed"],
-           "failed": snap["failed"], "summary": summary, "plot_note": PLOT_NOTE, "interim": interim,
+           "failed": snap["failed"], "summary": summary, "plot_note": PLOT_NOTE,
+           **({"rechecked": recheck} if recheck else {}),
            **({"settings_changed": settings_changed} if settings_changed else {})}
     if result in ("timeout", "failure"):
-        out.update(resume_command=resume, resume_stage_command=f"/curate-skills:curate-monitor --run {s['run_id']}")
+        out.update(resume_command=resume, recheck_command=f"/curate-skills:curate-monitor --run {s['run_id']}")
     if not record:
+        out["report"] = report
         return out
 
     logs_dir = run_p / "deploy" / "monitor"
@@ -483,9 +601,13 @@ def poll(run: str, budget: int | None = None, report_only: bool = False, minutes
     for f in snap["faasr"]:  # FaaSr's own S3 logs, redacted; job logs are never saved
         if f["log"]:
             (logs_dir / (f["label"].replace("(", ".").replace(")", "") + ".txt")).write_text(f["log"])
+    report_path = run_p / "deploy" / "monitor-report.md"  # beside the logs folder, which holds FaaSr's logs only
+    report_path.write_text(report + "\n")
+    out["details"] = str(report_path)
 
     record_snap = {k: v for k, v in snap.items() if k not in ("faasr", "outputs_now")}
     record_snap["faasr"] = [{k: v for k, v in f.items() if k != "log"} for f in snap["faasr"]]
+    record_snap["outputs_now"] = [{k: v for k, v in o.items()} for o in snap["outputs_now"]]
 
     def change(st):
         st["monitor"] = {
@@ -493,19 +615,21 @@ def poll(run: str, budget: int | None = None, report_only: bool = False, minutes
             "polls": int((st.get("monitor") or {}).get("polls") or 0) + polls, "matches": matches,
             "result": result, "finished": result != "pending" and result != "timeout",
             "success": result in ("success", "success_unconfirmed"), "accepted": None,
-            "failed": snap["failed"], "snapshot": record_snap, "summary": summary,
+            "failed": snap["failed"], "snapshot": record_snap, "summary": summary, "shown": shown,
             "poll_log": (((st.get("monitor") or {}).get("poll_log") or []) + interim)[-POLL_LOG_MAX:],
-            "logs_dir": str(logs_dir), "ts": D._now_iso()}
+            "logs_dir": str(logs_dir), "report": str(report_path), "ts": D._now_iso()}
         if result == "pending":
             return
         decision = {"success": "succeeded", "success_unconfirmed": "succeeded-unconfirmed",
                     "failure": "failed", "timeout": "timed-out"}[result]
+        text = f"invocation {dep['invocation_id']}: {RESULT_TEXT[result]}"
+        if recheck:
+            text += f" (re-checked after {RESULT_TEXT[recheck]})"
         st.setdefault("history", []).append({"gate": "monitor", "decision": decision, "structural": None,
-                                             "text": f"invocation {dep['invocation_id']}: {RESULT_TEXT[result]}",
-                                             "ts": D._now_iso()})
+                                             "text": text, "ts": D._now_iso()})
         if result in ("success", "success_unconfirmed"):
             st.update(stage="finalize", begun=None)
-        else:  # failure or timeout: stop; resuming continues monitoring, never redeploys
+        else:  # failure or timeout: stop; `curate-monitor --run` re-checks the same invocation
             st.update(stage="stopped", stopped_from="monitor", begun=None)
     s = D._update_state(run_p, change)
     out["stage"] = s["stage"]
@@ -581,12 +705,14 @@ def status(run: str) -> dict:
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
-def main(argv=None, opener=None, s3_factory=None, clock=time.monotonic, sleep=time.sleep) -> int:
+def main(argv=None, opener=None, s3_factory=None, clock=time.monotonic, sleep=time.sleep, now=None) -> int:
     p = argparse.ArgumentParser(prog="monitor.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     q = sub.add_parser("poll", help="poll the run's invocation (read-only), within a time budget")
     q.add_argument("--run", required=True)
-    q.add_argument("--budget", type=int, help=f"seconds for this call (at most {MAX_CALL_SECONDS})")
+    q.add_argument("--chunk-seconds", "--budget", dest="chunk", type=int,
+                   help=f"poll up to this long, save progress, return (default {DEFAULT_CHUNK}; at most "
+                        f"{MAX_CALL_SECONDS})")
     q.add_argument("--report-only", action="store_true", help="print the report; write nothing")
     q.add_argument("--minutes", help=f"total monitoring minutes (default {DEFAULT_MINUTES}; pinned per run)")
     q.add_argument("--interval", help=f"seconds between polls (default {DEFAULT_INTERVAL})")
@@ -604,8 +730,8 @@ def main(argv=None, opener=None, s3_factory=None, clock=time.monotonic, sleep=ti
     extra = {"gh_token": token} if token else None
     try:
         if args.cmd == "poll":
-            out = poll(args.run, args.budget, args.report_only, args.minutes, args.interval,
-                       args.config_minutes, opener, s3_factory, clock, sleep)
+            out = poll(args.run, args.chunk, args.report_only, args.minutes, args.interval,
+                       args.config_minutes, opener, s3_factory, clock, sleep, now)
         elif args.cmd == "status":
             out = status(args.run)
         elif args.cmd == "download-outputs":
