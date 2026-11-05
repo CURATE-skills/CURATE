@@ -1465,3 +1465,42 @@ written previous message. Waiting for the user's decision.
 then the review line, then the question, in that order in one message. Gate 2 showed the block
 layout and the grouped assumptions. One denied Bash call in turn 1: the model chained
 `R=… && uv run …`, which the allow rule doesn't match; it retried in the plain form.
+
+## 49. Gate 1 skipped its content: cause, and enforcement by hooks (2026-11-05)
+
+**Record.** Interactive: Gate 1 skipped its content in 2 of 2 runs (weather-fresh2, weather-fresh3;
+"I'm moving on to the gate review file next", then the question); Gates 2 and 4 printed.
+Headless after the instruction fixes below: Gate 1 skipped again in 2 of 2 runs (sessions in the
+scratch folders gate1 and gate1b: "Gate 1, shown above" / "I've drafted the workflow outline").
+
+**Why Gate 1.** Its stage instructions were the same as Gates 2 and 4 (word for word apart from
+the gate number). What differs: Gate 1 is reached in the first turn of /curate, after a long run
+of steps (sketch, import, next, begin, read three prompt files, write the skeleton, record it);
+the model wrote the skeleton itself a moment earlier, so re-printing it looks redundant; and in
+weather-fresh3 it chained `spec.py skeleton …; spec.py show --gate 1; sed … gates.md` in one
+Bash call (before the plain-form rule), so the content sat inside a combined tool result. In
+/curate's own loop the gate step only said "show the display and wait". (The weather-fresh3
+transcript ends at the show result: the message with the question is written only after the
+question is answered.)
+
+**Instruction fixes (not sufficient on their own).** `spec.py show` no longer returns the question:
+it returns the content, the marker, and `next` ("write markdown verbatim … in that same message
+run spec.py ask … ask only in the message after that"); the new `spec.py ask --gate N` returns
+question/header/options. gates.md, every gate stage file and /curate's loop say: print the
+content in the message that runs `ask`, then ask in the next message — Gate 1 included, in the
+first turn, the review file being a copy, not a substitute. On a non-decision answer, print again.
+
+**Enforcement (what made it work).**
+- PreToolUse hook on AskUserQuestion (curate projects; headers `Gate 1`–`Gate 5` only): denied
+  unless that gate's marker is in assistant text since the user's last message (tool results,
+  subagent and `isMeta` skill entries don't reset it). The calling message is not in the
+  transcript yet (#48), so the content must be in an earlier message of the turn; if it was
+  printed in the same message, the first attempt is denied and the retry passes (fake-transcript
+  tests). Not yet exercised in an interactive session.
+- Stop hook (new; covers asking in chat, e.g. headless): the input has `last_assistant_message`
+  (checked: the final text is in that field but not yet in the transcript). If the turn ran
+  `spec.py show --gate N` and neither the transcript since the user's last message nor the final
+  message has that gate's marker, the stop is blocked once with "Print the full gate content
+  from spec.py show as a message (verbatim), then ask."; never twice in a row.
+- Live (headless, gate1b, $0.40): the model skipped (entry 93), the Stop hook blocked (94), the
+  model re-ran show and printed the full Gate 1 content, marker and review line, then asked (107).

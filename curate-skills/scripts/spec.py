@@ -2412,10 +2412,10 @@ GATE_OPTIONS = {1: ["Approve", "Stop here"], 2: ["Approve", "Stop here"],
 
 
 def cmd_show(args) -> dict:
-    """The gate's full content (`markdown`: print it as a message BEFORE asking; it ends with the
-    gate's marker line), also written to <run>/review/gate<N>.md (`review_line`). The question is
-    short: `question`, `header`, `options` (no previews; "Other" requests changes). --full (Gate 3):
-    every function's code verbatim, for the "Show the full code" option."""
+    """The gate's full content (`markdown`, ending with the gate's marker line), also written to
+    <run>/review/gate<N>.md. The question comes from `ask`, which the model runs in the same
+    message in which it prints the content; the guard hook lets a gate question through only once
+    that marker is in the conversation. --full (Gate 3): every function's code verbatim."""
     s = load_state(args.run)
     marker = gate_marker(s, args.gate)
     review = Path(args.run) / "review" / f"gate{args.gate}.md"
@@ -2427,9 +2427,17 @@ def cmd_show(args) -> dict:
         md = show_gate(s, args.gate) + "\n\n" + marker
         review.parent.mkdir(parents=True, exist_ok=True)
         review.write_text(md + ("\n\n" + full_code(s) if args.gate == 3 else "") + "\n")
+    return {"ok": True, "markdown": md, "marker": marker, "review_file": str(review),
+            "review_line": f"Full review: {review}",
+            "next": (f"Now write `markdown` verbatim as your message (the user does not see tool results), "
+                     f"then `review_line`; in that same message run `spec.py ask --run <run> --gate "
+                     f"{args.gate}`. Ask the user only in the message after that.")}
+
+
+def cmd_ask(args) -> dict:
+    """The gate question: short, no previews; "Other" requests changes."""
     q = GATE_QUESTION[args.gate] + ("" if args.gate == 5 else ' (Type in "Other" to request changes.)')
-    return {"ok": True, "markdown": md, "marker": marker, "question": q, "header": f"Gate {args.gate}",
-            "options": GATE_OPTIONS[args.gate], "review_file": str(review), "review_line": f"Full review: {review}"}
+    return {"ok": True, "question": q, "header": f"Gate {args.gate}", "options": GATE_OPTIONS[args.gate]}
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -2491,6 +2499,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = with_run("show")
     sp.add_argument("--gate", type=int, required=True, choices=[1, 2, 3, 4, 5])
     sp.add_argument("--full", action="store_true", help="Gate 3: every function's full code")
+    with_run("ask").add_argument("--gate", type=int, required=True, choices=[1, 2, 3, 4, 5])
     with_run("summary")
     sp = sub.add_parser("start")
     sp.add_argument("--at", required=True, choices=STAGE_NAMES)
@@ -2519,7 +2528,7 @@ COMMANDS = {
     "skeleton": cmd_skeleton, "apply-candidates": cmd_apply_candidates,
     "merge-resolved": cmd_merge_resolved, "check": cmd_check, "toposort": cmd_toposort,
     "approve": cmd_approve, "directive": cmd_directive, "set-cap": cmd_set_cap,
-    "set-stage": cmd_set_stage, "confirm-start": cmd_confirm_start, "show": cmd_show, "summary": cmd_summary,
+    "set-stage": cmd_set_stage, "confirm-start": cmd_confirm_start, "show": cmd_show, "ask": cmd_ask, "summary": cmd_summary,
     "import": cmd_import, "start": cmd_start, "next": cmd_next, "require": cmd_require, "begin": cmd_begin,
     "end": cmd_end,
 }

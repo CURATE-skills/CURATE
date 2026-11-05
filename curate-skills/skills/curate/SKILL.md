@@ -74,8 +74,12 @@ later turn:
 3. `spec.py begin --run <run> --stage <stage>`. If refused, show the `error` exactly and stop.
 4. Read `${CLAUDE_PLUGIN_ROOT}/references/stages/<stage>.md` and follow it **as if started with
    `--chain`**: at its end ("After the gate decision"), do not stop — go back to step 1.
-5. At a gate, the turn ends while you wait for the user. When they answer, apply the decision
-   as that stage file says, then go back to step 1.
+5. At a gate — **Gate 1 too, which comes in this first turn right after you wrote the skeleton**:
+   run `spec.py show` on its own, then in one message print its `markdown` verbatim (it ends with
+   the gate's marker line) and its `review_line`, and run `spec.py ask` in that same message; ask
+   only in the next message (`gates.md`, "Asking at a gate"). A one-line summary or "see the review
+   file" is not printing it. The turn ends while you wait for the user. When they answer, apply
+   the decision as that stage file says, then go back to step 1.
 
 Never pick the next stage yourself, never skip a gate, and never answer a gate for the user:
 no approval, stop or change request on their behalf — not even a change they described before

@@ -20,8 +20,9 @@ step 3.
    `spec.py directive --run <run> --gate emit --text "FaaSr validation failed: <error>"` (the run
    goes back to `reuse`), then finish as `gates.md` "After the gate decision" says. Otherwise show
    the error at Gate 4 and ask.
-3. **Gate 4**: `spec.py show --run <run> --gate 4`, print its `markdown` verbatim as a message — never re-formatted (the user does not see tool results) — then its `review_line` (`Full review: <path>`) on its own line. **Print the content first, then ask; never ask before printing it**
-   with AskUserQuestion — the returned `question`, `header` and `options` (**Approve & deploy** /
+3. **Gate 4**: `spec.py show --run <run> --gate 4`, print its `markdown` verbatim as a message — never re-formatted (the user does not see tool results) — then its `review_line` (`Full review: <path>`) on its own line, and in that same message run `spec.py ask --run <run> --gate 4`. **Print the
+   content first, then ask (in the next message); never ask before printing it** with
+   AskUserQuestion — `ask`'s `question`, `header` and `options` (**Approve & deploy** /
    **Approve, no deploy** / **Stop here**), no previews —
    every time, also after a change request or a question from the user
    (`<plugin>/references/gates.md`, "Asking at a gate").

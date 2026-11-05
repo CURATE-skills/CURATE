@@ -43,7 +43,8 @@ def guard(proj, tool, tool_input, agent="curate-skills:curate-mga", cwd=None, en
 def test_hooks_json_shape():
     cfg = json.loads(HOOKS_JSON.read_text())
     (entry,) = cfg["hooks"]["PreToolUse"]
-    assert set(entry["matcher"].split("|")) == {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "Read", "Grep"}
+    assert set(entry["matcher"].split("|")) == {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "Read", "Grep",
+                                                        "AskUserQuestion"}
     (hook,) = entry["hooks"]
     assert hook["onFailure"] == "block" and "${CLAUDE_PLUGIN_ROOT}" in hook["command"]
 

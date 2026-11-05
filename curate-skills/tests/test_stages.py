@@ -357,18 +357,20 @@ WEATHER = {"name": "weather", "description": "compare winter weather",
 
 
 @pytest.mark.parametrize("gate", [1, 2, 3, 4])
-def test_show_returns_a_short_question_options_and_the_marker(make_run, capsys, gate):
+def test_show_prints_the_content_and_ask_returns_the_short_question(make_run, capsys, gate):
     spec = coded_spec()
     run = make_run(skeleton_draft={"spec": spec}, spec=spec, mga={"map": {"status": "reused"}},
                    validation={"ok": True, "level": "faasr_py"}, bundle_dir="/b")
     out = ok(S, ["show", "--run", str(run), "--gate", str(gate)], capsys)
-    assert out["header"] == f"Gate {gate}" and out["question"].endswith('(Type in "Other" to request changes.)')
-    assert out["markdown"].startswith(f"## Gate {gate}") and "compact" not in out
+    assert out["markdown"].startswith(f"## Gate {gate}") and "question" not in out and "options" not in out
     run_id = json.loads((run / "state.json").read_text())["run_id"]
     assert out["markdown"].endswith(f"— end of Gate {gate} · run {run_id} —") and out["marker"] in out["markdown"]
-    assert out["options"] == {1: ["Approve", "Stop here"], 2: ["Approve", "Stop here"],
-                              3: ["Approve", "Show the full code", "Stop here"],
-                              4: ["Approve & deploy", "Approve, no deploy", "Stop here"]}[gate]
+    assert f"run `spec.py ask --run <run> --gate {gate}`" in out["next"] and "only in the message after" in out["next"]
+    q = ok(S, ["ask", "--run", str(run), "--gate", str(gate)], capsys)
+    assert q["header"] == f"Gate {gate}" and q["question"].endswith('(Type in "Other" to request changes.)')
+    assert q["options"] == {1: ["Approve", "Stop here"], 2: ["Approve", "Stop here"],
+                            3: ["Approve", "Show the full code", "Stop here"],
+                            4: ["Approve & deploy", "Approve, no deploy", "Stop here"]}[gate]
 
 
 def test_gate1_shows_each_rank_once(make_run, capsys):
@@ -385,12 +387,19 @@ def test_gate_procedures_always_print_then_ask_with_the_table():
     root = Path(__file__).resolve().parents[1] / "references"
     gates = " ".join((root / "gates.md").read_text().split())
     assert "Print its `markdown` exactly as a message" in gates
-    assert "Ask with AskUserQuestion whenever it is available" in gates and "never switch to plain chat" in gates
+    assert "ask with AskUserQuestion whenever it is available" in gates and "never switch to plain chat" in gates
     for stage in ("skeleton", "resolve", "generate", "emit"):
         text = (root / "stages" / f"{stage}.md").read_text()
         assert "print its `markdown` verbatim as a message — never re-formatted" in text, stage
         assert "no previews" in text and "every time" in text and "`compact`" not in text, stage
-    assert "**Never give an option a `preview`**" in gates and "the returned `options`" in gates
+    assert "**Never give an option a `preview`**" in gates and "its `options` as the options" in gates
+    assert "print the content in the same message in which you run `spec.py ask --run <run> --gate N`" in gates
+    assert "Gate 1 included" in gates and "the file is a copy, not a substitute" in gates
+    for stage in ("skeleton", "resolve", "generate", "emit", "finalize"):
+        text = " ".join((root / "stages" / f"{stage}.md").read_text().split())
+        assert "in that same message run `spec.py ask --run <run> --gate" in text, stage
+    curate = " ".join((root.parent / "skills" / "curate" / "SKILL.md").read_text().split())
+    assert "**Gate 1 too, which comes in this first turn right after you wrote the skeleton**" in curate
     assert "`preview`" not in (root.parent / "skills" / "curate" / "SKILL.md").read_text().split("Start this run?")[1][:200]
     assert "whenever it is available" in (root / "stages" / "finalize.md").read_text()
 
