@@ -28,20 +28,12 @@ asked to see something, and after the user answered in chat:
    inside it. When the user asks to see a gate's table again, run `spec.py show` again and print
    its `markdown` verbatim — not your own rendering of it.
    The content ends with its marker line (`— end of Gate N · run <id> —`); print that too.
-   Run `spec.py show` on its own (not chained with other commands), and **print the content in
-   the same message in which you run `spec.py ask --run <run> --gate N`** (it returns the
-   question). This holds for every gate, Gate 1 included — also when it comes in the first turn
-   right after you wrote the skeleton yourself, and even though the review file has the same
-   content: the file is a copy, not a substitute.
-2. **In the next message, ask with AskUserQuestion whenever it is available** — never switch to
-   plain chat because the previous answer came in chat or through "Other". Keep the menu short:
-   `ask`'s `question` and `header`, and its `options` as the options (labels only). A guard
-   checks this: a gate question is refused until that gate's marker line has been printed since
-   the user's last message ("Print the full gate content from spec.py show as a message
-   (verbatim), then ask.") — then print it and ask again. **Never give an option a
+2. **Ask with AskUserQuestion whenever it is available** — never switch to plain chat because the
+   previous answer came in chat or through "Other". Keep the menu short: the returned `question`
+   and `header`, and the returned `options` as the options (labels only). **Never give an option a
    `preview`** — the full content is already printed above. Typing in "Other" requests changes.
 3. If the answer is not a decision (e.g. "show me the table", "show me the code"), show what was
-   asked and go back to step 1 — print the gate content again, then ask with AskUserQuestion again. **Show the full code** (Gate 3):
+   asked and go back to step 2 — with AskUserQuestion again. **Show the full code** (Gate 3):
    `spec.py show --run <run> --gate 3 --full`, print its `markdown` verbatim, then ask again. It is
    not a change request and costs no revision round.
 

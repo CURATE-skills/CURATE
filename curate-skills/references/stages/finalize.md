@@ -14,8 +14,7 @@ bundle was validated and built from the current spec).
    correctness is not judged) and **what would be saved**: the catalog folder, each function that
    would be stored (with its keywords) or skipped and why, and whether the workflow entry is new or
    updates one with the same name. Then print its `review_line` (`Full review: <path>`) on its own
-   line, and in that same message run `spec.py ask --run <run> --gate 5`. **Print the content
-   first, then ask (in the next message); never ask before printing it.** (If the preview says
+   line. **Print the content first, then ask; never ask before printing it.** (If the preview says
    it could not run, use `catalog.py save-functions --run <run> --only-verified --dry-run` and
    `catalog.py save-workflow --run <run> --dry-run` and tell the user the same things.)
 2. **Unconfirmed match.** If `monitor.py status --run <run>` shows `result` `success_unconfirmed`
@@ -25,7 +24,7 @@ bundle was validated and built from the current spec).
    accept-unconfirmed --run <run> --confirmed`. Stop → `spec.py set-stage --run <run> --stage
    stopped`. Saving is refused until it is accepted.
 3. **Gate 5 — ask** with AskUserQuestion whenever it is available (also if the user first asked
-   something else): `ask`'s `question`, `header` and `options` (**Save functions**, **Save
+   something else): the returned `question`, `header` and `options` (**Save functions**, **Save
    workflow**, **Save both**, **Don't save**), no previews. Chat only without the tool. Never save without an
    explicit answer.
 4. **Save** what was chosen: `catalog.py save-functions --run <run> --only-verified` and/or

@@ -1504,3 +1504,24 @@ first turn, the review file being a copy, not a substitute. On a non-decision an
   from spec.py show as a message (verbatim), then ask."; never twice in a row.
 - Live (headless, gate1b, $0.40): the model skipped (entry 93), the Stop hook blocked (94), the
   model re-ran show and printed the full Gate 1 content, marker and review line, then asked (107).
+
+## 50. Rollback: gate-print hooks reverted (2026-11-05)
+
+`f590206` (#49) is reverted with `git revert` (no reset, no force-push). Reason (user's report):
+the hooks looped interactively — the assistant's text is not visible in the transcript when a
+hook runs (#48: the message is written only after its tool call), so the AskUserQuestion check
+kept refusing a gate question whose content had just been printed in the same message. To be
+revisited.
+
+**Removed:** the PreToolUse check on AskUserQuestion and the Stop-hook gate check (`hooks.json`
+again registers only `Write|Edit|MultiEdit|NotebookEdit|Bash|Read|Grep`, no Stop), `spec.py ask`,
+`show`'s `next` field (show again returns `question`/`header`/`options`), the "print in the message
+that runs `ask`, ask in the next message" procedure in gates.md, the five gate stage files and
+/curate's loop, and `tests/test_gate_hook.py`.
+**Lost with it** (it was in the same commit): /curate's loop naming Gate 1 in the first turn
+("Gate 1 too … a one-line summary or 'see the review file' is not printing it"), gates.md's "run
+`spec.py show` on its own" and "the review file is a copy, not a substitute", and "on a
+non-decision answer, print the content again" (back to "go back to step 2").
+**Kept:** `58f5700` (Gate 1 block layout; the plain-form script rule in every skill and stage
+file); the end-of-gate marker line (from `ab9682e`; harmless without the hooks — one line at the
+end of each display, nothing checks it); #49 stays in this log as the record. Suite: 602 passed.

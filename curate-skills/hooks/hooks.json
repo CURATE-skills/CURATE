@@ -2,24 +2,13 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash|Read|Grep|AskUserQuestion",
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash|Read|Grep",
         "hooks": [
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/mga_guard.py",
             "timeout": 10,
             "onFailure": "block"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/mga_guard.py",
-            "timeout": 10
           }
         ]
       }

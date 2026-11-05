@@ -289,116 +289,9 @@ def check_env_read(data, cwd):
                 raise Deny(ENV_READ_MSG)
 
 
-GATE_HEADER = re.compile(r"^Gate ([1-5])$")
-GATE_PRINT_MSG = "Print the full gate content from spec.py show as a message (verbatim), then ask."
-
-
-def gate_of_question(tool_input):
-    """The gate number if this AskUserQuestion is a curate gate question (header "Gate N")."""
-    for q in (tool_input or {}).get("questions") or []:
-        m = GATE_HEADER.match(str((q or {}).get("header") or "").strip())
-        if m:
-            return int(m.group(1))
-    return None
-
-
-def _is_user_message(entry):
-    """A message the user (or a slash command) sent, as opposed to a tool result."""
-    if entry.get("type") != "user" or entry.get("isSidechain") or entry.get("isMeta"):
-        return False  # tool results, subagent messages, injected skill text
-    content = (entry.get("message") or {}).get("content")
-    if isinstance(content, str):
-        return True
-    return isinstance(content, list) and any(
-        isinstance(x, dict) and x.get("type") != "tool_result" for x in content)
-
-
-def assistant_text_since_user(transcript_path):
-    """All assistant text written since the user's last message. The message that makes this tool
-    call is not in the transcript yet (it is written after the call), so the gate content must be
-    in an earlier message of the same turn."""
-    texts = []
-    with open(transcript_path) as f:
-        for line in f:
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
-            if _is_user_message(e):
-                texts = []
-            elif e.get("type") == "assistant" and not e.get("isSidechain"):
-                content = (e.get("message") or {}).get("content")
-                for x in content if isinstance(content, list) else []:
-                    if isinstance(x, dict) and x.get("type") == "text":
-                        texts.append(x.get("text") or "")
-    return "\n".join(texts)
-
-
-def check_gate_question(data):
-    """Deny a gate question unless that gate's marker line was printed since the user's last message."""
-    gate = gate_of_question(data.get("tool_input"))
-    if gate is None or not data.get("transcript_path"):
-        return None
-    text = assistant_text_since_user(data["transcript_path"])
-    if re.search(r"— end of Gate {} · run \S+ —".format(gate), text):
-        return None
-    return GATE_PRINT_MSG
-
-
-SHOW_CALL = re.compile(r"spec\.py['\"]?\s+show\b.*?--gate[ =]([1-5])")
-
-
-def turn_since_user(transcript_path):
-    """(assistant text, gates shown with `spec.py show`) since the user's last message."""
-    texts, shown = [], []
-    with open(transcript_path) as f:
-        for line in f:
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
-            if _is_user_message(e):
-                texts, shown = [], []
-            elif e.get("type") == "assistant" and not e.get("isSidechain"):
-                content = (e.get("message") or {}).get("content")
-                for x in content if isinstance(content, list) else []:
-                    if not isinstance(x, dict):
-                        continue
-                    if x.get("type") == "text":
-                        texts.append(x.get("text") or "")
-                    elif x.get("type") == "tool_use" and x.get("name") == "Bash":
-                        m = SHOW_CALL.search(str((x.get("input") or {}).get("command") or ""))
-                        if m:
-                            shown.append(int(m.group(1)))
-    return "\n".join(texts), shown
-
-
-def check_stop(data):
-    """Stop hook: a turn that ran `spec.py show --gate N` must have printed that gate's marker
-    (asking in chat, e.g. headless). The final message is in `last_assistant_message` (the
-    transcript doesn't have it yet). Blocks once; never twice in a row."""
-    if data.get("stop_hook_active") or not data.get("transcript_path"):
-        return None
-    text, shown = turn_since_user(data["transcript_path"])
-    if not shown:
-        return None
-    text += "\n" + str(data.get("last_assistant_message") or "")
-    gate = shown[-1]
-    if re.search(r"— end of Gate {} · run \S+ —".format(gate), text):
-        return None
-    return GATE_PRINT_MSG
-
-
 def decide(data, env):
     """Return None to allow (no opinion), or a deny reason."""
     project = env.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd()
-    if data.get("tool_name") == "AskUserQuestion":
-        if not uses_curate(project):
-            return None
-        try:
-            return check_gate_question(data)
-        except Exception:  # never block a question over our own problem
-            return None
     if data.get("tool_name") in ("Read", "Grep"):
         if not uses_curate(project):
             return None  # an ordinary session: no opinion
@@ -456,16 +349,6 @@ def main():
         data = json.load(sys.stdin)
     except ValueError:
         return 0  # not our business if the payload is unreadable and the agent is unknown
-    if data.get("hook_event_name") == "Stop":
-        project = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd()
-        try:
-            reason = check_stop(data) if uses_curate(project) else None
-        except Exception:  # never keep a session from stopping over our own problem
-            reason = None
-        if reason:
-            log(project, {"ts": datetime.now().isoformat(timespec="seconds"), "event": "Stop", "reason": reason})
-            json.dump({"decision": "block", "reason": reason}, sys.stdout)
-        return 0
     reason = decide(data, os.environ)
     project = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd()
     if os.environ.get("CURATE_GUARD_DEBUG") and data.get("agent_type"):

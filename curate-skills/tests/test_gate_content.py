@@ -65,8 +65,7 @@ def test_gate3_is_short_per_function_and_full_code_is_on_request(make_run, capsy
     assert "  last test lines:\n    line a\n    line b\n    ValueError: rank out of range" in blocks[1]
     assert "  kept (not regenerated)" in blocks[2] and "stub test: passed (not regenerated)" in blocks[2]
     assert "def download():" not in md and "```python" not in md  # no code in the default display
-    assert "**Show the full code**" in md
-    assert ok(S, ["ask", "--run", str(run), "--gate", "3"], capsys)["options"] == ["Approve", "Show the full code", "Stop here"]
+    assert "**Show the full code**" in md and out["options"] == ["Approve", "Show the full code", "Stop here"]
     full = ok(S, ["show", "--run", str(run), "--gate", "3", "--full"], capsys)
     for body in ("def download():\n    return 'csv'", "def process():\n    pass", "def plot():\n    pass"):
         assert f"```python\n{body}\n```" in full["markdown"]
@@ -102,8 +101,7 @@ def test_gate5_shows_the_run_summary_and_what_would_be_saved(make_run, capsys):
     assert "- `download` — would be stored (keywords: download, download, the, station, csv.)" in md
     assert "- `process` — skipped: not verified" in md and "- `plot` — skipped: already in catalog" in md
     assert "Workflow `weather`: would be a new entry" in md
-    q = ok(S, ["ask", "--run", str(run), "--gate", "5"], capsys)
-    assert q["header"] == "Gate 5" and q["question"] == "Save to the catalog?"
+    assert out["header"] == "Gate 5" and out["question"] == "Save to the catalog?"
     assert not list((Path(json.loads((run / "state.json").read_text())["catalog_dir"])).rglob("*.json"))  # dry run
 
 

@@ -14,9 +14,8 @@ If the run is already at `gate1`, skip to step 4.
    previous draft it returns).
 3. `spec.py skeleton --run <run> --json <run>/work/skeleton.json`. On a parse error, fix the file
    and re-run.
-4. **Gate 1**: `spec.py show --run <run> --gate 1`, print its `markdown` verbatim as a message — never re-formatted (the user does not see tool results) — then its `review_line` (`Full review: <path>`) on its own line, and in that same message run `spec.py ask --run <run> --gate 1`. **Print the
-   content first, then ask (in the next message); never ask before printing it** with
-   AskUserQuestion — `ask`'s `question`, `header` and `options`, no previews — every time, also after a change request or a
+4. **Gate 1**: `spec.py show --run <run> --gate 1`, print its `markdown` verbatim as a message — never re-formatted (the user does not see tool results) — then its `review_line` (`Full review: <path>`) on its own line. **Print the content first, then ask; never ask before printing it**
+   with AskUserQuestion — the returned `question`, `header` and `options`, no previews — every time, also after a change request or a
    question from the user (`<plugin>/references/gates.md`, "Asking at a gate").
    - Approve → `spec.py approve --run <run> --gate 1`.
    - Changes → `spec.py directive --run <run> --gate 1 --text "<verbatim>"`, then go back to step 2
