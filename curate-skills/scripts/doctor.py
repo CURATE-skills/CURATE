@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -305,6 +306,63 @@ def check_deploy_vars(r: Report, env, sources: dict | None = None) -> bool:
     return not missing
 
 
+AUTO_MODE_SCRIPTS = ("deploy.py", "monitor.py")
+
+
+def _settings_files(claude_dir: Path, project: Path) -> list[tuple[str, Path]]:
+    return [("user", claude_dir / "settings.json"), ("project", project / ".claude" / "settings.json"),
+            ("local", project / ".claude" / "settings.local.json")]
+
+
+def _bash_rule_covers(rule: str, roots: list[str], script: str) -> bool:
+    """True when `rule` is a narrow Bash allow rule that approves `uv run --quiet <root>/scripts/<script> …`.
+
+    Only rules whose fixed text (before the first *) already names this plugin's scripts/ folder
+    count: auto mode drops broad rules such as Bash(*) or Bash(uv run *) (checked 2026-11-04)."""
+    if not (rule.startswith("Bash(") and rule.endswith(")")):
+        return False
+    pat = rule[5:-1].strip()
+    if pat.endswith(":*"):  # legacy prefix form, same as " *"
+        pat = pat[:-2] + " *"
+    fixed = pat.split("*", 1)[0]
+    rx = re.compile("^" + ".*".join(re.escape(p) for p in pat.split("*")) + "$")
+    for root in roots:
+        if not fixed.startswith(f"uv run --quiet {root}/scripts/"):
+            continue
+        cmd = f"uv run --quiet {root}/scripts/{script}"
+        if rx.match(cmd + " status --run r") or rx.match(cmd):
+            return True
+    return False
+
+
+def auto_mode_rule(root: str, script: str) -> str:
+    return f"Bash(uv run --quiet {root}/scripts/{script} *)"
+
+
+def check_auto_mode_rules(r: Report, plugin_root: str | None, claude_dir: Path, project: Path):
+    """Auto mode's classifier blocks deploy's writing steps (the skill's own permissions cover only
+    the first turn); a narrow allow rule for deploy.py / monitor.py lets them through."""
+    root = plugin_root if plugin_root and not plugin_root.startswith("${") else str(SCRIPT_DIR.parent)
+    roots = list(dict.fromkeys([root.rstrip("/"), str(Path(root).resolve())]))
+    found: dict = {}
+    for scope, f in _settings_files(claude_dir, project):
+        try:
+            allow = (json.loads(f.read_text()).get("permissions") or {}).get("allow") or []
+        except (OSError, ValueError, AttributeError):
+            continue
+        for script in AUTO_MODE_SCRIPTS:
+            if any(isinstance(x, str) and _bash_rule_covers(x, roots, script) for x in allow):
+                found.setdefault(script, scope)
+    missing = [s for s in AUTO_MODE_SCRIPTS if s not in found]
+    if not missing:
+        r.add("deploy", "auto mode", "ok", "allow rules for " + ", ".join(f"{s} ({found[s]} settings)"
+                                                                            for s in AUTO_MODE_SCRIPTS))
+        return
+    rules = ", ".join(auto_mode_rule(root, s) for s in missing)
+    r.add("deploy", "auto mode", "warn", "In auto mode, deploy will be blocked after the first step. Add: "
+          f"{rules} to ~/.claude/settings.json (permissions → allow), or use default mode for deploy.")
+
+
 def gh_cli_token() -> str | None:
     gh = shutil.which("gh")
     if not gh:
@@ -485,6 +543,7 @@ def run_checks(args, env=None, claude_dir: Path | None = None, opener=None) -> R
     if deploy:
         check_deploy_vars(r, env, info["sources"])
         token = check_token(r, env, info["sources"])
+        check_auto_mode_rules(r, args.plugin_root, claude_dir, project)
         if args.online:
             check_repo_online(r, env, token, opener)
             check_s3_online(r, uv, env)

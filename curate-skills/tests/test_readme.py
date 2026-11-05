@@ -13,7 +13,7 @@ PLACEHOLDER = "/absolute/path/to/skill-curate/curate-skills"
 
 
 def test_every_skill_named_exists_and_every_user_skill_is_named():
-    named = set(re.findall(r"/curate-skills:([a-z][a-z-]*)", README))
+    named = set(re.findall(r"/curate-skills:([a-z][a-z-]*[a-z])(?![a-z<-])", README))  # not curate-<stage>
     named |= set(re.findall(r"`(curate-[a-z]+|wda-finalize)`", README)) & {
         p.name for p in (PLUGIN / "skills").iterdir()}
     have = {p.name for p in (PLUGIN / "skills").iterdir() if (p / "SKILL.md").exists()}
@@ -52,18 +52,16 @@ def test_template_copy_command_matches_the_template():
     assert ("mkdir -p ~/.config/curate && cp .env.template ~/.config/curate/.env && "
             "chmod 600 ~/.config/curate/.env") in README
     assert (PLUGIN / ".env.template").exists()
-    assert "Never paste a secret into a Claude Code session" in README
+    assert "Never paste a secret into Claude Code." in README
     assert "/curate-skills:curate-doctor --deploy --online" in README
     deploy = README[README.index("## Deploy"):README.index("## Settings")]
-    assert "deploy, monitor and doctor read `~/.config/curate/.env` themselves" in " ".join(deploy.split())
-    assert "A variable set in the environment overrides the file." in " ".join(deploy.split())
+    assert "Deploy, monitor and doctor read this file themselves; environment variables override it." \
+        in " ".join(deploy.split())
 
 
 def test_permission_rules_live_in_docs_not_the_install_flow():
     assert "Permissions (recommended" not in README and '"permissions"' not in README
     assert "Edit(./.curate/**)" not in README and "docs/permissions.md" not in README
-    assert ("| Claude Code asks for permission during a run? | That's expected. Choose **Yes** (or **Yes, and "
-            "don't ask again** for this project). Choosing **No** stops that step. |") in README
     doc = (PLUGIN / "docs" / "permissions.md").read_text()
     for rule in ('"Bash(uv run --quiet /absolute/path/to/skill-curate/curate-skills/scripts/*)"',
                  '"Read(//absolute/path/to/skill-curate/curate-skills/**)"', '"Edit(./.curate/**)"'):
@@ -111,8 +109,8 @@ def test_sketch_not_prompt():
 def test_after_gate_4_matches_the_stage_flow():
     """README's after-Gate-4 text matches the code: invoke → monitor, monitor success → finalize."""
     gates = " ".join(README[README.index("## Gates"):README.index("## Start at a stage")].split())
-    assert ("**approve & deploy** → deploy (a read-only preflight, then four separate confirmations; see "
-            "[Deploy](#deploy)) → after invoke, monitor watches the run → on success, finalize (Gate 5).") in gates
+    assert ("**approve & deploy** → deploy → after invoke, monitor watches the run → on success, finalize "
+            "(Gate 5).") in gates
     assert "**approve, no deploy** → straight to finalize (Gate 5)." in gates
     assert "stops after its stage and prints the next command" in gates
     deploy_src = (PLUGIN / "scripts" / "deploy.py").read_text()
@@ -121,3 +119,12 @@ def test_after_gate_4_matches_the_stage_flow():
     assert 'st.update(stage="finalize", begun=None)' in monitor_src  # after success
     skill = (PLUGIN / "skills" / "curate" / "SKILL.md").read_text()
     assert "do not stop — go back to step 1" in skill  # /curate chains the stages
+
+
+def test_auto_mode_advice_matches_doctor():
+    import doctor
+    root = "/absolute/path/to/skill-curate/curate-skills"
+    deploy = README.split("## Deploy", 1)[1].split("\n## ", 1)[0]
+    for script in ("deploy.py", "monitor.py"):
+        assert doctor.auto_mode_rule(root, script) in deploy
+    assert "blocks deploy after the first step" in deploy and "default mode" in deploy

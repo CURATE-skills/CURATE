@@ -424,6 +424,87 @@ def test_s3_probe_uses_deploys_client_and_reports_codes_only(monkeypatch, capsys
     assert made[:2] == [("s3", "https://s3.x"), ("head_bucket", "bkt")]
 
 
+# ── auto mode: allow rules for deploy.py / monitor.py ──
+
+ROOT = "/opt/skill-curate/curate-skills"
+
+
+def auto_rows(tmp_path, user=None, project=None, local=None, plugin_root=ROOT):
+    claude_dir, proj = tmp_path / "claude", tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    claude_dir.mkdir()
+    for f, rules in ((claude_dir / "settings.json", user), (proj / ".claude" / "settings.json", project),
+                     (proj / ".claude" / "settings.local.json", local)):
+        if rules is not None:
+            f.write_text(json.dumps({"permissions": {"allow": rules}}))
+    r = doctor.Report()
+    doctor.check_auto_mode_rules(r, plugin_root, claude_dir, proj)
+    (row,) = r.rows
+    return row
+
+
+def _rule(script, form=" *", root=ROOT):
+    return f"Bash(uv run --quiet {root}/scripts/{script}{form})"
+
+
+@pytest.mark.parametrize("form", [" *", ":*"])
+def test_auto_mode_rules_found(tmp_path, form):
+    row = auto_rows(tmp_path, user=[_rule("deploy.py", form)], local=[_rule("monitor.py", form)])
+    assert row["status"] == "ok"
+    assert "deploy.py (user settings)" in row["message"] and "monitor.py (local settings)" in row["message"]
+
+
+def test_auto_mode_folder_rule_counts(tmp_path):
+    # the docs/permissions.md rule: one rule for the whole scripts/ folder (also checked live)
+    assert auto_rows(tmp_path, project=[f"Bash(uv run --quiet {ROOT}/scripts/*)"])["status"] == "ok"
+
+
+@pytest.mark.parametrize("rules", [
+    None, [], ["Bash(*)", "Bash", "Bash(uv run *)", "Bash(uv run --quiet *)"],  # broad: auto mode drops them
+    [_rule("deploy.py", root="/elsewhere/curate-skills"), _rule("monitor.py", root="/elsewhere/curate-skills")],
+    ["Read(//opt/skill-curate/curate-skills/**)", f"Bash(uv run --quiet {ROOT}/scripts/spec.py *)"],
+])
+def test_auto_mode_rules_missing_warns_with_the_exact_rules(tmp_path, rules):
+    row = auto_rows(tmp_path, user=rules)
+    assert row["status"] == "warn"
+    assert row["message"] == ("In auto mode, deploy will be blocked after the first step. Add: "
+                              f"Bash(uv run --quiet {ROOT}/scripts/deploy.py *), "
+                              f"Bash(uv run --quiet {ROOT}/scripts/monitor.py *) to ~/.claude/settings.json "
+                              "(permissions → allow), or use default mode for deploy.")
+
+
+def test_auto_mode_names_only_the_missing_rule(tmp_path):
+    row = auto_rows(tmp_path, user=[_rule("deploy.py")])
+    assert row["status"] == "warn" and "monitor.py *)" in row["message"] and "deploy.py *)" not in row["message"]
+
+
+def test_auto_mode_rule_uses_this_plugins_path_when_not_given(tmp_path):
+    row = auto_rows(tmp_path, plugin_root="${CLAUDE_PLUGIN_ROOT}")
+    real = str(Path(doctor.__file__).resolve().parent.parent)
+    assert f"Bash(uv run --quiet {real}/scripts/deploy.py *)" in row["message"]
+
+
+def test_auto_mode_bad_settings_file_is_skipped(tmp_path):
+    claude_dir, proj = tmp_path / "c", tmp_path / "p"
+    claude_dir.mkdir(); proj.mkdir()
+    (claude_dir / "settings.json").write_text("{not json")
+    r = doctor.Report()
+    doctor.check_auto_mode_rules(r, ROOT, claude_dir, proj)
+    assert one(r)[0] == "warn"
+
+
+def test_auto_mode_check_runs_only_with_deploy(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(doctor, "check_auto_mode_rules", lambda r, *a: seen.append(a))
+    for fn in ("check_uv_envs", "check_loaded_once", "check_catalog", "check_gitignore"):
+        monkeypatch.setattr(doctor, fn, lambda r, *a: None)
+    monkeypatch.setattr(doctor, "check_uv", lambda r: None)
+    doctor.run_checks(_args(), env={}, claude_dir=tmp_path)
+    assert seen == []
+    doctor.run_checks(_args(deploy=True, plugin_root=ROOT), env={}, claude_dir=tmp_path)
+    assert seen and seen[0][0] == ROOT and seen[0][1] == tmp_path
+
+
 # ── whole run: exit codes, redaction ──
 
 def _args(**kw):
@@ -439,6 +520,7 @@ def all_ok(monkeypatch, tmp_path):
     for fn in ("check_hook_python", "check_uv_envs", "check_foreground", "check_loaded_once", "check_catalog",
                "check_gitignore"):
         monkeypatch.setattr(doctor, fn, ok("core", fn))
+    monkeypatch.setattr(doctor, "check_auto_mode_rules", ok("deploy", "auto mode"))
     monkeypatch.setattr(doctor, "check_s3_online", ok("deploy", "s3"))
     monkeypatch.setattr(doctor, "check_repo_online", ok("deploy", "repo"))
     return monkeypatch
@@ -463,7 +545,7 @@ def test_online_implies_deploy_and_json(all_ok, capsys, monkeypatch):
     out = capsys.readouterr().out
     res = json.loads(out)
     assert res["ok"] is True and [c["check"] for c in res["checks"] if c["group"] == "deploy"] == \
-        ["settings file", "variables", "GitHub token", "repo", "s3"]
+        ["settings file", "variables", "GitHub token", "auto mode", "repo", "s3"]
     assert TOKEN not in out and "AK-secret-value" not in out and "SK-secret-value" not in out
 
 

@@ -171,6 +171,14 @@ and doctor read this file themselves; environment variables override it.
 
 Read-only check of the file, token, repo, branch and bucket. Values are never shown.
 
+**Auto mode** blocks deploy after the first step. Use default mode (Shift+Tab) for deploy, or add
+these to the `allow` list in `~/.claude/settings.json` (`doctor --deploy` prints them with your
+path when they're missing):
+```
+Bash(uv run --quiet /absolute/path/to/skill-curate/curate-skills/scripts/deploy.py *)
+Bash(uv run --quiet /absolute/path/to/skill-curate/curate-skills/scripts/monitor.py *)
+```
+
 ### 4. Deploy
 At Gate 4, choose **approve & deploy** (or run `/curate-skills:curate-deploy --run <run_id>`).
 After a read-only preflight, deploy asks before each of four steps:

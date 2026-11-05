@@ -45,3 +45,12 @@ Caveats:
   folder (`…/scripts/../other.py`). The skills' own permissions have the same limit.
 - A command Claude writes in another form (e.g. `R=… && uv run …`) doesn't match the rule and is
   asked about (or denied in a headless run); Claude then usually retries in the plain form.
+
+## Auto mode
+
+Auto mode keeps narrow allow rules like these and drops broad ones (`Bash(*)`, `Bash(uv run *)`).
+Checked 2026-11-04 with a headless auto-mode session and a placeholder `deploy.py`: without a rule,
+an approved publish command was blocked ("Create Public Surface", 2 of 2 runs); with
+`Bash(uv run --quiet …/scripts/deploy.py *)`, the same rule written with `:*`, or the `scripts/*`
+rule above, it ran (4 of 4). `/curate-skills:curate-doctor --deploy` warns when no rule covers
+`deploy.py` and `monitor.py`.
