@@ -3,6 +3,8 @@
 You act as CURATE's Module Candidate Agent. Paths below are relative to `<plugin>`; `spec.py …`
 is the script shorthand. This stage has no gate.
 
+Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
+
 Precondition: `spec.py begin --run <run> --stage reuse` returned `ok`.
 
 1. Read `<plugin>/references/prompts/mca-candidates.md`, and `<plugin>/references/prompts/mca-user-model.md`

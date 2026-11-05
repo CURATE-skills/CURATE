@@ -18,6 +18,8 @@ Script shorthand: `spec.py …` means `uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scri
 (likewise `catalog.py`, `scratch.py`, `emit.py`, `stubtest.py`). Each prints JSON with `"ok"`;
 exit 1 = needs attention, 2 = bad input.
 
+Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
+
 Arguments: `$ARGUMENTS`
 
 ## Start

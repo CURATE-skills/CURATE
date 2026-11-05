@@ -14,6 +14,8 @@ Monitor-minutes setting (`<monitor_minutes>` in the stage file): `${user_config.
 Script shorthand: `spec.py …` means `uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/spec.py …`
 (likewise `monitor.py`). Each prints JSON with `"ok"`; exit 1 = needs attention, 2 = bad input.
 
+Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
+
 Arguments: `$ARGUMENTS`
 
 ## 1. Find the run

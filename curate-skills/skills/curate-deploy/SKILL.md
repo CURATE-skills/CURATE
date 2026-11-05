@@ -12,6 +12,8 @@ Plugin folder (`<plugin>` in the stage file): `${CLAUDE_PLUGIN_ROOT}`.
 Script shorthand: `spec.py …` means `uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/spec.py …`
 (likewise `deploy.py`). Each prints JSON with `"ok"`; exit 1 = needs attention, 2 = bad input.
 
+Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
+
 Arguments: `$ARGUMENTS`
 
 ## 0. --list or --teardown (not the deploy stage)

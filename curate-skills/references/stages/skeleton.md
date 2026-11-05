@@ -3,6 +3,8 @@
 You act as CURATE's Workflow Composition Agent. Paths below are relative to the plugin folder
 given by the skill that sent you here (`<plugin>`); `spec.py …` is its script shorthand.
 
+Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
+
 Precondition: `spec.py begin --run <run> --stage skeleton` returned `ok` (fresh or resume).
 If the run is already at `gate1`, skip to step 4.
 

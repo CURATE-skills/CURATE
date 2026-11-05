@@ -28,13 +28,15 @@ def show(run, gate, capsys):
     return ok(S, ["show", "--run", str(run), "--gate", str(gate)], capsys)
 
 
-def test_gate1_lists_every_step_in_order_with_parallel_copies(make_run, capsys):
+def test_gate1_shows_one_block_per_step_in_order(make_run, capsys):
     run = make_run(skeleton_draft={"spec": json.loads(weather().model_dump_json())})
     md = show(run, 1, capsys)["markdown"]
-    assert "| # | Function | Parallel copies | What it does |" in md
-    rows = [l for l in md.splitlines() if l.startswith("| ") and "`" in l]
-    assert [r.split("|")[2].strip() for r in rows] == ["`download`", "`process`", "`plot`"]
-    assert "| 2 | `process` | 3 | One variable per copy. |" in md
+    blocks = md.split("```text\n")[1].split("\n```")[0].split("\n\n")
+    assert [b.splitlines() for b in blocks] == [
+        ["1. download  · 1 copy", "   Download the station CSV."],
+        ["2. process  · 3 copies", "   One variable per copy."],
+        ["3. plot  · 1 copy", "   Plot three panels."]]
+    assert "| # |" not in md  # no wide table
 
 
 def test_gate2_shows_one_block_per_function(make_run, capsys):
@@ -233,3 +235,26 @@ def test_prompts_ask_for_assumptions():
     assert "the field itself is required" in resolve and "ordinary change request" in resolve
     mga = " ".join((ROOT / "agents" / "curate-mga.md").read_text().split())
     assert "Write `<your folder>/assumptions.txt`" in mga and "assumptions: <number of lines" in mga
+
+
+
+def test_long_step_descriptions_wrap_inside_the_block(make_run, capsys):
+    spec = json.loads(weather().model_dump_json())
+    spec["nodes"][1]["description"] = "For each variable take the values from 2025-01-01 to 2025-03-01, " * 4
+    md = show(make_run(skeleton_draft={"spec": spec}), 1, capsys)["markdown"]
+    block = md.split("2. process  · 3 copies\n")[1].split("\n\n")[0].splitlines()
+    assert len(block) > 1 and all(l.startswith("   ") and len(l) <= 99 for l in block)
+
+
+def test_every_skill_and_stage_file_asks_for_the_plain_script_form():
+    rule = ("Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable "
+            "assignments, no `&&` chains, no subshells.")
+    files = sorted(ROOT.glob("skills/*/SKILL.md")) + sorted(ROOT.glob("references/stages/*.md"))
+    assert len(files) >= 20
+    for f in files:
+        text = " ".join(f.read_text().split())
+        if f.parent.name == "curate-doctor":  # doctor runs on the system python3, not uv
+            assert ("Run the script in the plain form `python3 <plugin>/scripts/doctor.py …`: no variable "
+                    "assignments, no `&&` chains, no subshells.") in text
+        else:
+            assert rule in text, f.relative_to(ROOT)

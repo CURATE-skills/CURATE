@@ -8,6 +8,8 @@ allowed-tools: Read, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/catalog.p
 
 # curate-catalog
 
+Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
+
 Thin wrapper over `uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/catalog.py`. Every command has
 this shape — **the subcommand first**, then its own arguments, then the settings flag (the script
 rejects flags placed before the subcommand):

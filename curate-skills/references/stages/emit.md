@@ -3,6 +3,8 @@
 Paths below are relative to `<plugin>`; `spec.py …`, `emit.py …`, `catalog.py …` are the script
 shorthand.
 
+Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
+
 Precondition: `spec.py begin --run <run> --stage emit` returned `ok` (it checked that every
 function has code generated for the current spec). If the run is already at `gate4`, skip to
 step 3.

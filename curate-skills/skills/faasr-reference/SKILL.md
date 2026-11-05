@@ -6,6 +6,8 @@ user-invocable: false
 
 # FaaSr function reference
 
+Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
+
 Adapted from CURATE-prototype `agents/fga.py` (`_SHARED_RULES`) and
 `faasr/context_dir.py` (MIT, Copyright (c) 2026 Nolan Cutler; see the plugin's NOTICE).
 

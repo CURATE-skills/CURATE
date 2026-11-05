@@ -375,8 +375,8 @@ def test_gate1_shows_each_rank_once(make_run, capsys):
     """Bug report: 'Rank: 3' shown twice. The table has one Rank cell per function."""
     run = make_run(skeleton_draft={"spec": WEATHER})
     out = ok(S, ["show", "--run", str(run), "--gate", "1"], capsys)
-    rows = [l for l in out["markdown"].splitlines() if l.startswith("| ") and "`process_variable`" in l]
-    assert len(rows) == 1 and rows[0].split("|")[3].strip() == "3"
+    rows = [l for l in out["markdown"].splitlines() if l.startswith("2. process_variable")]
+    assert rows == ["2. process_variable  · 3 copies"]
     assert "Rank: 3" not in out["markdown"] and out["markdown"].count("process_variable ×3") == 2  # 2 DAG edges
 
 

@@ -54,6 +54,7 @@ import os
 import re
 import shutil
 import sys
+import textwrap
 from collections import deque
 from pathlib import Path
 from typing import Optional
@@ -2158,11 +2159,13 @@ def show_gate(s: dict, gate: int) -> str:
             out += ["", f"> {draft['parse_error']}"]
         if spec is None:
             return "\n".join(out + ["", "No valid skeleton yet."])
-        out += ["", f"**{spec.name}** — {spec.description}", "",
-                "| # | Function | Parallel copies | What it does |", "|---|---|---|---|"]
+        out += ["", f"**{spec.name}** — {spec.description}", "", "```text"]
         for i, name in enumerate(topo_order(spec), 1):
             n = next(x for x in spec.nodes if x.name == name)
-            out.append(f"| {i} | `{n.name}` | {n.rank} | {n.description} |")
+            out.append(f"{i}. {n.name}  · {_copies(n)}")
+            out += textwrap.wrap(" ".join(n.description.split()) or "—", 96,
+                                 initial_indent="   ", subsequent_indent="   ") + [""]
+        out[-1] = "```"
         out += ["", "```", *dag_lines(spec), "```"]
         return "\n".join(out)
 

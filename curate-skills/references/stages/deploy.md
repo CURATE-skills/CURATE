@@ -2,6 +2,8 @@
 
 Paths below are relative to `<plugin>`; `spec.py …`, `deploy.py …` are the script shorthand.
 
+Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
+
 Precondition: `spec.py begin --run <run> --stage deploy` returned `ok` (Gate 4 was approved with
 **Approve & deploy**, and the bundle's hash was recorded then).
 

@@ -2,6 +2,8 @@
 
 Paths below are relative to `<plugin>`; `spec.py …`, `monitor.py …` are the script shorthand.
 
+Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
+
 Precondition: `spec.py begin --run <run> --stage monitor` returned `ok` (the deploy stage started
 the workflow and recorded its InvocationID; or the run stopped here and this is a re-check).
 

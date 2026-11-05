@@ -4,6 +4,8 @@ The local stand-in for CURATE's post-run Workflow Deployment Agent (the original
 `save [functions|workflow|both]`, `orchestrator.py` 173-226 `_do_save`). v1 and v2 do not deploy.
 `spec.py …`, `catalog.py …` are the script shorthand.
 
+Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
+
 Precondition: `spec.py begin --run <run> --stage finalize` returned `ok` (it checked that the
 bundle was validated and built from the current spec).
 

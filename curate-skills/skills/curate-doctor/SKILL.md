@@ -7,6 +7,8 @@ allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py *)
 
 # /curate-doctor
 
+Run the script in the plain form `python3 <plugin>/scripts/doctor.py …`: no variable assignments, no `&&` chains, no subshells.
+
 Arguments: `$ARGUMENTS` (only `--deploy` and `--online` are passed on; ignore anything else).
 
 **When to add which flag.** You may run doctor on your own initiative — the core checks, and

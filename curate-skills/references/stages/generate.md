@@ -3,6 +3,8 @@
 Paths below are relative to `<plugin>`; `spec.py …`, `scratch.py …`, `stubtest.py …` are the
 script shorthand.
 
+Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
+
 Precondition: `spec.py begin --run <run> --stage generate` returned `ok`. It already checked
 the spec and the foreground setting. If the run is already at `gate3`, skip to step 4.
 
