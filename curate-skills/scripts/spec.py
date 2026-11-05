@@ -500,6 +500,26 @@ def cmd_prompt_context(args) -> dict:
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+PRESENTATION_RX = re.compile(r"layout|panel|plot style|colou?r|legend|title|label|axis|dpi|resolution|"
+                             r"file format|formats?\b|\bpng\b|\bpdf\b|\bsvg\b|file name|filename|"
+                             r"data source|\burl\b|endpoint|https?://", re.I)
+
+
+def _clean_lines(items) -> list[str]:
+    return [" ".join(str(a).split()) for a in (items or []) if str(a).strip()]
+
+
+def split_assumptions(raw) -> tuple[list[str], list[str]]:
+    """(affects the results, presentation and format). resolve writes
+    {"affects_results": [...], "presentation": [...]}; a plain list (older runs) is sorted by
+    topic: layout, formats, dpi, file names and data-source URLs are presentation."""
+    if isinstance(raw, dict):
+        return _clean_lines(raw.get("affects_results")), _clean_lines(raw.get("presentation"))
+    lines = _clean_lines(raw)
+    pres = [a for a in lines if PRESENTATION_RX.search(a.split("->", 1)[0])]
+    return [a for a in lines if a not in pres], pres
+
+
 def parse_workflow_spec(data: dict, skeleton: bool = False) -> WorkflowSpec:
     if not isinstance(data, dict):
         raise InputError("expected a JSON object")
@@ -534,10 +554,11 @@ def parse_workflow_spec(data: dict, skeleton: bool = False) -> WorkflowSpec:
     if unknown and skeleton:
         raise InputError(f"edges reference unknown nodes: {unknown}")
     data_flow = [DataFlowEdge(**df) for df in data.get("data_flow", [])]
-    assumptions = [" ".join(str(a).split()) for a in (data.get("assumptions") or []) if str(a).strip()]
+    results, presentation = split_assumptions(data.get("assumptions"))
     return WorkflowSpec(
         name=data.get("name", "workflow"), description=data.get("description", ""),
-        nodes=nodes, edges=edges, data_flow=data_flow, assumptions=assumptions,
+        nodes=nodes, edges=edges, data_flow=data_flow, assumptions=results,
+        presentation_assumptions=presentation,
         entry=data.get("entry") or nodes[0].name,
         folder=data.get("folder", "workflow_data"),
         compute_target=data.get("compute_target", "GH"),
@@ -928,11 +949,14 @@ def cmd_merge_resolved(args) -> dict:
     if enriched is None:
         raise InputError("no candidates applied yet (run apply-candidates)")
     raw = read_json_file(args.json)
-    if not isinstance(raw, dict) or not isinstance(raw.get("assumptions"), list) \
-            or not all(isinstance(a, str) for a in raw["assumptions"]):
-        raise InputError('resolved.json needs an "assumptions" list of strings, one line each: '
-                         '"<sketch phrase or topic> -> <reading used>" for every interpretation the design '
-                         'relies on that the sketch did not state ([] if there are none)')
+    a = raw.get("assumptions") if isinstance(raw, dict) else None
+    groups = [a] if isinstance(a, list) else [a.get(k) for k in ("affects_results", "presentation")] \
+        if isinstance(a, dict) and set(a) <= {"affects_results", "presentation"} else None
+    if not groups or not all(isinstance(g, list) and all(isinstance(x, str) for x in g) for g in groups):
+        raise InputError('resolved.json needs "assumptions": {"affects_results": [...], "presentation": '
+                         '[...]}, lists of one-line strings "<sketch phrase or topic> -> <reading used>" for '
+                         'every interpretation the design relies on that the sketch did not state ([] if '
+                         'there are none)')
     try:
         resolved = parse_workflow_spec(raw)
     except ValidationError as e:
@@ -2168,7 +2192,7 @@ def show_gate(s: dict, gate: int) -> str:
             out += ["", "Check:"] + [f"- **{p['severity']}**: {p['message']}" for p in problems]
         out += ["", "### Assumptions", "",
                 "Readings of the sketch the design relies on (to change one, ask for it as a change):"]
-        out += [f"- {a}" for a in spec.assumptions] or ["- none"]
+        out += assumption_lines(spec) or ["- none"]
         return "\n".join(out)
     if gate == 3:
         out += [f"## Gate 3 — Code  (iteration {s['iteration']}/{s['max_iterations']}, "
@@ -2236,6 +2260,18 @@ def show_gate(s: dict, gate: int) -> str:
 BUNDLE_SKIP = re.compile(r"(^|/)(\.DS_Store|Thumbs\.db|desktop\.ini|\._[^/]*|__pycache__(/.*)?)$")
 
 
+def assumption_lines(spec: WorkflowSpec) -> list[str]:
+    """Most consequential first: what changes the numbers, then presentation and format."""
+    results, presentation = spec.assumptions, spec.presentation_assumptions
+    if not presentation:  # resolved before the two groups existed: sort the one list by topic
+        results, presentation = split_assumptions(results)
+    out = []
+    for title, items in (("Affects the results", results), ("Presentation and format", presentation)):
+        if items:
+            out += ["", f"**{title}**"] + [f"- {a}" for a in items]
+    return out
+
+
 def bundle_files(bundle_dir) -> list[str]:
     root = Path(bundle_dir) if bundle_dir else None
     if not root or not root.is_dir():
@@ -2292,9 +2328,10 @@ def summary_md(s: dict) -> str:
     out += ["", "Files to upload before running:"] + (
         [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
     coded = [(nm, a) for nm in topo_order(spec) for a in (mga.get(nm) or {}).get("assumptions") or []]
-    if spec.assumptions or coded:  # only what Gates 2 and 3 already showed
-        out += ["", "Assumptions (shown at Gates 2 and 3):"] + [f"- {a}" for a in spec.assumptions] \
-            + [f"- `{nm}`: {a}" for nm, a in coded]
+    if spec.assumptions or spec.presentation_assumptions or coded:  # only what Gates 2 and 3 showed
+        out += ["", "Assumptions (shown at Gates 2 and 3):"] + assumption_lines(spec)
+        if coded:
+            out += ["", "**Made while coding**"] + [f"- `{nm}`: {a}" for nm, a in coded]
     mon = s.get("monitor") or {}
     if mon.get("summary"):
         out += ["", mon["summary"]]

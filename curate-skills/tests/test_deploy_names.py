@@ -214,7 +214,13 @@ def test_list_shows_each_deployment_once_with_its_runs(project, plain, capsys, m
     assert a["run"] == A and a["reused_by"] == [B] and a["invocations"] == 2
     assert a["deployed"] == "2026-11-05T10:00:00+00:00" and a["last_invoked"] == "2026-11-06T14:05:00+00:00"
     assert rows["weather-1107-0900"]["torn_down"] == "2026-11-08T00:00:00+00:00"
-    assert f"| `weather-1105-0930` | alice/faasr-actions | {A}; reused by {B} |" in out["markdown"]
+    blocks = out["markdown"].split("\n\n")
+    assert blocks[1].splitlines() == [
+        "**`weather-1105-0930`**", "- Repo: alice/faasr-actions", f"- Run: {A}",
+        "- Deployed: 2026-11-05 10:00 UTC", "- Last invoked: 2026-11-06 14:05 UTC (2 invocation(s))",
+        f"- Reused by: {B}"]
+    assert blocks[2].splitlines()[0] == "**`weather-1107-0900`** — torn down"
+    assert blocks[2].splitlines()[-1] == "- Torn down: 2026-11-08 00:00 UTC" and "|" not in out["markdown"]
 
 
 def test_list_with_no_runs(tmp_path, capsys):

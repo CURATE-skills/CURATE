@@ -41,19 +41,27 @@ Produce a complete WorkflowSpec JSON:
   "data_flow": [
     {"from_node": "fn_a", "to_node": "fn_b", "file": "concrete_filename.csv", "format": "csv", "folder": "workflow_folder_name"}
   ],
-  "assumptions": [
-    "\"extend that window by 30 days\" -> 30 days added after the end date, baseline only",
-    "precipitation units -> tenths of mm in the data, converted to mm"
-  ]
+  "assumptions": {
+    "affects_results": [
+      "\"extend that window by 30 days\" -> 30 days added after the end date, baseline only",
+      "precipitation units -> tenths of mm in the data, converted to mm"
+    ],
+    "presentation": [
+      "panel layout -> three panels stacked vertically, shared x-axis"
+    ]
+  }
 }
 ```
 
 Assumptions (informational; the user sees them at Gate 2 and changes one by an ordinary change
 request): list EVERY interpretation the design relies on that the user's request did not state
-explicitly — time windows and their ends, date ranges and year boundaries, units and
-conversions, leap days, missing or flagged data, aggregation (mean vs median), time zones,
-thresholds, file formats the user didn't name, defaults chosen for anything ambiguous. One line
-each, `<sketch phrase or topic> -> <reading used>`, quoting the user's words when there are any.
+explicitly, one line each, `<sketch phrase or topic> -> <reading used>`, quoting the user's words
+when there are any, in two groups, most consequential first within each:
+- `affects_results` — anything that changes the numbers: time windows and their ends, date
+  ranges and year boundaries, missing or flagged data, leap days, units and conversions,
+  aggregation (mean vs median), time zones, thresholds, defaults chosen for anything ambiguous.
+- `presentation` — how results look or are stored: plot layout and style, file formats, dpi,
+  file names, the data source URL.
 Write the same reading into the affected node's description so code generation follows it. Do not
 list what the request states plainly. `[]` only if the request leaves nothing to interpret; the
 field itself is required.

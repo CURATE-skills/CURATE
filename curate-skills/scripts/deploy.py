@@ -1353,6 +1353,16 @@ def deploy_status(run: str) -> dict:
 
 # ── list and teardown ────────────────────────────────────────────────────────
 
+def _when(ts: str | None) -> str:
+    """2026-11-05T06:44:37+00:00 → 2026-11-05 06:44 UTC."""
+    if not ts:
+        return "—"
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    except ValueError:
+        return ts
+
+
 def list_deployments(project: str | Path) -> dict:
     """Deployments recorded in this project's runs: name, the run that deployed it, when, the last
     invocation (by it or by runs that reused it), and whether it was torn down. Reads only."""
@@ -1381,15 +1391,21 @@ def list_deployments(project: str | Path) -> dict:
             row["invocations"] += 1
             row["last_invoked"] = max(filter(None, [row["last_invoked"], inv.get("ts")]), default=None)
     out = sorted(rows.values(), key=lambda r: r["deployed"] or r["last_invoked"] or "")
-    md = ["| Deployment | Repo | Run | Deployed | Last invoked | Torn down |", "|---|---|---|---|---|---|"]
-    for r in out:
-        run = r["run"] or f"(reused by {', '.join(r['reused_by'])})"
-        if r["run"] and r["reused_by"]:
-            run += f"; reused by {', '.join(r['reused_by'])}"
-        md.append(f"| `{r['name']}` | {r['repo']} | {run} | {r['deployed'] or '—'} | {r['last_invoked'] or '—'} "
-                  f"({r['invocations']}×) | {r['torn_down'] or '—'} |")
+    md = []
+    for r in out:  # one block per deployment: long names and run ids don't fit a table row
+        md += [f"**`{r['name']}`**" + (" — torn down" if r["torn_down"] else ""),
+               f"- Repo: {r['repo']}",
+               f"- Run: {r['run'] or '(not in this project)'}",
+               f"- Deployed: {_when(r['deployed'])}",
+               f"- Last invoked: {_when(r['last_invoked'])}" + (f" ({r['invocations']} invocation(s))"
+                                                               if r["invocations"] else "")]
+        if r["reused_by"]:
+            md.append(f"- Reused by: {', '.join(r['reused_by'])}")
+        if r["torn_down"]:
+            md.append(f"- Torn down: {_when(r['torn_down'])}")
+        md.append("")
     return {"ok": True, "project": str(runs_dir.parent.parent), "deployments": out,
-            "markdown": "\n".join(md) if out else "No deployments recorded in this project's runs."}
+            "markdown": "\n".join(md).rstrip() if out else "No deployments recorded in this project's runs."}
 
 
 def _expected_repo_contents(run_p: Path, s: dict, bundle: Path) -> dict[str, str]:

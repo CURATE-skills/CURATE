@@ -1403,3 +1403,27 @@ baseline (10-year average) only`, `leap days -> … Feb 29 (2016, 2020, 2024) dr
 quality-flagged values. The orchestrator added one sentence after the review line pointing at the
 window reading as the one most worth checking (outside the verbatim display; no extra question).
 Gate 3 not run.
+
+## 47. Same sketch, two readings, no code change; assumptions grouped by impact; --list blocks (2026-11-05)
+
+**Nondeterminism finding.** The weather sketch's "extend that window by 30 days" was read
+differently by the same pipeline with no change to the resolve or generate prompts in between
+(`wca-resolve.md` last changed 17 Oct): run 20261020-215732 (20 Oct) widened the 10-year window by
+30 days **on each side** (resolve's own "Interpretation:" in the step description; the user then
+changed it at Gate 2 to end-only); run 20261104-223221 (4 Nov) used **end only** (chosen while
+coding, first visible at Gate 3). The same pair differed on precipitation units too (20 Oct:
+convert tenths of mm to mm, user changed it to "as reported"; 4 Nov: converted). This is why
+the readings must be shown before code exists (#46): the model's choice is not stable across runs.
+
+**Assumptions by impact.** resolve now writes `"assumptions": {"affects_results": [...],
+"presentation": [...]}` (a plain list is still accepted and sorted by topic: layout, plot style,
+formats, dpi, file names and data-source URLs are presentation). Gate 2 shows **Affects the
+results** first (windows, date ranges, missing/flagged data, leap days, units, averaging), then
+**Presentation and format**; same informational display, no question. The run summary uses the
+same grouping. Runs resolved before this change are grouped at display time. Rendered on the
+live run from #46: 9 results lines, then layout, file formats/dpi and the source URL.
+
+**--list.** The project's deployments are now one block per deployment (name, repo, run,
+deployed, last invoked with the count, reused by, torn down; times as `YYYY-MM-DD HH:MM UTC`)
+instead of a wide table whose long run ids wrapped. The request for this ("part B, the --list
+block layout") did not reach this session; this is the reading used.

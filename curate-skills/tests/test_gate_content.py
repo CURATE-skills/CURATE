@@ -121,7 +121,7 @@ def test_merge_resolved_requires_the_assumptions_list(make_run, capsys, seeded_c
     saved = dict(T.RESOLVED)
     monkeypatch.setattr(T, "RESOLVED", {k: v for k, v in saved.items() if k != "assumptions"})
     run, (code, out) = T.resolved_run(make_run, capsys, seeded_catalog)
-    assert code == 2 and 'needs an "assumptions" list' in out["error"] and "[] if there are none" in out["error"]
+    assert code == 2 and 'needs "assumptions": {"affects_results"' in out["error"] and "[] if there are none" in out["error"]
     monkeypatch.setattr(T, "RESOLVED", {**saved, "assumptions": ["  leap days ->  29 Feb dropped "]})
     run, (code, out) = T.resolved_run(make_run, capsys, seeded_catalog)
     assert code == 0, out
@@ -129,16 +129,37 @@ def test_merge_resolved_requires_the_assumptions_list(make_run, capsys, seeded_c
     monkeypatch.setattr(T, "RESOLVED", {**saved, "assumptions": []})  # empty is fine; the field is required
     run, (code, out) = T.resolved_run(make_run, capsys, seeded_catalog)
     assert code == 0, out
+    grouped = {"affects_results": [WINDOW], "presentation": ["panel layout -> stacked"]}
+    monkeypatch.setattr(T, "RESOLVED", {**saved, "assumptions": grouped})
+    run, (code, out) = T.resolved_run(make_run, capsys, seeded_catalog)
+    sp = json.loads((run / "state.json").read_text())["spec"]
+    assert code == 0 and sp["assumptions"] == [WINDOW] and sp["presentation_assumptions"] == ["panel layout -> stacked"]
+    monkeypatch.setattr(T, "RESOLVED", {**saved, "assumptions": {"other": ["x"]}})
+    run, (code, out) = T.resolved_run(make_run, capsys, seeded_catalog)
+    assert code == 2
 
 
-def test_gate2_prints_the_assumptions_section(make_run, capsys):
-    spec = weather().model_copy(update={"assumptions": [WINDOW, UNITS]})
+LAYOUT = "panel layout -> three panels stacked vertically, shared x-axis"
+SOURCE = "data source -> https://www.ncei.noaa.gov/.../USC00351862.csv"
+
+
+def test_gate2_prints_the_assumptions_by_impact(make_run, capsys):
+    spec = weather().model_copy(update={"assumptions": [WINDOW, UNITS], "presentation_assumptions": [LAYOUT, SOURCE]})
     md = show(make_run(spec=spec), 2, capsys)["markdown"]
     section = md.split("### Assumptions")[1]
-    assert section.strip().splitlines()[1:] == [f"- {WINDOW}", f"- {UNITS}"]
-    assert "ask for it as a change" in section
+    assert section.strip().splitlines()[1:] == ["", "**Affects the results**", f"- {WINDOW}", f"- {UNITS}", "",
+                                                "**Presentation and format**", f"- {LAYOUT}", f"- {SOURCE}"]
+    assert "ask for it as a change" in section and "?" not in section  # informational: no question
     md = show(make_run(spec=weather()), 2, capsys)["markdown"]
     assert md.split("### Assumptions")[1].strip().endswith("- none")
+
+
+def test_a_plain_list_from_an_older_run_is_sorted_by_topic():
+    lines = [LAYOUT, WINDOW, "file formats -> CSV and PNG (150 dpi)", UNITS, SOURCE,
+             "leap days -> Feb 29 dropped", "missing values -> skipped"]
+    results, presentation = S.split_assumptions(lines)
+    assert results == [WINDOW, UNITS, "leap days -> Feb 29 dropped", "missing values -> skipped"]
+    assert presentation == [LAYOUT, "file formats -> CSV and PNG (150 dpi)", SOURCE]
 
 
 def test_mga_assumptions_are_recorded_and_listed_at_gate3(make_run, capsys):
@@ -161,21 +182,26 @@ def test_mga_assumptions_are_recorded_and_listed_at_gate3(make_run, capsys):
 
 
 def test_the_summary_repeats_only_assumptions_already_shown(make_run, capsys):
-    spec = weather().model_copy(update={"assumptions": [WINDOW]})
+    spec = weather().model_copy(update={"assumptions": [WINDOW], "presentation_assumptions": [LAYOUT]})
     run = make_run(spec=spec, stage="finalize", validation={"ok": True, "level": "faasr_py"},
                    mga={"process": {"status": "passed", "assumptions": ["leap days -> dropped"]}})
     md = ok(S, ["summary", "--run", str(run)], capsys)["markdown"]
-    section = md.split("Assumptions (shown at Gates 2 and 3):")[1].split("\n\n")[0].strip().splitlines()
-    assert section == [f"- {WINDOW}", "- `process`: leap days -> dropped"]
+    section = md.split("Assumptions (shown at Gates 2 and 3):")[1].split("\n\nDecisions:")[0].strip().splitlines()
+    assert section == ["**Affects the results**", f"- {WINDOW}", "", "**Presentation and format**", f"- {LAYOUT}",
+                       "", "**Made while coding**", "- `process`: leap days -> dropped"]
     assert "Assumptions" not in ok(S, ["summary", "--run", str(make_run(spec=weather(), stage="finalize"))],
                                    capsys)["markdown"]
 
 
 def test_prompts_ask_for_assumptions():
     resolve = " ".join((ROOT / "references" / "prompts" / "wca-resolve.md").read_text().split())
-    assert '"assumptions": [' in resolve and "`<sketch phrase or topic> -> <reading used>`" in resolve
-    for topic in ("time windows", "units", "leap days", "missing or flagged data"):
-        assert topic in resolve, topic
+    assert '"assumptions": { "affects_results": [' in resolve and "`<sketch phrase or topic> -> <reading used>`" in resolve
+    results = resolve.split("- `affects_results`")[1].split("- `presentation`")[0]
+    for topic in ("time windows", "date ranges", "missing or flagged data", "leap days", "units", "aggregation"):
+        assert topic in results, topic
+    presentation = resolve.split("- `presentation`")[1].split("Write the same reading")[0]
+    for topic in ("layout", "file formats", "dpi", "data source URL"):
+        assert topic in presentation, topic
     assert "the field itself is required" in resolve and "ordinary change request" in resolve
     mga = " ".join((ROOT / "agents" / "curate-mga.md").read_text().split())
     assert "Write `<your folder>/assumptions.txt`" in mga and "assumptions: <number of lines" in mga

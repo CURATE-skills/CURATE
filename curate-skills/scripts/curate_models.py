@@ -114,8 +114,10 @@ class WorkflowSpec(BaseModel):
     data_store: str = "S3"  # key into DataStores
     folder: str = "workflow_data"  # S3 folder prefix
     # Interpretations the design relies on that the sketch didn't state, one line each:
-    # "<sketch phrase or topic> -> <reading used>" (resolve writes them; shown at Gate 2).
-    assumptions: list[str] = Field(default_factory=list)
+    # "<sketch phrase or topic> -> <reading used>" (resolve writes them; shown at Gate 2), most
+    # consequential first: those that change the numbers, then presentation and format.
+    assumptions: list[str] = Field(default_factory=list)  # affect the results
+    presentation_assumptions: list[str] = Field(default_factory=list)  # layout, formats, dpi, source URL
 
 
 # Run-state / provenance fields that describe how a particular run sourced a
