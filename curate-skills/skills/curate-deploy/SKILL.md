@@ -21,13 +21,20 @@ Arguments: `$ARGUMENTS`
 - **`--teardown --run <run_id>`** (find the run as in 1; do not run `spec.py begin`):
   1. `deploy.py teardown --run <run>` (deletes nothing). Print its `summary` exactly. If `ok` is
      false without `needs_confirmation`, show the `error` / `problems` exactly and stop.
-  2. Ask once with AskUserQuestion — question `Delete these <repo_files> repo files and
-     <s3_objects> S3 objects?` (the `counts`), header `Teardown`, options **Yes, delete them** /
-     **Keep them**. Without AskUserQuestion, ask in chat and end your turn.
-  3. Only after **Yes, delete them** in the user's answer just now:
-     `deploy.py teardown --run <run> --confirmed --plan <plan_id>` with the `plan_id` from step 1.
-     Print its `message`, or its `error` exactly. Never pass `--confirmed` otherwise, and never
-     delete anything by other means.
+  2. Ask once with AskUserQuestion — question `Tear down <deploy_name>? <repo_files> deploy files,
+     <log_objects> log objects and <output_objects> output objects are listed above.` (the
+     `counts`), header `Teardown`, options:
+     **Keep outputs (default)** — delete only the deploy files and FaaSr logs;
+     **Delete all** — outputs too;
+     **Download outputs, then delete** — saved to `<project>/teardown-outputs/<deploy_name>/` first;
+     **Cancel**.
+     Without AskUserQuestion (or if the answer is a plain "yes" without a choice), the choice is
+     **Keep outputs**; ask in chat and end your turn if there was no yes at all.
+  3. Only after one of the first three in the user's answer just now:
+     `deploy.py teardown --run <run> --confirmed --plan <plan_id> --outputs keep|delete|download`
+     (keep / delete / download, matching the choice), with the `plan_id` from step 1. Print its
+     `message`, or its `error` exactly. Never pass `--confirmed` otherwise, and never delete
+     anything by other means. **Cancel** → nothing is deleted.
 
   Stop after either.
 

@@ -1314,3 +1314,13 @@ record each file's git blob sha.
 deployed or reused `corvallis-winter-weather-comparison-cs` resolve to `-cs` (pinned); `list`
 shows that deployment once, made by 20261101-172823, reused by three runs, 4 invocations.
 Nothing was deployed or torn down; covered otherwise by fake tests (`tests/test_deploy_names.py`).
+
+## 43. Teardown: outputs listed separately; keep / delete / download (2026-11-05)
+
+The teardown list now has three parts: **deploy files** (repo), **FaaSr logs** (the
+`<FaaSrLog>/<deploy name>/` prefix), **outputs** (each action's renamed folder). Choices:
+`--outputs keep` (default, also when asked non-interactively or answered with a plain yes:
+deletes only deploy files and logs), `delete` (everything listed), `download` (gets every output
+object to an empty folder outside the run, default `<project>/teardown-outputs/<deploy name>/`,
+with a manifest; if any object can't be saved — e.g. it holds a secret value — nothing is
+deleted). State records the choice, kept prefixes and the download folder. Fake tests only.

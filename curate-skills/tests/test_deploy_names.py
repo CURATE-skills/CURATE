@@ -57,7 +57,7 @@ class Bucket:
     """A fake S3 bucket: head_bucket, list_objects_v2 (one-key probes and full listings), delete_object."""
 
     def __init__(self, keys=(), bucket="b"):
-        self.keys, self.bucket, self.deleted = set(keys), bucket, []
+        self.keys, self.bucket, self.deleted, self.content = set(keys), bucket, [], {}
 
     def __call__(self, cfg, access_key, secret_key):
         return self
@@ -68,6 +68,10 @@ class Bucket:
     def list_objects_v2(self, Bucket, Prefix, MaxKeys=None, ContinuationToken=None):
         hit = sorted(k for k in self.keys if k.startswith(Prefix))[:MaxKeys or None]
         return {"KeyCount": len(hit), "Contents": [{"Key": k} for k in hit], "IsTruncated": False}
+
+    def get_object(self, Bucket, Key):
+        import io
+        return {"Body": io.BytesIO(self.content.get(Key, f"data of {Key}").encode())}
 
     def delete_object(self, Bucket, Key):
         assert Key in self.keys
@@ -256,7 +260,16 @@ def test_teardown_shows_exactly_what_it_would_delete_and_deletes_nothing_without
     assert sorted(o["key"] for o in out["s3_objects"]) == sorted(
         [f"FaaSrLog/{NAME}/2026-11-05T10-00-00/inv/download.txt", f"weather_data{SFX}/plot.png",
          f"weather_data{SFX}/station.csv"])
-    assert out["counts"] == {"repo_files": 5, "s3_objects": 3}
+    assert out["counts"] == {"repo_files": 5, "s3_objects": 3, "log_objects": 1, "output_objects": 2}
+    summary = out["summary"]
+    deploy_part, logs_part, outputs_part = (summary.split("**Deploy files** (repo):")[1].split("**FaaSr logs**")[0],
+                                            summary.split("**FaaSr logs** (S3):")[1].split("**Outputs**")[0],
+                                            summary.split("**Outputs** (S3, what the workflow wrote):")[1])
+    assert deploy_part.count(f"functions/{NAME}/") == 2 and "weather_data" not in deploy_part
+    assert f"s3://b/FaaSrLog/{NAME}/`: 1 object(s)" in logs_part and "weather_data" not in logs_part
+    assert f"s3://b/weather_data{SFX}/`: 2 object(s)" in outputs_part and "FaaSrLog" not in outputs_part.split("- Not")[0]
+    assert {o["key"]: o["kind"] for o in out["s3_objects"]}[f"weather_data{SFX}/plot.png"] == "outputs"
+    assert set(out["outputs_choices"]) == {"keep", "delete", "download"}
     assert "Not deleted: the GitHub Actions run history" in out["summary"]
     assert fake.deletes == [] and s3.deleted == []
 
@@ -265,7 +278,8 @@ def test_teardown_deletes_only_the_listed_files_and_objects(project, plain, caps
     r = torn(project)
     fake, s3 = world()
     _, plan = cli(capsys, "teardown", "--run", str(r), fake=fake, s3=s3)
-    code, out = cli(capsys, "teardown", "--run", str(r), "--confirmed", "--plan", plan["plan_id"], fake=fake, s3=s3)
+    code, out = cli(capsys, "teardown", "--run", str(r), "--confirmed", "--plan", plan["plan_id"],
+                    "--outputs", "delete", fake=fake, s3=s3)
     assert code == 0 and out["ok"], out
     deleted = [p for p, _ in fake.deletes]
     assert sorted(deleted) == sorted(FILES) and deleted[0].startswith(".github/")  # Actions files first
@@ -358,5 +372,61 @@ def test_docs_describe_per_run_names_list_and_teardown_and_no_cs_default():
         assert "-cs" not in (plugin / f).read_text(), f
     skill = " ".join((plugin / "skills" / "curate-deploy" / "SKILL.md").read_text().split())
     assert "`deploy.py teardown --run <run>` (deletes nothing)" in skill
-    assert "Ask once with AskUserQuestion" in skill and "--confirmed --plan <plan_id>" in skill
+    assert "Ask once with AskUserQuestion" in skill and "--confirmed --plan <plan_id> --outputs keep|delete|download" in skill
+    for option in ("**Keep outputs (default)**", "**Delete all**", "**Download outputs, then delete**", "**Cancel**"):
+        assert option in skill
+    assert "the choice is **Keep outputs**" in skill
     assert "`deploy.py list`; print its `markdown` exactly and stop" in skill
+
+
+# ── teardown: what happens to the outputs ──
+
+OUT_KEYS = {f"weather_data{SFX}/station.csv", f"weather_data{SFX}/plot.png"}
+LOG_KEY = f"FaaSrLog/{NAME}/2026-11-05T10-00-00/inv/download.txt"
+
+
+def confirmed(capsys, r, fake, s3, *extra):
+    _, plan = cli(capsys, "teardown", "--run", str(r), fake=fake, s3=s3)
+    return cli(capsys, "teardown", "--run", str(r), "--confirmed", "--plan", plan["plan_id"], *extra, fake=fake, s3=s3)
+
+
+def test_keep_outputs_is_the_default(project, plain, capsys):
+    r = torn(project)
+    fake, s3 = world()
+    code, out = confirmed(capsys, r, fake, s3)  # no --outputs: e.g. asked non-interactively
+    assert code == 0 and out["outputs"] == "keep"
+    assert sorted(p for p, _ in fake.deletes) == sorted(FILES)
+    assert s3.deleted == [LOG_KEY] and OUT_KEYS <= s3.keys
+    assert "Outputs kept (2 object(s)): s3://b/weather_data-1105-0930/" in out["message"]
+    td = json.loads((r / "state.json").read_text())["deploy"]["teardown"]
+    assert td["outputs"] == "keep" and td["outputs_kept"] == [f"s3://b/weather_data{SFX}/"] and td["s3_objects"] == 1
+
+
+def test_download_outputs_first_then_delete_everything(project, plain, capsys, tmp_path):
+    r = torn(project)
+    fake, s3 = world()
+    s3.content[f"weather_data{SFX}/station.csv"] = "date,prcp\n"
+    code, out = confirmed(capsys, r, fake, s3, "--outputs", "download")
+    assert code == 0 and out["ok"], out
+    dest = project / "teardown-outputs" / NAME  # default: in the project, outside the run
+    assert out["downloaded"]["to"] == str(dest.resolve()) and out["downloaded"]["files"] == 2
+    assert (dest / f"weather_data{SFX}" / "station.csv").read_text() == "date,prcp\n"
+    assert len(json.loads((dest / "manifest.json").read_text())["files"]) == 2
+    assert set(s3.deleted) == OUT_KEYS | {LOG_KEY} and "Outputs saved first to" in out["message"]
+    assert json.loads((r / "state.json").read_text())["deploy"]["teardown"]["outputs_saved_to"] == str(dest.resolve())
+
+
+def test_download_that_cannot_save_every_output_deletes_nothing(project, plain, capsys, tmp_path):
+    r = torn(project)
+    fake, s3 = world()
+    s3.content[f"weather_data{SFX}/station.csv"] = f"key,{FAKE['S3_SecretKey']}\n"  # holds a secret value
+    code, out = confirmed(capsys, r, fake, s3, "--outputs", "download", "--to", str(tmp_path / "saved"))
+    assert code == 1 and "nothing was deleted" in out["error"] and "S3_SecretKey" in out["error"]
+    assert fake.deletes == [] and s3.deleted == [] and FAKE["S3_SecretKey"] not in json.dumps(out)
+    full = tmp_path / "full"
+    full.mkdir()
+    (full / "mine.txt").write_text("x")
+    code, out = confirmed(capsys, r, fake, s3, "--outputs", "download", "--to", str(full))
+    assert code == 1 and "is not empty" in out["error"] and fake.deletes == [] and s3.deleted == []
+    code, out = confirmed(capsys, r, fake, s3, "--outputs", "download", "--to", str(r / "x"))
+    assert code == 1 and "inside the run folder" in out["error"] and s3.deleted == []

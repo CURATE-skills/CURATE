@@ -1381,10 +1381,21 @@ def _expected_repo_contents(run_p: Path, s: dict, bundle: Path) -> dict[str, str
     return out
 
 
-def _s3_client_for(run_p: Path, bundle: Path, bucket: str, s3_factory):
+OUTPUT_CHOICES = {"keep": "keep the outputs: delete only the deploy files and the FaaSr logs (the default)",
+                  "delete": "delete everything listed, outputs included",
+                  "download": "download the outputs first (to --to, default <project>/teardown-outputs/<deploy name>), "
+                              "then delete everything listed"}
+
+
+def _run_workflow(run_p: Path, bundle: Path) -> dict:
+    """The deploy copy this run uploaded, else the approved bundle with its placeholders filled."""
     copy_path = run_p / "deploy" / "workflow.json"
-    wf = json.loads(copy_path.read_text()) if copy_path.is_file() else \
+    return json.loads(copy_path.read_text()) if copy_path.is_file() else \
         fill_placeholders(json.loads((bundle / "workflow.json").read_text()))[0]
+
+
+def _s3_client_for(run_p: Path, bundle: Path, bucket: str, s3_factory):
+    wf = _run_workflow(run_p, bundle)
     cfg = next((c for c in (wf.get("DataStores") or {}).values() if c.get("Bucket") == bucket), None)
     if cfg is None:
         raise StepError(f"bucket {bucket!r} is not in this run's workflow; its S3 objects are not touched")
@@ -1459,6 +1470,7 @@ def teardown_plan(run: str, gh: GitHub | None, s3_factory=boto3_s3) -> dict:
             problems.append(f"{path} changed since this run deployed it; refusing")
         repo_files.append({**row, "state": "delete", "sha": body["sha"]})
     s3_objects, shared = [], owned_prefixes_elsewhere(run, s.get("run_id"))
+    logs_prefix = f"{_run_workflow(run_p, bundle).get('FaaSrLog') or 'FaaSrLog'}/{name}/"
     for bucket, prefix in prefixes:
         if not prefix.endswith("/") or not (prefix.rstrip("/").endswith(sfx) or f"/{name}/" in f"/{prefix}"):
             problems.append(f"s3://{bucket}/{prefix} is not a prefix of this deployment; refusing")
@@ -1473,25 +1485,38 @@ def teardown_plan(run: str, gh: GitHub | None, s3_factory=boto3_s3) -> dict:
         except Exception as e:  # noqa: BLE001
             problems.append(f"could not list s3://{bucket}/{prefix}: {e if isinstance(e, StepError) else _s3_error(e)}")
             continue
-        s3_objects += [{"bucket": bucket, "prefix": prefix, "key": k} for k in keys]
+        kind = "logs" if prefix == logs_prefix else "outputs"
+        s3_objects += [{"bucket": bucket, "prefix": prefix, "key": k, "kind": kind} for k in keys]
     to_delete = [f for f in repo_files if f.get("state") == "delete"]
     plan_id = hashlib.sha256(json.dumps([[f["repo"], f["branch"], f["path"], f.get("sha")] for f in to_delete]
                                         + [[o["bucket"], o["key"]] for o in s3_objects]).encode()).hexdigest()[:12]
     reused_by = [st.get("run_id") for _, st in project_runs(run)
                  if (st.get("deploy") or {}).get("reused_from") == s.get("run_id")]
-    lines = [f"**Teardown of `{name}`** (run {s.get('run_id')}; from its deploy log; nothing deleted yet)", ""]
-    lines += [f"- repo `{f['repo']}` ({f['branch']}): `{f['path']}`" + (" — already gone" if f.get("state") == "already gone" else "")
-              for f in repo_files]
-    for bucket, prefix in prefixes:
-        keys = [o["key"] for o in s3_objects if (o["bucket"], o["prefix"]) == (bucket, prefix)]
-        lines.append(f"- S3 `s3://{bucket}/{prefix}`: {len(keys)} object(s)")
-        lines += [f"  - `{k}`" for k in keys]
+    lines = [f"**Teardown of `{name}`** (run {s.get('run_id')}; from its deploy log; nothing deleted yet)", "",
+             "**Deploy files** (repo):"]
+    lines += [f"- `{f['repo']}` ({f['branch']}): `{f['path']}`" + (" — already gone" if f.get("state") == "already gone" else "")
+              for f in repo_files] or ["- none"]
+    for kind, title in (("logs", "**FaaSr logs** (S3)"), ("outputs", "**Outputs** (S3, what the workflow wrote)")):
+        lines += ["", title + ":"]
+        shown = False
+        for bucket, prefix in prefixes:
+            keys = [o["key"] for o in s3_objects if (o["bucket"], o["prefix"]) == (bucket, prefix) and o["kind"] == kind]
+            if keys or (kind == "logs") == (prefix == logs_prefix):
+                lines.append(f"- `s3://{bucket}/{prefix}`: {len(keys)} object(s)")
+                lines += [f"  - `{k}`" for k in keys]
+                shown = True
+        if not shown:
+            lines.append("- none")
+    lines.append("")
     if reused_by:
         lines.append(f"- Runs that invoked this deployment too (their records stay): {', '.join(reused_by)}")
     lines.append("- Not deleted: the GitHub Actions run history, anything not listed above.")
     lines += [f"- **Problem:** {x}" for x in problems]
     return {**base, "ok": not problems, "problems": problems, "repo_files": repo_files, "s3_objects": s3_objects,
-            "counts": {"repo_files": len(to_delete), "s3_objects": len(s3_objects)}, "plan_id": plan_id,
+            "counts": {"repo_files": len(to_delete), "s3_objects": len(s3_objects),
+                       "log_objects": sum(o["kind"] == "logs" for o in s3_objects),
+                       "output_objects": sum(o["kind"] == "outputs" for o in s3_objects)},
+            "outputs_choices": OUTPUT_CHOICES, "plan_id": plan_id,
             "summary": "\n".join(lines)}
 
 
@@ -1508,24 +1533,69 @@ def owned_prefixes_elsewhere(run: str, run_id: str) -> dict[tuple, str]:
     return out
 
 
+def _download(run_p: Path, bundle: Path, objects: list[dict], dest: Path, s3_factory) -> dict:
+    """Copy output objects to an empty local folder outside the run, with a manifest. Nothing is
+    deleted here; a file holding a secret value is not saved (and so not deleted either)."""
+    run_abs, dest = run_p.resolve(), dest.expanduser().resolve()
+    if dest == run_abs or run_abs in dest.parents:
+        raise StepError(f"{dest} is inside the run folder; choose a folder outside it")
+    if dest.exists() and any(dest.iterdir()):
+        raise StepError(f"{dest} is not empty; nothing is overwritten")
+    files, skipped, clients = [], [], {}
+    for o in objects:
+        if o["bucket"] not in clients:
+            clients[o["bucket"]] = _s3_client_for(run_p, bundle, o["bucket"], s3_factory)
+        data = clients[o["bucket"]].get_object(Bucket=o["bucket"], Key=o["key"])["Body"].read()
+        leaked = leakcheck.find_leaks(data.decode("utf-8", "ignore"))
+        if leaked:
+            skipped.append({"key": o["key"], "reason": f"contains secret values ({', '.join(leaked)})"})
+            continue
+        target = dest / o["key"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        files.append({"key": o["key"], "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()})
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "manifest.json").write_text(json.dumps({"downloaded_at": _now_iso(), "files": files,
+                                                    "skipped": skipped}, indent=2) + "\n")
+    return {"to": str(dest), "files": len(files), "skipped": skipped, "manifest": str(dest / "manifest.json")}
+
+
 def teardown(run: str, gh: GitHub | None, token: str | None, s3_factory=boto3_s3, confirmed: bool = False,
-             plan_id: str | None = None) -> dict:
-    """Delete exactly what teardown_plan lists, only with --confirmed and the plan id the user saw."""
+             plan_id: str | None = None, outputs: str = "keep", to: str | None = None) -> dict:
+    """Delete what teardown_plan lists, only with --confirmed and the plan id the user saw.
+    outputs: keep (default: delete only the deploy files and FaaSr logs) / delete / download
+    (save them first; if any can't be saved, nothing is deleted)."""
+    if outputs not in OUTPUT_CHOICES:
+        raise InputError(f"--outputs must be one of {', '.join(OUTPUT_CHOICES)}")
     plan = teardown_plan(run, gh, s3_factory)
     if not plan["ok"]:
         return {**plan, "error": plan.get("error") or "teardown refused; nothing was deleted"}
-    if not plan["counts"]["repo_files"] and not plan["counts"]["s3_objects"]:
-        pass  # nothing left; still recorded below once confirmed
     if not confirmed:
         return {**plan, "ok": False, "needs_confirmation": True,
-                "error": "teardown deletes the files above — ask the user once; only after they say yes, run it "
-                         f"again with --confirmed --plan {plan['plan_id']}"}
+                "error": "teardown deletes the files above — ask the user once (keep outputs / delete all / "
+                         "download outputs first); only after they choose, run it again with --confirmed --plan "
+                         f"{plan['plan_id']} --outputs keep|delete|download"}
     if plan_id != plan["plan_id"]:
         return {**plan, "ok": False, "error": "what would be deleted changed since it was shown (or no --plan "
                 "given); show the new list and ask again"}
     run_p, extra = Path(run), ({"gh_token": token} if token else None)
     s, bundle = load_run(run)
     deleted = {"repo_files": [], "s3_objects": []}
+    out_objs = [o for o in plan["s3_objects"] if o["kind"] == "outputs"]
+    kept = out_objs if outputs == "keep" else []
+    saved = None
+    if outputs == "download" and out_objs:
+        dest = Path(to) if to else run_p.resolve().parents[2] / "teardown-outputs" / plan["deploy_name"]
+        try:
+            saved = _download(run_p, bundle, out_objs, dest, s3_factory)
+        except Exception as e:  # noqa: BLE001
+            err = str(e) if isinstance(e, StepError) else _s3_error(e)
+            return {**plan, "ok": False, "error": f"downloading the outputs failed ({err}); nothing was deleted"}
+        if saved["skipped"]:
+            return {**plan, "ok": False, "downloaded": saved,
+                    "error": "some outputs could not be saved (" + "; ".join(f"{x['key']}: {x['reason']}"
+                             for x in saved["skipped"]) + "); nothing was deleted"}
+    to_delete_s3 = [o for o in plan["s3_objects"] if o not in kept]
     try:
         files = sorted((f for f in plan["repo_files"] if f.get("state") == "delete"),
                        key=lambda f: not f["path"].startswith(".github/"))  # Actions files first
@@ -1539,26 +1609,34 @@ def teardown(run: str, gh: GitHub | None, token: str | None, s3_factory=boto3_s3
                                  "repo": f["repo"], "branch": f["branch"], "deleted": f["path"]})
             deleted["repo_files"].append(f["path"])
         clients = {}
-        for o in plan["s3_objects"]:
+        for o in to_delete_s3:
             if o["bucket"] not in clients:
                 clients[o["bucket"]] = _s3_client_for(run_p, bundle, o["bucket"], s3_factory)
             clients[o["bucket"]].delete_object(Bucket=o["bucket"], Key=o["key"])
             deleted["s3_objects"].append(f"s3://{o['bucket']}/{o['key']}")
-        for bucket, prefix in sorted({(o["bucket"], o["prefix"]) for o in plan["s3_objects"]}):
+        for bucket, prefix in sorted({(o["bucket"], o["prefix"]) for o in to_delete_s3}):
             _log_written(run_p, {"run_id": s["run_id"], "deploy_name": plan["deploy_name"], "step": "teardown",
                                  "bucket": bucket, "deleted_prefix": prefix,
-                                 "objects": sum(1 for o in plan["s3_objects"] if o["prefix"] == prefix)})
+                                 "objects": sum(1 for o in to_delete_s3 if o["prefix"] == prefix)})
     except Exception as e:  # noqa: BLE001
         err = leakcheck.redact(str(e) if isinstance(e, StepError) else _s3_error(e), extra_values=extra)
         _update_state(run_p, lambda st: st["deploy"].update(teardown_partial={"ts": _now_iso(), "error": err,
                                                                                **deleted}))
         return {**plan, "ok": False, "failed": True, "deleted": deleted, "error": f"teardown stopped: {err}; "
                 "what was deleted is in the deploy log; run teardown again to see what is left"}
+    kept_prefixes = sorted({f"s3://{o['bucket']}/{o['prefix']}" for o in kept})
     _update_state(run_p, lambda st: st["deploy"].update(teardown={
-        "ts": _now_iso(), "repo_files": len(deleted["repo_files"]), "s3_objects": len(deleted["s3_objects"])}))
-    return {**plan, "ok": True, "deleted": deleted,
-            "message": f"Torn down {plan['deploy_name']}: {len(deleted['repo_files'])} repo file(s), "
-                       f"{len(deleted['s3_objects'])} S3 object(s) deleted."}
+        "ts": _now_iso(), "outputs": outputs, "repo_files": len(deleted["repo_files"]),
+        "s3_objects": len(deleted["s3_objects"]), "outputs_kept": kept_prefixes,
+        **({"outputs_saved_to": saved["to"]} if saved else {})}))
+    msg = (f"Torn down {plan['deploy_name']}: {len(deleted['repo_files'])} repo file(s), "
+           f"{len(deleted['s3_objects'])} S3 object(s) deleted.")
+    if kept:
+        msg += f" Outputs kept ({len(kept)} object(s)): {', '.join(kept_prefixes)}."
+    if saved:
+        msg += f" Outputs saved first to {saved['to']} ({saved['files']} file(s), manifest.json)."
+    return {**plan, "ok": True, "deleted": deleted, "outputs": outputs, "kept": [o["key"] for o in kept],
+            **({"downloaded": saved} if saved else {}), "message": msg}
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -1604,6 +1682,11 @@ def main(argv=None, opener=None, s3_factory=boto3_s3) -> int:
     q.add_argument("--run", required=True)
     q.add_argument("--confirmed", action="store_true")
     q.add_argument("--plan", help="the plan_id of the list the user saw")
+    q.add_argument("--outputs", default="keep", choices=sorted(OUTPUT_CHOICES),
+                   help="keep (default): delete only deploy files and FaaSr logs; delete: everything; "
+                        "download: save the outputs first (--to), then delete everything")
+    q.add_argument("--to", help="with --outputs download: an empty folder outside the run "
+                                "(default <project>/teardown-outputs/<deploy name>)")
     args = p.parse_args(argv)
     envfile.load()  # ~/.config/curate/.env fills deploy variables the environment leaves unset
     if args.cmd in ("status", "list"):
@@ -1617,7 +1700,8 @@ def main(argv=None, opener=None, s3_factory=boto3_s3) -> int:
     try:
         gh = GitHub(token, opener) if token else None
         if args.cmd == "teardown":
-            return _print(teardown(args.run, gh, token, s3_factory, args.confirmed, args.plan), extra)
+            return _print(teardown(args.run, gh, token, s3_factory, args.confirmed, args.plan, args.outputs,
+                                   args.to), extra)
         override = args.name_suffix if args.name_suffix is not None else os.environ.get("CURATE_DEPLOY_NAME_SUFFIX")
         name = resolve_suffix(args.run, override or None, gh)
         suffix = name["suffix"]

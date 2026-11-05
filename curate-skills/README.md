@@ -190,7 +190,8 @@ After a read-only preflight, deploy asks before each of four steps:
 Each deployment is named `<Workflow>-<MMDD-HHMM>` after the run that approved Gate 4, so two runs
 of the same sketch never clash; deploy refuses to overwrite any existing deployment.
 `/curate-skills:curate-deploy --list` shows this project's deployments; `--teardown --run <run_id>`
-deletes exactly what that run deployed (repo files and S3 objects), after asking once.
+deletes exactly what that run deployed, after asking once whether to keep its outputs (the
+default), delete them too, or download them first.
 
 ### 5. Monitor
 Under `/curate`, monitoring starts after invoke and watches the run for up to 10 minutes,
