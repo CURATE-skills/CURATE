@@ -360,7 +360,8 @@ def check_auto_mode_rules(r: Report, plugin_root: str | None, claude_dir: Path, 
         return
     rules = ", ".join(auto_mode_rule(root, s) for s in missing)
     r.add("deploy", "auto mode", "warn", "In auto mode, deploy will be blocked after the first step. Add: "
-          f"{rules} to ~/.claude/settings.json (permissions → allow), or use default mode for deploy.")
+          f"{rules} to ~/.claude/settings.json (permissions → allow) — in Claude Code: "
+          f"! uv run --quiet {root}/scripts/allow_deploy.py — or use manual mode for deploy.")
 
 
 def gh_cli_token() -> str | None:

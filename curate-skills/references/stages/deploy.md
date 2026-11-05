@@ -20,6 +20,22 @@ If the preflight says one is missing, tell the user which name is missing and th
 --deploy` checks it). deploy.py reads the file on every call, so no restart is needed; then stop
 (step 4).
 
+## Before the first step: permission for later turns
+
+Only if `deploy.py status --run <run>` shows no step done yet: `allow_deploy.py --check`
+(read-only; the same check as doctor). If `ok` is false, ask once with AskUserQuestion — question
+`Deploy needs permission to run its GitHub scripts in later turns. Add it to your settings?`,
+header `Permission`, options **Yes** / **No**:
+- **Yes**: show this line exactly, for the **user** to type into Claude Code (the returned
+  `command`, e.g. `! uv run --quiet <plugin>/scripts/allow_deploy.py`). **Never run it yourself**,
+  by any means. Say it adds two rules to `~/.claude/settings.json`, backs the file up and shows
+  the change, and the returned `takes_effect`. Wait for the user's next message, then go on.
+- **No**: go on, and tell the user in one line each: in auto mode, deploy will stop after the
+  first step (auto mode blocks its later commands); manual mode (Shift+Tab) asks before each
+  command instead.
+
+Never edit a settings file yourself.
+
 ## 0. Invoke only (reuse an identical existing deployment)
 
 `deploy.py status --run <run>`. If `reuse_possible` names a run (this run was started with

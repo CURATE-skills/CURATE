@@ -127,4 +127,5 @@ def test_auto_mode_advice_matches_doctor():
     deploy = README.split("## Deploy", 1)[1].split("\n## ", 1)[0]
     for script in ("deploy.py", "monitor.py"):
         assert doctor.auto_mode_rule(root, script) in deploy
-    assert "blocks deploy after the first step" in deploy and "default mode" in deploy
+    assert "blocks deploy after the first step" in deploy and "manual mode" in deploy and "default mode" not in deploy
+    assert "`! uv run --quiet /absolute/path/to/skill-curate/curate-skills/scripts/allow_deploy.py`" in deploy

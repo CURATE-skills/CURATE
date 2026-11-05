@@ -470,7 +470,8 @@ def test_auto_mode_rules_missing_warns_with_the_exact_rules(tmp_path, rules):
     assert row["message"] == ("In auto mode, deploy will be blocked after the first step. Add: "
                               f"Bash(uv run --quiet {ROOT}/scripts/deploy.py *), "
                               f"Bash(uv run --quiet {ROOT}/scripts/monitor.py *) to ~/.claude/settings.json "
-                              "(permissions → allow), or use default mode for deploy.")
+                              "(permissions → allow) — in Claude Code: "
+                              f"! uv run --quiet {ROOT}/scripts/allow_deploy.py — or use manual mode for deploy.")
 
 
 def test_auto_mode_names_only_the_missing_rule(tmp_path):

@@ -1324,3 +1324,27 @@ deletes only deploy files and logs), `delete` (everything listed), `download` (g
 object to an empty folder outside the run, default `<project>/teardown-outputs/<deploy name>/`,
 with a manifest; if any object can't be saved — e.g. it holds a secret value — nothing is
 deleted). State records the choice, kept prefixes and the download folder. Fake tests only.
+
+## 44. Deploy asks to add its allow rules; allow_deploy.py; "manual mode" (2026-11-05)
+
+Before the first deploy step (no step done yet), the deploy stage runs `allow_deploy.py --check`
+(read-only; same rule test as doctor: a narrow rule covering `deploy.py` and `monitor.py` in user,
+project or local settings). If missing it asks once: "Deploy needs permission to run its GitHub
+scripts in later turns. Add it to your settings?" — Yes: shows `! uv run --quiet
+<plugin>/scripts/allow_deploy.py` for the **user** to type (Claude never runs it, never edits a
+settings file); No: continues, saying auto mode will stop deploy after the first step and manual
+mode asks before each command. `allow_deploy.py` merges the two rules into
+`~/.claude/settings.json` (`$CLAUDE_CONFIG_DIR` honoured) or, with `--project`, the project's
+`.claude/settings.local.json` (git root, as Claude Code places it): only appends, keeps the file's
+indentation and trailing newline so the printed diff shows just the change, backs the file up
+(`settings.json.bak-<time>`), refuses invalid JSON / a non-list `allow` without touching the file,
+idempotent. Doctor, README and stage text say "manual mode" (was "default mode").
+
+**Does a settings change apply to the running session?** Docs (settings, "When edits take
+effect"): settings files are watched and reloaded, `permissions` included, no restart. Checked
+headless (`claude -p --permission-mode default`, placeholder `deploy.py`): the command was denied,
+the rule was written to the project's `.claude/settings.local.json` 45 s into the session from
+outside, and the same command then ran; a control session without the rule was denied both times.
+(A first attempt in auto mode was inconclusive: an explicit "retry it" in the prompt let the
+classifier allow the second attempt even without the rule.) `~/.claude/settings.json` itself was
+not written in the test; the docs cover it.
