@@ -16,12 +16,17 @@ preflight first and records every path it writes in <run>/deploy/deploy-log.json
 deploy). The deploy copy may differ from the approved bundle only in ALLOWED_DIFF fields and
 placeholder fields; the summary shows the difference field by field.
 
-Every curate-skills deployment gets its own name, WorkflowName + suffix (default "-cs"), so
-CURATE's deployment of the same workflow is never touched:
-  functions/<Name>-cs/<function>.py        (FunctionGitRepo points only there)
-  workflows/<Name>-cs.json
-  .github/workflows/<Name>-cs-<action>.yml
-  S3: <folder>-cs/... (each action's "folder" argument) and FaaSrLog/<Name>-cs/...
+Every curate-skills deployment gets its own name, WorkflowName + suffix, so CURATE's deployment
+of the same workflow and other runs' deployments are never touched. The suffix (resolve_suffix) is
+"-<MMDD-HHMM>" of the run that approved Gate 4 (seconds added if that name is taken), inherited
+from the source run for a deploy-only run, $CURATE_DEPLOY_NAME_SUFFIX / --name-suffix if set,
+and pinned once a deploy step ran (older runs keep their "-cs"):
+  functions/<Name><sfx>/<function>.py        (FunctionGitRepo points only there)
+  workflows/<Name><sfx>.json
+  .github/workflows/<Name><sfx>-<action>.yml
+  S3: <folder><sfx>/... (each action's "folder" argument) and FaaSrLog/<Name><sfx>/...
+`list` shows the deployments recorded in this project's runs; `teardown` deletes exactly the
+repo files and S3 objects one run's deploy log recorded, after the user's yes.
 The deploy copy also fills emit's <FAASR_...> placeholders from the environment (non-secret
 values: user, repo, S3 endpoint/bucket/region). The approved bundle is not changed; the renamed,
 filled copy exists only in the deploy step.
@@ -58,14 +63,15 @@ import envfile  # noqa: E402
 import leakcheck  # noqa: E402
 
 NATIVE_CONTAINERS = SCRIPT_DIR / "vendor" / "curate_deploy" / "native_containers.txt"
-DEFAULT_SUFFIX = "-cs"
 SUFFIX_RX = re.compile(r"^[-_A-Za-z0-9]+$")
+RUN_TS_RX = re.compile(r"^\d{4}(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})")  # run ids: YYYYMMDD-HHMMSS-<name>
+MAX_PATH_PART = 255  # bytes per file name in a git tree / most file systems
 COMMIT_TAG = "(curate-skills)"  # in every commit message curate-deploy makes
 DEPLOY_LOG = Path("deploy") / "deploy-log.jsonl"  # in the run; one JSON line per path a deploy step wrote
 # The only fields in which the deploy copy may differ from the approved bundle (besides fields that
 # held an emit placeholder). Anything else is refused: the deploy must run what Gate 4 approved.
-ALLOWED_DIFF = [("WorkflowName", "suffix"),
-                (r"ActionList\.[^.]+\.Arguments\.folder", "suffix (S3 folder)"),
+ALLOWED_DIFF = [("WorkflowName", "deploy name"),
+                (r"ActionList\.[^.]+\.Arguments\.folder", "deploy name (S3 folder)"),
                 (r"FunctionGitRepo\.[^.]+(\[\d+\])?", "per-deployment function folder")]
 API = "https://api.github.com"
 
@@ -110,6 +116,9 @@ class GitHub:
 
     def put(self, api_path: str, body: dict):
         return self._request("PUT", api_path, body, {})
+
+    def delete(self, api_path: str, body: dict):  # only teardown, after the user's yes
+        return self._request("DELETE", api_path, body, {})
 
     def _request(self, method: str, api_path: str, body, params):
         url = API + api_path + ("?" + urllib.parse.urlencode(params) if params else "")
@@ -348,6 +357,9 @@ def name_problems(copy_wf: dict, targets: list[dict], s3_targets: list[dict], su
     for t in targets:
         if new not in t["path"]:
             out.append(f"{t['path']} is not under the deploy name {new!r}")
+        long = [x for x in t["path"].split("/") if len(x.encode()) > MAX_PATH_PART]
+        if long:
+            out.append(f"{t['path']}: the name {long[0][:40]}… is longer than {MAX_PATH_PART} bytes")
     prefix = f"{user}/{repo}/{branch}/functions/{new}/"
     for fn, p in (copy_wf.get("FunctionGitRepo") or {}).items():
         for one in ([p] if isinstance(p, str) else p):
@@ -455,6 +467,100 @@ def s3_check(wf: dict, s3_targets: list[dict], curate_prefixes: list[str], facto
     return info, problems
 
 
+# ── the deploy name ──────────────────────────────────────────────────────────
+
+def _read_state(run_dir: Path) -> dict | None:
+    try:
+        return json.loads((run_dir / "state.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def project_runs(run: str | Path) -> list[tuple[Path, dict]]:
+    """Every run in the same .curate/runs folder (this one included), with its state."""
+    out = []
+    for d in sorted(Path(run).resolve().parent.iterdir()):
+        st = _read_state(d) if d.is_dir() else None
+        if st:
+            out.append((d, st))
+    return out
+
+
+def lineage(run: str | Path, s: dict) -> list[tuple[str, dict | None]]:
+    """This run, then the run its Gate 4 approval was copied from (--start-at deploy --from-run X),
+    and so on: the last entry is the run that approved Gate 4. A source not in this project ends
+    the chain (its state is None)."""
+    parent = Path(run).resolve().parent
+    chain, seen, cur = [(s.get("run_id"), s)], {s.get("run_id")}, s
+    while cur:
+        first = (cur.get("history") or [{}])[0]
+        src = first.get("from_run") if first.get("gate") == 4 and first.get("decision") == "copied" else None
+        if not src or src in seen:
+            break
+        seen.add(src)
+        cur = _read_state(parent / src)
+        chain.append((src, cur))
+    return chain
+
+
+def owned_deployments(run: str | Path, exclude_ids=()) -> dict[str, str]:
+    """{deploy name: run id} for deployments made (not reused) by runs of this project, except the
+    given runs and torn-down ones."""
+    out = {}
+    for d, st in project_runs(run):
+        dep = st.get("deploy") or {}
+        if st.get("run_id") in exclude_ids or not dep.get("deploy_name") or dep.get("reused_from") \
+                or dep.get("teardown"):
+            continue
+        if any((dep.get("steps") or {}).get(x, {}).get("ok") for x in STEPS):
+            out[dep["deploy_name"]] = st.get("run_id")
+    return out
+
+
+def _name_taken(run: str, ids: set, name: str, gh: GitHub | None) -> str | None:
+    other = owned_deployments(run, ids).get(name)
+    if other:
+        return f"run {other} deployed it"
+    user, repo = os.environ.get("FAASR_GH_USERNAME", "").strip(), os.environ.get("FAASR_ACTION_REPO", "").strip()
+    branch = os.environ.get("FAASR_ACTION_BRANCH", "").strip() or "main"
+    if gh is not None and user and repo:
+        st, _, _ = gh.get(f"/repos/{user}/{repo}/contents/workflows/{name}.json", ref=branch)
+        if st == 200:
+            return f"workflows/{name}.json exists in {user}/{repo}"
+    return None
+
+
+def resolve_suffix(run: str, override: str | None = None, gh: GitHub | None = None) -> dict:
+    """The deploy name suffix for this run, and where it came from. In order: pinned (a deploy step
+    already ran with it); --name-suffix / $CURATE_DEPLOY_NAME_SUFFIX; the deployment of the run this
+    one was copied from (so invoke only finds it, old "-cs" names included); else "-<MMDD-HHMM>"
+    of the run that approved Gate 4, "-<MMDD-HHMMSS>" if that name is taken."""
+    s, bundle = load_run(run)
+    rec = s.get("deploy") or {}
+    if rec.get("suffix"):
+        if override and override != rec["suffix"]:
+            raise InputError(f"this deploy started with suffix {rec['suffix']!r}; keep it (got {override!r})")
+        return {"suffix": rec["suffix"], "source": "pinned: this run's deploy started with it"}
+    if override:
+        return {"suffix": override, "source": "CURATE_DEPLOY_NAME_SUFFIX / --name-suffix"}
+    chain = lineage(run, s)
+    for rid, st in chain[1:]:
+        if st and (st.get("deploy") or {}).get("suffix"):
+            return {"suffix": st["deploy"]["suffix"], "source": f"run {rid}'s deployment (this run was started from it)"}
+    approver = chain[-1][0]
+    m = RUN_TS_RX.match(approver or "")
+    if not m:
+        raise InputError(f"cannot name the deployment: run id {approver!r} has no date and time; set "
+                         "CURATE_DEPLOY_NAME_SUFFIX (e.g. -alice-1)")
+    minute, second = f"-{m[1]}{m[2]}-{m[3]}{m[4]}", f"-{m[1]}{m[2]}-{m[3]}{m[4]}{m[5]}"
+    name = json.loads((bundle / "workflow.json").read_text())["WorkflowName"]
+    ids = {rid for rid, _ in chain}
+    why = _name_taken(run, ids, name + minute, gh)
+    if not why:
+        return {"suffix": minute, "source": f"Gate 4 approval in run {approver}"}
+    return {"suffix": second, "source": f"Gate 4 approval in run {approver}; {name}{minute} is taken ({why})"}
+
+
 # ── preflight ────────────────────────────────────────────────────────────────
 
 def _owner_of(gh: GitHub, user: str, repo: str, branch: str, t: dict, new: str) -> dict:
@@ -483,7 +589,7 @@ def _owner_of(gh: GitHub, user: str, repo: str, branch: str, t: dict, new: str) 
 
 def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str = "none",
               s3_factory=boto3_s3, overwrite_own: bool = False, done_steps=(),
-              require_hash: bool = False, reuse_from: dict | None = None) -> dict:
+              require_hash: bool = False, reuse_from: dict | None = None, name_source: str | None = None) -> dict:
     """Read-only. done_steps: deploy steps this run already finished; their paths must exist,
     carry curate-skills' mark and be in this run's deploy log (they are not written again).
     reuse_from ({run_id, run_dir}): the deployment was made by that run and is reused (invoke only);
@@ -516,7 +622,7 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
     if ext:
         problems.append("the workflow reads files that must already be in S3 ("
                         + ", ".join(str(e.get("s3_path") or e.get("file")) for e in ext)
-                        + f"); the deploy copy's renamed {suffix!r} folder would not have them")
+                        + f"); the deploy copy's renamed folder (+{suffix!r}) would not have them")
     servers = wf.get("ComputeServers") or {}
     other = sorted({cs.get("FaaSType") for cs in servers.values()} - {"GitHubActions"})
     if other:
@@ -550,6 +656,14 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
 
     copy_wf, targets, s3_targets = deploy_copy(filled_wf, suffix, user or "<user>", repo or "<repo>", branch)
     problems += name_problems(copy_wf, targets, s3_targets, suffix, user or "<user>", repo or "<repo>", branch)
+    if copy_wf["WorkflowName"] == wf["WorkflowName"]:
+        problems.append(f"the deploy name {wf['WorkflowName']!r} is the workflow's own name, which CURATE's "
+                        "deployment uses; refusing")
+    taken_by = owned_deployments(run, {rid for rid, _ in lineage(run, s)}
+                                 | ({reuse_from["run_id"]} if reuse_from else set())).get(copy_wf["WorkflowName"])
+    if taken_by:
+        problems.append(f"the deploy name {copy_wf['WorkflowName']!r} is run {taken_by}'s deployment in this "
+                        "project; refusing (choose another with CURATE_DEPLOY_NAME_SUFFIX)")
     req_secrets = required_secret_names(wf)
     diff_rows, diff_problems = deploy_diff(wf, copy_wf, filled)
     problems += diff_problems
@@ -564,7 +678,8 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
     own_files, own_s3 = own_paths(log_entries, run_ids, copy_wf["WorkflowName"], f"{user}/{repo}", branch)
     out = {"run": str(Path(run).resolve()), "bundle": str(bundle), "bundle_hash": bhash,
            "approved_name": wf.get("WorkflowName"), "deploy_name": copy_wf["WorkflowName"],
-           "suffix": suffix, "repo": f"{user}/{repo}" if user and repo else None, "branch": branch,
+           "suffix": suffix, "name_source": name_source,
+           "repo": f"{user}/{repo}" if user and repo else None, "branch": branch,
            "token_source": token_source, "targets": targets, "function_git_repo": copy_wf["FunctionGitRepo"],
            "filled_placeholders": {k: ", ".join(f"${x}" for x in v) + f" = {_dig(copy_wf, k)}" for k, v in filled.items()
                                    if not k.startswith("FunctionGitRepo")},
@@ -702,7 +817,8 @@ def preflight_summary(p: dict) -> str:
     lines = [f"**Deploy preflight — {'ready' if p['ok'] else 'not ready'}** (read-only; nothing was written)",
              "", f"- Approved bundle: `{p['bundle']}` (workflow `{p['approved_name']}`)",
              f"- Deploys as: `{p['deploy_name']}` to `{p['repo']}` branch `{p['branch']}` "
-             f"(token: {p['token_source']}; GitHub {'checked' if p['github_checked'] else 'not checked'})"]
+             f"(token: {p['token_source']}; GitHub {'checked' if p['github_checked'] else 'not checked'})"
+             + (f"\n- Name from: {p['name_source']}" if p.get("name_source") else "")]
     by_step: dict[str, list[str]] = {}
     for t in p["targets"]:
         if t.get("reused_from"):
@@ -755,7 +871,7 @@ def preflight_summary(p: dict) -> str:
                   "| Field | Approved bundle | Deploy copy | Why |", "|---|---|---|---|"]
         lines += [f"| `{r['field']}` | {_cell(r['approved'])} | {_cell(r['deploy'])} | {r['reason']} |"
                   for r in p["deploy_diff"]]
-        lines += [f"| {d['what']} (derived from the name) | `{d['approved']}` | `{d['deploy']}` | suffix |"
+        lines += [f"| {d['what']} (derived from the name) | `{d['approved']}` | `{d['deploy']}` | deploy name |"
                   for d in p.get("derived_changes") or []]
     return "\n".join(lines)
 
@@ -821,6 +937,12 @@ def _log_written(run: Path, entry: dict) -> None:
         raise StepError("refusing to write the deploy log: the entry would contain a secret value")
     with open(run / DEPLOY_LOG, "a") as fh:
         fh.write(line + "\n")
+
+
+def blob_sha(content: str | bytes) -> str:
+    """Git's blob id of a file's content: what GitHub's contents API returns as `sha`."""
+    data = content.encode() if isinstance(content, str) else content
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
 def _checked(content: str, what: str, extra: dict | None) -> str:
@@ -981,7 +1103,8 @@ def deploy_step(run: str, step: str, suffix: str, gh: GitHub | None, token: str 
                 files.append((fn, f"functions/{new}/{fn}.py", _checked(src.read_text(), f"functions/{fn}.py", extra)))
             for fn, path, code in files:
                 put_file(gh, user, repo, path, code, f"Add/update {fn} (curate-skills)", branch)
-                _log_written(run_p, {**log_base, "repo": f"{user}/{repo}", "branch": branch, "path": path})
+                _log_written(run_p, {**log_base, "repo": f"{user}/{repo}", "branch": branch, "path": path,
+                                     "sha": blob_sha(code)})
             detail = {"written": paths}
         elif step == "upload":
             path = f"workflows/{new}.json"
@@ -989,12 +1112,18 @@ def deploy_step(run: str, step: str, suffix: str, gh: GitHub | None, token: str 
             (run_p / "deploy").mkdir(exist_ok=True)
             (run_p / "deploy" / "workflow.json").write_text(text + "\n")
             put_file(gh, user, repo, path, text, f"Add/update workflow payload {new} (curate-skills)", branch)
-            _log_written(run_p, {**log_base, "repo": f"{user}/{repo}", "branch": branch, "path": path})
+            _log_written(run_p, {**log_base, "repo": f"{user}/{repo}", "branch": branch, "path": path,
+                                 "sha": blob_sha(text)})
             detail = {"written": [path], "local_copy": str(run_p / "deploy" / "workflow.json")}
         elif step == "register":
             log = RUNNERS["register"](copy_wf, token, extra)
+            try:  # what CURATE's generator wrote, for teardown's "changed since deploy" check
+                shas = {k: blob_sha(v) for k, v in expected_actions_files(copy_wf).items()}
+            except Exception:  # noqa: BLE001 — teardown then compares against regenerated files
+                shas = {}
             for path in paths:
-                _log_written(run_p, {**log_base, "repo": f"{user}/{repo}", "branch": branch, "path": path})
+                _log_written(run_p, {**log_base, "repo": f"{user}/{repo}", "branch": branch, "path": path,
+                                     **({"sha": shas[path]} if path in shas else {})})
             detail = {"written": paths, "log": log}
         elif step == "invoke":
             dispatched = _now_iso()
@@ -1079,6 +1208,8 @@ def reuse_source(run: str, s: dict) -> dict:
         raise StepError(f"run {src_id} did not finish deploying (missing: {', '.join(missing)}); nothing to reuse")
     if dep.get("bundle_hash") != s.get("bundle_hash"):
         raise StepError(f"run {src_id} deployed a different bundle (hash) than the one approved here")
+    if dep.get("teardown"):
+        raise StepError(f"run {src_id}'s deployment was torn down ({dep['teardown'].get('ts')}); nothing to reuse")
     return {"run_id": src_id, "run_dir": str(src_dir), "deploy_name": dep.get("deploy_name"),
             "repo": dep.get("repo"), "branch": dep.get("branch")}
 
@@ -1191,6 +1322,245 @@ def deploy_status(run: str) -> dict:
             "deploy_log": str(Path(run) / DEPLOY_LOG) if (Path(run) / DEPLOY_LOG).is_file() else None}
 
 
+# ── list and teardown ────────────────────────────────────────────────────────
+
+def list_deployments(project: str | Path) -> dict:
+    """Deployments recorded in this project's runs: name, the run that deployed it, when, the last
+    invocation (by it or by runs that reused it), and whether it was torn down. Reads only."""
+    runs_dir = Path(project).expanduser().resolve() / ".curate" / "runs"
+    rows: dict[tuple, dict] = {}
+    states = [st for d in sorted(runs_dir.iterdir()) if d.is_dir() for st in [_read_state(d)] if st] \
+        if runs_dir.is_dir() else []
+    for st in states:
+        dep = st.get("deploy") or {}
+        steps = dep.get("steps") or {}
+        if not dep.get("deploy_name") or not any(steps.get(x, {}).get("ok") for x in STEPS):
+            continue
+        key = (dep.get("repo"), dep["deploy_name"])
+        row = rows.setdefault(key, {"name": dep["deploy_name"], "repo": dep.get("repo"), "run": None,
+                                    "deployed": None, "last_invoked": None, "invocations": 0,
+                                    "reused_by": [], "torn_down": None})
+        if dep.get("reused_from"):
+            row["reused_by"].append(st.get("run_id"))
+        else:
+            row["run"] = st.get("run_id")
+            row["deployed"] = min((steps[x]["ts"] for x in STEPS if steps.get(x, {}).get("ok") and steps[x].get("ts")),
+                                  default=None)
+            row["torn_down"] = (dep.get("teardown") or {}).get("ts")
+        inv = steps.get("invoke") or {}
+        if inv.get("ok"):
+            row["invocations"] += 1
+            row["last_invoked"] = max(filter(None, [row["last_invoked"], inv.get("ts")]), default=None)
+    out = sorted(rows.values(), key=lambda r: r["deployed"] or r["last_invoked"] or "")
+    md = ["| Deployment | Repo | Run | Deployed | Last invoked | Torn down |", "|---|---|---|---|---|---|"]
+    for r in out:
+        run = r["run"] or f"(reused by {', '.join(r['reused_by'])})"
+        if r["run"] and r["reused_by"]:
+            run += f"; reused by {', '.join(r['reused_by'])}"
+        md.append(f"| `{r['name']}` | {r['repo']} | {run} | {r['deployed'] or '—'} | {r['last_invoked'] or '—'} "
+                  f"({r['invocations']}×) | {r['torn_down'] or '—'} |")
+    return {"ok": True, "project": str(runs_dir.parent.parent), "deployments": out,
+            "markdown": "\n".join(md) if out else "No deployments recorded in this project's runs."}
+
+
+def _expected_repo_contents(run_p: Path, s: dict, bundle: Path) -> dict[str, str]:
+    """For deploy logs without shas (written before teardown existed): what this run deployed,
+    rebuilt from its own files. Empty when that can't be trusted (bundle changed, no deploy copy)."""
+    copy_path = run_p / "deploy" / "workflow.json"
+    if not copy_path.is_file() or tree_hash(bundle) != (s.get("deploy") or {}).get("bundle_hash"):
+        return {}
+    copy_wf = json.loads(copy_path.read_text())
+    new = copy_wf["WorkflowName"]
+    out = {f"functions/{new}/{fn}.py": (bundle / "functions" / f"{fn}.py").read_text()
+           for fn in copy_wf.get("FunctionGitRepo") or {} if (bundle / "functions" / f"{fn}.py").is_file()}
+    out[f"workflows/{new}.json"] = json.dumps(copy_wf, indent=2)
+    try:
+        out.update(expected_actions_files(copy_wf))
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def _s3_client_for(run_p: Path, bundle: Path, bucket: str, s3_factory):
+    copy_path = run_p / "deploy" / "workflow.json"
+    wf = json.loads(copy_path.read_text()) if copy_path.is_file() else \
+        fill_placeholders(json.loads((bundle / "workflow.json").read_text()))[0]
+    cfg = next((c for c in (wf.get("DataStores") or {}).values() if c.get("Bucket") == bucket), None)
+    if cfg is None:
+        raise StepError(f"bucket {bucket!r} is not in this run's workflow; its S3 objects are not touched")
+    keys, _, problems = s3_keys(cfg)
+    if not keys:
+        raise StepError("S3 cannot be read: " + "; ".join(problems))
+    return s3_factory(cfg, *keys)
+
+
+def _list_keys(client, bucket: str, prefix: str) -> list[str]:
+    keys, token = [], None
+    while True:
+        r = client.list_objects_v2(Bucket=bucket, Prefix=prefix, **({"ContinuationToken": token} if token else {}))
+        keys += [o["Key"] for o in r.get("Contents") or []]
+        if not r.get("IsTruncated"):
+            return keys
+        token = r.get("NextContinuationToken")
+
+
+def teardown_plan(run: str, gh: GitHub | None, s3_factory=boto3_s3) -> dict:
+    """Read-only: exactly what teardown would delete — the repo files and the S3 objects under the
+    prefixes this run's deploy log records — or why it refuses."""
+    run_p = Path(run)
+    s, bundle = load_run(run)
+    dep = s.get("deploy") or {}
+    base = {"run": str(run_p.resolve()), "run_id": s.get("run_id"), "deploy_name": dep.get("deploy_name")}
+    if dep.get("reused_from"):
+        return {**base, "ok": False, "error": f"this run reused run {dep['reused_from']}'s deployment; tear that "
+                f"run down instead (/curate-skills:curate-deploy --teardown --run {dep['reused_from']})"}
+    if dep.get("teardown"):
+        return {**base, "ok": False, "error": f"already torn down ({dep['teardown'].get('ts')})"}
+    entries, bad = read_deploy_log(run)
+    mine = [e for e in entries if e.get("run_id") == s.get("run_id") and e.get("deploy_name") == dep.get("deploy_name")
+            and e.get("step") != "teardown"]
+    if not (run_p / DEPLOY_LOG).is_file() or not mine:
+        return {**base, "ok": False, "error": f"no deploy log for this run ({DEPLOY_LOG}): nothing is known to be "
+                "this run's, so nothing is deleted"}
+    problems = list(bad)
+    files: dict[tuple, dict] = {}
+    for e in mine:
+        if e.get("path") and e.get("repo") and e.get("branch"):
+            files[(e["repo"], e["branch"], e["path"])] = e  # the last line for a path wins
+    prefixes = sorted({(e["bucket"], e["prefix"]) for e in mine if e.get("bucket") and e.get("prefix")})
+    name, sfx = dep.get("deploy_name") or "", dep.get("suffix") or ""
+    expected = None
+    repo_files = []
+    if files and gh is None:
+        problems.append("no GitHub token: the repo files could not be checked")
+    for (repo, branch, path), e in sorted(files.items()):
+        row = {"repo": repo, "branch": branch, "path": path}
+        if name not in path:
+            problems.append(f"{path} is not under the deploy name {name!r}; refusing")
+        if gh is None:
+            repo_files.append(row)
+            continue
+        st, _, body = gh.get(f"/repos/{repo}/contents/{path}", ref=branch)
+        if st == 404:
+            repo_files.append({**row, "state": "already gone"})
+            continue
+        if st != 200 or not isinstance(body, dict) or not body.get("sha"):
+            problems.append(f"{repo}/{path}: could not read it (HTTP {st})")
+            continue
+        want = e.get("sha")
+        if not want:
+            if expected is None:
+                expected = _expected_repo_contents(run_p, s, bundle)
+            want = blob_sha(expected[path]) if path in expected else None
+        if want is None:
+            problems.append(f"{path}: its content at deploy time is not known, so a change can't be ruled out; "
+                            "refusing")
+        elif body["sha"] != want:
+            problems.append(f"{path} changed since this run deployed it; refusing")
+        repo_files.append({**row, "state": "delete", "sha": body["sha"]})
+    s3_objects, shared = [], owned_prefixes_elsewhere(run, s.get("run_id"))
+    for bucket, prefix in prefixes:
+        if not prefix.endswith("/") or not (prefix.rstrip("/").endswith(sfx) or f"/{name}/" in f"/{prefix}"):
+            problems.append(f"s3://{bucket}/{prefix} is not a prefix of this deployment; refusing")
+            continue
+        if (bucket, prefix) in shared:
+            problems.append(f"s3://{bucket}/{prefix} is also recorded by run {shared[(bucket, prefix)]}'s own "
+                            "deployment; refusing")
+            continue
+        try:
+            client = _s3_client_for(run_p, bundle, bucket, s3_factory)
+            keys = _list_keys(client, bucket, prefix)
+        except Exception as e:  # noqa: BLE001
+            problems.append(f"could not list s3://{bucket}/{prefix}: {e if isinstance(e, StepError) else _s3_error(e)}")
+            continue
+        s3_objects += [{"bucket": bucket, "prefix": prefix, "key": k} for k in keys]
+    to_delete = [f for f in repo_files if f.get("state") == "delete"]
+    plan_id = hashlib.sha256(json.dumps([[f["repo"], f["branch"], f["path"], f.get("sha")] for f in to_delete]
+                                        + [[o["bucket"], o["key"]] for o in s3_objects]).encode()).hexdigest()[:12]
+    reused_by = [st.get("run_id") for _, st in project_runs(run)
+                 if (st.get("deploy") or {}).get("reused_from") == s.get("run_id")]
+    lines = [f"**Teardown of `{name}`** (run {s.get('run_id')}; from its deploy log; nothing deleted yet)", ""]
+    lines += [f"- repo `{f['repo']}` ({f['branch']}): `{f['path']}`" + (" — already gone" if f.get("state") == "already gone" else "")
+              for f in repo_files]
+    for bucket, prefix in prefixes:
+        keys = [o["key"] for o in s3_objects if (o["bucket"], o["prefix"]) == (bucket, prefix)]
+        lines.append(f"- S3 `s3://{bucket}/{prefix}`: {len(keys)} object(s)")
+        lines += [f"  - `{k}`" for k in keys]
+    if reused_by:
+        lines.append(f"- Runs that invoked this deployment too (their records stay): {', '.join(reused_by)}")
+    lines.append("- Not deleted: the GitHub Actions run history, anything not listed above.")
+    lines += [f"- **Problem:** {x}" for x in problems]
+    return {**base, "ok": not problems, "problems": problems, "repo_files": repo_files, "s3_objects": s3_objects,
+            "counts": {"repo_files": len(to_delete), "s3_objects": len(s3_objects)}, "plan_id": plan_id,
+            "summary": "\n".join(lines)}
+
+
+def owned_prefixes_elsewhere(run: str, run_id: str) -> dict[tuple, str]:
+    """(bucket, prefix) → run id, for prefixes other runs' own (not reused, not torn down) deploy logs record."""
+    out = {}
+    for d, st in project_runs(run):
+        dep = st.get("deploy") or {}
+        if st.get("run_id") == run_id or dep.get("reused_from") or dep.get("teardown"):
+            continue
+        for e in read_deploy_log(str(d))[0]:
+            if e.get("run_id") == st.get("run_id") and e.get("bucket") and e.get("prefix"):
+                out[(e["bucket"], e["prefix"])] = st.get("run_id")
+    return out
+
+
+def teardown(run: str, gh: GitHub | None, token: str | None, s3_factory=boto3_s3, confirmed: bool = False,
+             plan_id: str | None = None) -> dict:
+    """Delete exactly what teardown_plan lists, only with --confirmed and the plan id the user saw."""
+    plan = teardown_plan(run, gh, s3_factory)
+    if not plan["ok"]:
+        return {**plan, "error": plan.get("error") or "teardown refused; nothing was deleted"}
+    if not plan["counts"]["repo_files"] and not plan["counts"]["s3_objects"]:
+        pass  # nothing left; still recorded below once confirmed
+    if not confirmed:
+        return {**plan, "ok": False, "needs_confirmation": True,
+                "error": "teardown deletes the files above — ask the user once; only after they say yes, run it "
+                         f"again with --confirmed --plan {plan['plan_id']}"}
+    if plan_id != plan["plan_id"]:
+        return {**plan, "ok": False, "error": "what would be deleted changed since it was shown (or no --plan "
+                "given); show the new list and ask again"}
+    run_p, extra = Path(run), ({"gh_token": token} if token else None)
+    s, bundle = load_run(run)
+    deleted = {"repo_files": [], "s3_objects": []}
+    try:
+        files = sorted((f for f in plan["repo_files"] if f.get("state") == "delete"),
+                       key=lambda f: not f["path"].startswith(".github/"))  # Actions files first
+        for f in files:
+            st, _, _ = gh.delete(f"/repos/{f['repo']}/contents/{f['path']}",
+                                 {"message": f"Remove {f['path']} (curate-skills teardown)", "sha": f["sha"],
+                                  "branch": f["branch"]})
+            if st not in (200, 204):
+                raise StepError(f"GitHub refused to delete {f['path']} (HTTP {st})")
+            _log_written(run_p, {"run_id": s["run_id"], "deploy_name": plan["deploy_name"], "step": "teardown",
+                                 "repo": f["repo"], "branch": f["branch"], "deleted": f["path"]})
+            deleted["repo_files"].append(f["path"])
+        clients = {}
+        for o in plan["s3_objects"]:
+            if o["bucket"] not in clients:
+                clients[o["bucket"]] = _s3_client_for(run_p, bundle, o["bucket"], s3_factory)
+            clients[o["bucket"]].delete_object(Bucket=o["bucket"], Key=o["key"])
+            deleted["s3_objects"].append(f"s3://{o['bucket']}/{o['key']}")
+        for bucket, prefix in sorted({(o["bucket"], o["prefix"]) for o in plan["s3_objects"]}):
+            _log_written(run_p, {"run_id": s["run_id"], "deploy_name": plan["deploy_name"], "step": "teardown",
+                                 "bucket": bucket, "deleted_prefix": prefix,
+                                 "objects": sum(1 for o in plan["s3_objects"] if o["prefix"] == prefix)})
+    except Exception as e:  # noqa: BLE001
+        err = leakcheck.redact(str(e) if isinstance(e, StepError) else _s3_error(e), extra_values=extra)
+        _update_state(run_p, lambda st: st["deploy"].update(teardown_partial={"ts": _now_iso(), "error": err,
+                                                                               **deleted}))
+        return {**plan, "ok": False, "failed": True, "deleted": deleted, "error": f"teardown stopped: {err}; "
+                "what was deleted is in the deploy log; run teardown again to see what is left"}
+    _update_state(run_p, lambda st: st["deploy"].update(teardown={
+        "ts": _now_iso(), "repo_files": len(deleted["repo_files"]), "s3_objects": len(deleted["s3_objects"])}))
+    return {**plan, "ok": True, "deleted": deleted,
+            "message": f"Torn down {plan['deploy_name']}: {len(deleted['repo_files'])} repo file(s), "
+                       f"{len(deleted['s3_objects'])} S3 object(s) deleted."}
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def _print(obj: dict, extra_values: dict | None = None) -> int:
@@ -1213,7 +1583,8 @@ def main(argv=None, opener=None, s3_factory=boto3_s3) -> int:
         q = sub.add_parser(name, help=help_)
         q.add_argument("--run", required=True)
         q.add_argument("--name-suffix", default=None,
-                       help=f"deploy name suffix (default: $CURATE_DEPLOY_NAME_SUFFIX or {DEFAULT_SUFFIX!r})")
+                       help="deploy name suffix (default: $CURATE_DEPLOY_NAME_SUFFIX, else -<MMDD-HHMM> of the "
+                            "run that approved Gate 4)")
         q.add_argument("--overwrite-own-deploy", action="store_true",
                        help="allow existing paths only if this run's own deploy log records them (and, in "
                             "the repo, they still carry its mark); everything else is still refused")
@@ -1226,22 +1597,33 @@ def main(argv=None, opener=None, s3_factory=boto3_s3) -> int:
     q.add_argument("--name-suffix", default=None)
     q.add_argument("--confirmed", action="store_true")
     sub.add_parser("status", help="which deploy steps are done").add_argument("--run", required=True)
+    q = sub.add_parser("list", help="deployments recorded in this project's runs (read-only)")
+    q.add_argument("--project", default=".", help="the project folder (default: the current one)")
+    q = sub.add_parser("teardown", help="delete exactly what one run's deploy log recorded (needs --confirmed "
+                                        "and the --plan id shown)")
+    q.add_argument("--run", required=True)
+    q.add_argument("--confirmed", action="store_true")
+    q.add_argument("--plan", help="the plan_id of the list the user saw")
     args = p.parse_args(argv)
     envfile.load()  # ~/.config/curate/.env fills deploy variables the environment leaves unset
-    if args.cmd == "status":
+    if args.cmd in ("status", "list"):
         try:
-            return _print(deploy_status(args.run))
+            return _print(deploy_status(args.run) if args.cmd == "status" else list_deployments(args.project))
         except InputError as e:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 2
-    suffix = args.name_suffix if args.name_suffix is not None else \
-        (os.environ.get("CURATE_DEPLOY_NAME_SUFFIX") or DEFAULT_SUFFIX)
     token, source = get_token()
     extra = {"gh_token": token} if token else None
     try:
         gh = GitHub(token, opener) if token else None
+        if args.cmd == "teardown":
+            return _print(teardown(args.run, gh, token, s3_factory, args.confirmed, args.plan), extra)
+        override = args.name_suffix if args.name_suffix is not None else os.environ.get("CURATE_DEPLOY_NAME_SUFFIX")
+        name = resolve_suffix(args.run, override or None, gh)
+        suffix = name["suffix"]
         if args.cmd == "preflight":
-            out = preflight(args.run, suffix, gh, source, s3_factory, args.overwrite_own_deploy)
+            out = preflight(args.run, suffix, gh, source, s3_factory, args.overwrite_own_deploy,
+                            name_source=name["source"])
             out.pop("_copy_wf", None)
         elif args.cmd == "reuse":
             out = reuse(args.run, suffix, gh, token, source, s3_factory, args.confirmed)

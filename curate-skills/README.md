@@ -187,7 +187,10 @@ After a read-only preflight, deploy asks before each of four steps:
 3. **Register:** GitHub Actions files
 4. **Invoke:** start the workflow
 
-Everything is named `<Workflow>-cs`, and deploy refuses to overwrite an existing deployment.
+Each deployment is named `<Workflow>-<MMDD-HHMM>` after the run that approved Gate 4, so two runs
+of the same sketch never clash; deploy refuses to overwrite any existing deployment.
+`/curate-skills:curate-deploy --list` shows this project's deployments; `--teardown --run <run_id>`
+deletes exactly what that run deployed (repo files and S3 objects), after asking once.
 
 ### 5. Monitor
 Under `/curate`, monitoring starts after invoke and watches the run for up to 10 minutes,
@@ -206,7 +209,7 @@ invocation (nothing is redeployed; the new result replaces the old one):
 | Extra subagent attempts after a failed stub test | `--mga-retries N` | `CURATE_MGA_RETRIES` | `3` (`0` = original CURATE) |
 | Stub-test mode | `--stubtest-mode strict\|parity` | `CURATE_STUBTEST_MODE` | `strict` |
 | Monitor time | `--minutes N` (curate-monitor) | `CURATE_MONITOR_MINUTES` | `10` |
-| Deploy name suffix | — | `CURATE_DEPLOY_NAME_SUFFIX` | `-cs` |
+| Deploy name suffix | — | `CURATE_DEPLOY_NAME_SUFFIX` | `-<MMDD-HHMM>` of the run that approved Gate 4 |
 
 A flag beats the environment variable, which beats the default. `CURATE_DEPLOY_NAME_SUFFIX` and
 `CURATE_MONITOR_MINUTES` can also go in `~/.config/curate/.env` (the environment overrides it). A run pins the first three when

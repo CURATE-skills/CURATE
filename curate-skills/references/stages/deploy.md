@@ -43,8 +43,10 @@ Otherwise go on with the preflight.
 ## 1. Preflight (read-only)
 
 `deploy.py preflight --run <run>`. **Print its `summary` exactly as a message** (the user does not
-see tool results; never re-format it). It lists every path the deploy writes, all with the
-`-cs` deploy name, and a table of how the deploy copy differs from the approved bundle.
+see tool results; never re-format it). It lists every path the deploy writes, all under the
+run's own deploy name (`<Workflow>-<MMDD-HHMM>` of the run that approved Gate 4, or the name the
+summary's "Name from" line gives), and a table of how the deploy copy differs from the approved
+bundle.
 If `ok` is false: say the deploy cannot start, list the `problems` exactly, and stop (step 4).
 
 ## 2. The four steps

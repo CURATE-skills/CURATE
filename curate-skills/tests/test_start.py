@@ -494,7 +494,11 @@ def test_start_at_deploy_end_to_end_with_fakes(source_run, capsys, monkeypatch):
     res = json.loads(capsys.readouterr().out)
     assert code == 0 and res["ok"], res
     name = pf["deploy_name"]
-    assert name.endswith("-cs") and all(p.startswith(f"functions/{name}/") for p, _ in fake.puts)
+    # named after the run that approved Gate 4 (the source), not this deploy-only run
+    m = D.RUN_TS_RX.match(state(source_run)["run_id"])
+    assert name == f"{pf['approved_name']}-{m[1]}{m[2]}-{m[3]}{m[4]}", name
+    assert "Gate 4 approval in run " + state(source_run)["run_id"] in pf["name_source"]
+    assert all(p.startswith(f"functions/{name}/") for p, _ in fake.puts)
     assert len(fake.puts) == len(state(source_run)["spec"]["nodes"])
 
     # the carried-over approval only counts while the bundle matches its hash

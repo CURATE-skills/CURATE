@@ -140,6 +140,9 @@ def env(monkeypatch):
     for k in ("FAASR_ACTION_BRANCH", "CUSTOM_CONTAINER", "CURATE_DEPLOY_NAME_SUFFIX",
               "FAASR_S3_BUCKET", "FAASR_S3_ENDPOINT", "FAASR_S3_REGION"):
         monkeypatch.delenv(k, raising=False)
+    # These runs are named "r1"/"r0" (no date and time): the tests above the naming section use
+    # the override, which still works; the per-run default is tested in its own section.
+    monkeypatch.setenv("CURATE_DEPLOY_NAME_SUFFIX", "-cs")
 
 
 class FakeGitHub:
@@ -152,10 +155,18 @@ class FakeGitHub:
         self.commits = dict(commits or {})
         self.secrets, self.scopes, self.default_branch, self.push = secrets, scopes, default_branch, push
         self.writable, self.fail_put = writable, set(fail_put)
-        self.requests, self.puts = [], []
+        self.requests, self.puts, self.deletes = [], [], []
 
     def __call__(self, req, timeout=None):
         self.requests.append(req)
+        if req.get_method() == "DELETE":
+            assert self.writable, "a delete was attempted where none is allowed"
+            p = req.full_url.split("/contents/", 1)[1]
+            body = json.loads(req.data)
+            assert p in self.files and body["sha"] == D.blob_sha(self.files[p]), "delete of a changed/absent file"
+            self.deletes.append((p, body))
+            del self.files[p]
+            return self._ok({"commit": {}})
         if req.get_method() == "PUT":
             assert self.writable, "a write was attempted where none is allowed"
             assert req.headers["Authorization"] == f"Bearer {FAKE['GH_PAT']}"
@@ -180,7 +191,7 @@ class FakeGitHub:
         if path.startswith("/repos/alice/faasr-actions/contents/"):
             p = path.split("/contents/", 1)[1]
             if p in self.files:
-                return self._ok({"content": base64.b64encode(self.files[p].encode()).decode(), "sha": "sha-" + p})
+                return self._ok({"content": base64.b64encode(self.files[p].encode()).decode(), "sha": D.blob_sha(self.files[p])})
         if path == "/repos/alice/faasr-actions/commits":
             p = dict(x.split("=", 1) for x in query.split("&"))["path"].replace("%2F", "/")
             if p in self.commits:
@@ -403,7 +414,7 @@ def test_preflight_refuses_unapproved_or_changed_bundles(run, env, capsys):
 
 
 def test_suffix_must_be_non_empty_and_simple(run, env, capsys):
-    for bad in ("", "a/b", "../x"):
+    for bad in ("a/b", "../x"):
         code, out = pre(capsys, run, FakeGitHub(), f"--name-suffix={bad}")
         assert code == 2 and "suffix" in out["error"]
     code, out = pre(capsys, run, FakeGitHub(), "--name-suffix=-skills")
@@ -436,11 +447,11 @@ def test_summary_diffs_the_deploy_copy_field_by_field(run, env, capsys, monkeypa
                          "FunctionGitRepo.download_station", "FunctionGitRepo.plot_weather", "DataStores.S3.Bucket"}
     assert rows["WorkflowName"]["approved"] == "weather" and rows["WorkflowName"]["deploy"] == "weather-cs"
     assert rows["DataStores.S3.Bucket"]["reason"] == "placeholder $FAASR_S3_BUCKET"
-    assert rows["ActionList.plot.Arguments.folder"]["reason"] == "suffix (S3 folder)"
+    assert rows["ActionList.plot.Arguments.folder"]["reason"] == "deploy name (S3 folder)"
     assert {d["what"]: d["deploy"] for d in out["derived_changes"]}["S3 log prefix (FaaSr)"] == "FaaSrLog/weather-cs/"
     summary = out["summary"]
     assert "**Deploy copy vs approved bundle**" in summary
-    assert "| `ActionList.plot.Arguments.folder` | `weather_data` | `weather_data-cs` | suffix (S3 folder) |" in summary
+    assert "| `ActionList.plot.Arguments.folder` | `weather_data` | `weather_data-cs` | deploy name (S3 folder) |" in summary
     assert "| S3 log prefix (FaaSr) (derived from the name) | `FaaSrLog/weather/` | `FaaSrLog/weather-cs/` |" in summary
 
 

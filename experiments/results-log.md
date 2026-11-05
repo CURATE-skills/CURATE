@@ -1271,3 +1271,46 @@ after FAILURE"). state.json before the re-check was backed up outside the repo.
 
 **Not exercised live:** the 60 s grace path, a real failure line, chunked progress on a running
 invocation (the invocation had long finished): covered by fake tests.
+
+## 42. Per-run deployment names, --list, --teardown (2026-11-05)
+
+**Before:** every curate-skills deployment of a workflow was `<WorkflowName>-cs` (no run id), so a
+second run of the same sketch clashed with the first; the workaround was setting
+`CURATE_DEPLOY_NAME_SUFFIX` by hand.
+
+**Where the deploy name is used** (`deploy.py` `deploy_copy`, unless noted): the deploy copy's
+`WorkflowName`; repo paths `functions/<name>/<fn>.py` (and `FunctionGitRepo`),
+`workflows/<name>.json`, `.github/workflows/<name>-<action>.yml` (the Actions `name:` line too;
+`_owner_of` checks it); S3 `<folder><suffix>/` per action and `FaaSrLog/<name>/` (FaaSr_py
+`get_invocation_folder`); invoke dispatches `workflows/<name>.json` and FaaSr's scheduler
+dispatches `<name>-<action>.yml`; the deploy log and `state.deploy.deploy_name`; monitor lists
+`<name>-<action>.yml` runs and reads `FaaSrLog/<name>/…` (from `state.deploy`, unchanged).
+**Limits:** FaaSr's schema has no pattern for `WorkflowName` (action names stay
+`^[a-zA-Z][a-zA-Z0-9-]*$`, unchanged); git file names ≤ 255 bytes (now checked per path part);
+S3 keys ≤ 1024 bytes (not near). `-MMDD-HHMM(SS)` uses only digits and `-`.
+**Pinning:** the suffix is recorded in `state.deploy.suffix` by the first deploy step and enforced
+after. **Invoke-only reuse** finds the source through the run's first history entry
+(`gate 4, copied, from_run`) and requires the same name, repo, branch and bundle hash, and the
+deployed files byte-identical.
+
+**Now:** suffix = pinned → `CURATE_DEPLOY_NAME_SUFFIX`/`--name-suffix` → the suffix recorded by
+the source run of a deploy-only run (following `from_run` copies; so old `-cs` deployments and
+invoke-only from 20261101-172823 keep working) → `-<MMDD-HHMM>` of the run that approved Gate 4,
+`-<MMDD-HHMMSS>` if that name is another project run's deployment or `workflows/<name>.json`
+exists in the repo. Preflight refuses a name that is another run's deployment in this project
+or the workflow's plain name; existing paths stay refused as before. The preflight summary shows
+where the name came from.
+
+**--list** (`deploy.py list`): per deployment, the run that made it, when, the last invocation
+(including runs that reused it), and teardown. **--teardown** (`deploy.py teardown`): lists the
+repo files and every S3 object under the prefixes this run's deploy log records; deletes only
+with `--confirmed --plan <id>` (the id of the list shown; refused if anything changed); refuses
+without a log, for a reuse run, if a repo file's blob sha differs from the one logged at deploy
+(older logs: rebuilt from the run's own files, refused if that can't be trusted), or if another
+run's deployment logs the same S3 prefix. Actions files are deleted first. Deploy logs now
+record each file's git blob sha.
+
+**Checked read-only on the real project** (`~/curate-tests/weather-deploy`): the three runs that
+deployed or reused `corvallis-winter-weather-comparison-cs` resolve to `-cs` (pinned); `list`
+shows that deployment once, made by 20261101-172823, reused by three runs, 4 invocations.
+Nothing was deployed or torn down; covered otherwise by fake tests (`tests/test_deploy_names.py`).

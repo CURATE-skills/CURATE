@@ -1,7 +1,7 @@
 ---
 name: curate-deploy
-description: CURATE deploy stage — put a Gate 4-approved bundle on FaaSr (GitHub Actions) under its own "-cs" name, asking the user before each of the four steps. Run it by name; /curate runs it after "Approve & deploy" at Gate 4.
-argument-hint: "--run <run_id> [--overwrite-own-deploy]"
+description: CURATE deploy stage — put a Gate 4-approved bundle on FaaSr (GitHub Actions) under its own per-run name, asking the user before each of the four steps; also lists this project's deployments (--list) and removes one run's deployment (--teardown). Run it by name; /curate runs it after "Approve & deploy" at Gate 4.
+argument-hint: "--run <run_id> [--overwrite-own-deploy] | --list | --teardown --run <run_id>"
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*)
 ---
@@ -13,6 +13,23 @@ Script shorthand: `spec.py …` means `uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scri
 (likewise `deploy.py`). Each prints JSON with `"ok"`; exit 1 = needs attention, 2 = bad input.
 
 Arguments: `$ARGUMENTS`
+
+## 0. --list or --teardown (not the deploy stage)
+
+- **`--list`**: `deploy.py list`; print its `markdown` exactly and stop. It only reads this
+  project's runs.
+- **`--teardown --run <run_id>`** (find the run as in 1; do not run `spec.py begin`):
+  1. `deploy.py teardown --run <run>` (deletes nothing). Print its `summary` exactly. If `ok` is
+     false without `needs_confirmation`, show the `error` / `problems` exactly and stop.
+  2. Ask once with AskUserQuestion — question `Delete these <repo_files> repo files and
+     <s3_objects> S3 objects?` (the `counts`), header `Teardown`, options **Yes, delete them** /
+     **Keep them**. Without AskUserQuestion, ask in chat and end your turn.
+  3. Only after **Yes, delete them** in the user's answer just now:
+     `deploy.py teardown --run <run> --confirmed --plan <plan_id>` with the `plan_id` from step 1.
+     Print its `message`, or its `error` exactly. Never pass `--confirmed` otherwise, and never
+     delete anything by other means.
+
+  Stop after either.
 
 ## 1. Find the run
 
