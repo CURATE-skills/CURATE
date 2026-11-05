@@ -22,8 +22,8 @@ bundle was validated and built from the current spec).
    accept-unconfirmed --run <run> --confirmed`. Stop → `spec.py set-stage --run <run> --stage
    stopped`. Saving is refused until it is accepted.
 3. **Gate 5 — ask** with AskUserQuestion whenever it is available (also if the user first asked
-   something else): **Save functions**, **Save workflow**, **Save both**, **Don't save**, with the
-   returned `compact` as each option's `preview`. Chat only without the tool. Never save without an
+   something else): the returned `question`, `header` and `options` (**Save functions**, **Save
+   workflow**, **Save both**, **Don't save**), no previews. Chat only without the tool. Never save without an
    explicit answer.
 4. **Save** what was chosen: `catalog.py save-functions --run <run> --only-verified` and/or
    `catalog.py save-workflow --run <run>`. Only verified functions

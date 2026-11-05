@@ -37,27 +37,41 @@ def test_gate1_lists_every_step_in_order_with_parallel_copies(make_run, capsys):
     assert "| 2 | `process` | 3 | One variable per copy. |" in md
 
 
-def test_gate2_shows_io_packages_reuse_and_data_flow(make_run, capsys):
+def test_gate2_shows_one_block_per_function(make_run, capsys):
     run = make_run(spec=weather())
     md = show(run, 2, capsys)["markdown"]
-    assert "| Function | Reuse decision | Parallel copies | Inputs | Outputs | Packages | Secrets |" in md
-    assert "| `download` | [new] | 1 |" in md and "| requests |" in md
-    assert "| `plot` | [catalog] ← [catalog] plot0 |" in md
+    blocks = md.split("```text\n")[1].split("\n```")[0]
+    assert blocks.split("\n\n")[0].splitlines() == [
+        "download  [new] · 1 copy", "  in:  —", "  out: —", "  packages: requests · secrets: —"]
+    assert "process  [new] · 3 copies" in blocks and "plot  [catalog] ← [catalog] plot0 · 1 copy" in blocks
+    assert "| Function |" not in md  # no wide table: it wraps in a terminal
 
 
-def test_gate3_shows_every_functions_full_code_and_marks_kept_ones(make_run, capsys):
+def test_gate3_is_short_per_function_and_full_code_is_on_request(make_run, capsys):
     run = make_run(spec=weather(), mga={"download": {"status": "passed", "attempts": 1},
                                         "process": {"status": "failed", "attempts": 2,
-                                                    "last_output_tail": "ValueError: rank out of range\n"},
+                                                    "last_output_tail": "=== rank 1/3 ===\nline a\nline b\nValueError: rank out of range\n"},
                                         "plot": {"status": "reused"}})
-    md = show(run, 3, capsys)["markdown"]
-    for name, body in (("download", "def download():\n    return 'csv'"), ("process", "def process():\n    pass"),
-                       ("plot", "def plot():\n    pass")):
-        assert f"```python\n{body}\n```" in md, name
-    assert "### `download` — stub test: passed" in md
-    assert "### `plot` — kept (not regenerated); stub test: passed (not regenerated)" in md
-    assert "### `process` — stub test: failed\nLast line of its stub test: ValueError: rank out of range" in md
-    assert md.index("### `download`") < md.index("### `process`") < md.index("### `plot`")  # workflow order
+    out = show(run, 3, capsys)
+    md = out["markdown"]
+    blocks = md.split("```text\n")[1].split("\n```")[0].split("\n\n")
+    run_rel = __import__("os").path.relpath(run, json.loads((run / "state.json").read_text())["project_dir"])
+    assert blocks[0].splitlines() == [
+        "download  [new] · 1 copy · stub test: passed", "  Download the station CSV.", "  in:  —", "  out: —",
+        f"  code: 2 lines · {run_rel}/functions/download/download.py", "  assumptions made while coding: none"]
+    assert blocks[1].splitlines()[0] == "process  [new] · 3 copies · stub test: failed (2 attempts)"
+    assert "  last test lines:\n    line a\n    line b\n    ValueError: rank out of range" in blocks[1]
+    assert "  kept (not regenerated)" in blocks[2] and "stub test: passed (not regenerated)" in blocks[2]
+    assert "def download():" not in md and "```python" not in md  # no code in the default display
+    assert "**Show the full code**" in md and out["options"] == ["Approve", "Show the full code", "Stop here"]
+    full = ok(S, ["show", "--run", str(run), "--gate", "3", "--full"], capsys)
+    for body in ("def download():\n    return 'csv'", "def process():\n    pass", "def plot():\n    pass"):
+        assert f"```python\n{body}\n```" in full["markdown"]
+    assert full["markdown"].endswith(out["marker"])
+    review = (run / "review" / "gate3.md").read_text()
+    assert review.startswith(md) and "def download():\n    return 'csv'" in review  # full code kept on file
+    code, err = __import__("conftest").call(S, ["show", "--run", str(run), "--gate", "2", "--full"], capsys)
+    assert code == 2 and "only for Gate 3" in err["error"]
 
 
 def test_gate4_shows_the_workflow_and_every_file_in_the_bundle(make_run, capsys, tmp_path):
@@ -69,8 +83,9 @@ def test_gate4_shows_the_workflow_and_every_file_in_the_bundle(make_run, capsys,
     run = make_run(spec=weather(), bundle_dir=str(bundle), validation={"ok": True, "level": "faasr_py"})
     md = show(run, 4, capsys)["markdown"]
     assert "**weather** — compare winter weather" in md
-    assert "2. `process` ×3 (parallel copies) — One variable per copy." in md
-    files = md.split("Files in the bundle:")[1].strip().splitlines()
+    blocks = md.split("```text\n")[1].split("\n```")[0].split("\n\n")
+    assert blocks[1].splitlines() == ["2. process  [new] · 3 copies", "   One variable per copy.", "   in:  —", "   out: —"]
+    files = md.split("Files in the bundle:")[1].split("\n\n")[0].strip().splitlines()
     assert files == ["- `README.md` (1 bytes)", "- `functions/download.py` (1 bytes)", "- `workflow.json` (2 bytes)"]
 
 
@@ -94,8 +109,21 @@ def test_show_saves_the_same_content_to_the_runs_review_folder(make_run, capsys,
                    stage="finalize", validation={"ok": True, "level": "faasr_py"}, bundle_dir="/b")
     out = show(run, gate, capsys)
     review = run / "review" / f"gate{gate}.md"
-    assert review.read_text() == out["markdown"] + "\n" and out["review_file"] == str(review)
+    assert review.read_text().startswith(out["markdown"]) and out["review_file"] == str(review)
+    if gate != 3:
+        assert review.read_text() == out["markdown"] + "\n"
     assert out["review_line"] == f"Full review: {review}"
+
+
+def test_gate4_and_the_bundle_readme_give_current_deploy_advice(make_run, capsys, tmp_path):
+    import emit
+    md = show(make_run(spec=weather(), validation={"ok": True, "level": "faasr_py"}), 4, capsys)["markdown"]
+    assert "Placeholders are filled from your settings at deploy; run `/curate-skills:curate-doctor --deploy --online` " \
+           "if you haven't." in md and "before deploying" not in md
+    readme = emit._bundle_readme(weather(), {"WorkflowName": "weather"}, [], {"level": "faasr_py", "ok": True},
+                                 ["FAASR_S3_BUCKET"])
+    assert "fills the placeholders below from your settings" in readme and "re-run bundle" not in readme
+    assert "- `<FAASR_S3_BUCKET>` — from `FAASR_S3_BUCKET`" in readme
 
 
 def test_every_gate_prints_the_content_then_asks():
@@ -146,12 +174,12 @@ SOURCE = "data source -> https://www.ncei.noaa.gov/.../USC00351862.csv"
 def test_gate2_prints_the_assumptions_by_impact(make_run, capsys):
     spec = weather().model_copy(update={"assumptions": [WINDOW, UNITS], "presentation_assumptions": [LAYOUT, SOURCE]})
     md = show(make_run(spec=spec), 2, capsys)["markdown"]
-    section = md.split("### Assumptions")[1]
+    section = md.split("### Assumptions")[1].split("\n\n— end of")[0]
     assert section.strip().splitlines()[1:] == ["", "**Affects the results**", f"- {WINDOW}", f"- {UNITS}", "",
                                                 "**Presentation and format**", f"- {LAYOUT}", f"- {SOURCE}"]
     assert "ask for it as a change" in section and "?" not in section  # informational: no question
     md = show(make_run(spec=weather()), 2, capsys)["markdown"]
-    assert md.split("### Assumptions")[1].strip().endswith("- none")
+    assert md.split("### Assumptions")[1].split("\n\n— end of")[0].strip().endswith("- none")
 
 
 def test_a_plain_list_from_an_older_run_is_sorted_by_topic():
@@ -175,10 +203,10 @@ def test_mga_assumptions_are_recorded_and_listed_at_gate3(make_run, capsys):
     assert mga["download"]["assumptions"] == []
     assert mga["process"]["assumptions"] == ["leap days -> 29 Feb dropped from the baseline", "missing values -> skipped"]
     md = show(run, 3, capsys)["markdown"]
-    section = md.split("### Assumptions made while coding")[1].split("### `")[0].strip().splitlines()
-    assert section == ["- `process`: leap days -> 29 Feb dropped from the baseline", "- `process`: missing values -> skipped"]
-    nothing = make_run(spec=weather(), mga={"download": {"status": "passed"}})
-    assert "### Assumptions made while coding\n\n- none" in show(nothing, 3, capsys)["markdown"]
+    process = md.split("\nprocess  ")[1].split("\n\n")[0]
+    assert process.endswith("  assumptions made while coding: \n    - leap days -> 29 Feb dropped from the baseline\n"
+                            "    - missing values -> skipped")
+    assert md.split("\ndownload  ")[1].split("\n\n")[0].endswith("  assumptions made while coding: none")
 
 
 def test_the_summary_repeats_only_assumptions_already_shown(make_run, capsys):

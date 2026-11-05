@@ -27,13 +27,15 @@ asked to see something, and after the user answered in chat:
    re-format, re-order, summarize or rebuild it (e.g. as one field per line), and add nothing
    inside it. When the user asks to see a gate's table again, run `spec.py show` again and print
    its `markdown` verbatim — not your own rendering of it.
+   The content ends with its marker line (`— end of Gate N · run <id> —`); print that too.
 2. **Ask with AskUserQuestion whenever it is available** — never switch to plain chat because the
-   previous answer came in chat or through "Other". Use the returned `question` and `header`;
-   options **Approve** and **Stop here** (Gate 4: **Approve & deploy**, **Approve, no deploy**,
-   **Stop here**), each with the returned `compact` as its `preview`, so the table is in the
-   question itself. Typing in "Other" requests changes.
+   previous answer came in chat or through "Other". Keep the menu short: the returned `question`
+   and `header`, and the returned `options` as the options (labels only). **Never give an option a
+   `preview`** — the full content is already printed above. Typing in "Other" requests changes.
 3. If the answer is not a decision (e.g. "show me the table", "show me the code"), show what was
-   asked and go back to step 2 — with AskUserQuestion again.
+   asked and go back to step 2 — with AskUserQuestion again. **Show the full code** (Gate 3):
+   `spec.py show --run <run> --gate 3 --full`, print its `markdown` verbatim, then ask again. It is
+   not a change request and costs no revision round.
 
 **Gate decisions are always the user's.** Never approve, stop or submit a change request on the
 user's behalf — not even one the user described before the gate, or one you proposed the wording
@@ -41,9 +43,9 @@ for. At a gate, show the display and wait; record only what the user types or ch
 gate (`directive --text` is their answer verbatim). Don't say you will ask for a change at a
 gate ("at Gate 3 I'll ask for …"); say what the user can type there.
 
-Only when AskUserQuestion is not available (e.g. a headless run): end your message with the
-`compact` table and the question, in chat — `approve` / `yes` / `y` / `lgtm` approve; `stop`
-stops; anything else is a change request. Never approve on the user's behalf.
+Only when AskUserQuestion is not available (e.g. a headless run): after the printed content, end
+your message with the question and the options, in chat — `approve` / `yes` / `y` / `lgtm`
+approve; `stop` stops; anything else is a change request. Never approve on the user's behalf.
 
 ## Decisions
 

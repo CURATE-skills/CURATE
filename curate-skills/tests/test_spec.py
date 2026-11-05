@@ -369,14 +369,17 @@ def test_gate4_display_flags_missing_code_and_failures(make_run, capsys):
     assert "functions without code (not in the bundle): b" in md and "stub test failed: b" in md
 
 
-def test_gate4_lists_every_placeholder(make_run, capsys, tmp_path):
+def test_gate4_says_deploy_fills_the_placeholders(make_run, capsys, tmp_path):
     bundle = tmp_path / "bundle"
     bundle.mkdir()
     (bundle / "README.md").write_text("- `<FAASR_GH_USERNAME>`\n- `<FAASR_S3_BUCKET>`\n- `<FAASR_S3_REGION>`\n")
     spec = WorkflowSpec(name="w", nodes=[FunctionSpec(name="a", code="def a(): pass")])
     run = make_run(spec=spec, bundle_dir=str(bundle), validation={"ok": True, "level": "faasr_py", "error": None})
     md = ok(S, ["show", "--run", str(run), "--gate", "4"], capsys)["markdown"]
-    assert "<FAASR_GH_USERNAME>, <FAASR_S3_BUCKET>, <FAASR_S3_REGION>" in md
+    assert ("- deploying: Placeholders are filled from your settings at deploy; run "
+            "`/curate-skills:curate-doctor --deploy --online` if you haven't.") in md
+    for outdated in ("placeholders to fill", "Secrets to set before deploying", "<FAASR_GH_USERNAME>"):
+        assert outdated not in md
 
 
 def test_summary_markdown(make_run, capsys):
@@ -399,4 +402,4 @@ def test_gate3_attention_shows_last_line(make_run, capsys):
     tail = "=== rank 1/1 ===\nTraceback (most recent call last):\n  File x\nValueError: bad input\n"
     run = make_run(spec=spec, mga={"a": {"status": "failed", "attempts": 1, "last_output_tail": tail}})
     md = ok(S, ["show", "--run", str(run), "--gate", "3"], capsys)["markdown"]
-    assert "- `a`: failed — ValueError: bad input" in md
+    assert "  last test lines:\n    Traceback (most recent call last):\n      File x\n    ValueError: bad input" in md

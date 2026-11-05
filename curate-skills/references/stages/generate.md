@@ -13,10 +13,12 @@ the spec and the foreground setting. If the run is already at `gate3`, skip to s
    functions are only stub-tested; the rest get a `curate-mga` subagent each). Then
    `spec.py end --run <run> --stage generate`.
 4. **Gate 3**: `spec.py show --run <run> --gate 3`, print its `markdown` verbatim as a message — never re-formatted (the user does not see tool results) — then its `review_line` (`Full review: <path>`) on its own line. **Print the content first, then ask; never ask before printing it**
-   with AskUserQuestion — the returned `question` and `header`, options Approve / Stop here, each
-   with the returned `compact` as `preview` — every time, also after a change request or a
-   question from the user (`<plugin>/references/gates.md`, "Asking at a gate"). If the user wants to see code, Read
-   `<run>/functions/<N>/<N>.py` and show it.
+   with AskUserQuestion — the returned `question`, `header` and `options` (Approve / Show the full
+   code / Stop here), no previews — every time, also after a change request or a
+   question from the user (`<plugin>/references/gates.md`, "Asking at a gate").
+   - Show the full code → `spec.py show --run <run> --gate 3 --full`, print its `markdown`
+     verbatim, then ask again (not a change request; no revision round). For one function, Read
+     `<run>/functions/<N>/<N>.py` and show it.
    - Approve → `spec.py approve --run <run> --gate 3`.
    - Changes → classify with `<plugin>/references/prompts/classify.md`, then
      `spec.py directive --run <run> --gate 3 --text "<verbatim>" --structural true|false`

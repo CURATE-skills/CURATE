@@ -416,12 +416,17 @@ def _bundle_readme(spec: WorkflowSpec, wf: dict, ext: list[dict], validation: di
         rank = f" ×{n.rank}" if n.rank > 1 else ""
         deps = ", ".join(clean_dependencies(n.dependencies)) or "none"
         lines.append(f"- `{n.name}`{rank} ({n.source}) — deps: {deps}")
-    lines += ["", "## Secrets to set (names only)", ""]
+    lines += ["", "## Deploying", "",
+              "With curate-skills, `/curate-skills:curate-deploy` fills the placeholders below from your "
+              "settings (`~/.config/curate/.env`) in its own deploy copy; this bundle stays as approved. "
+              "Run `/curate-skills:curate-doctor --deploy --online` first: it checks the settings, the token "
+              "and the repo's Actions secrets."]
+    lines += ["", "## Actions secrets the repo needs (names only)", ""]
     lines += [f"- `{s}`" for s in secret_names(spec)]
     lines += ["", "## Files to upload before running", ""]
     lines += [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"]
-    lines += ["", "## Placeholders to fill in workflow.json", ""]
-    lines += [f"- `{_placeholder(v)}` — set `{v}` and re-run bundle" for v in placeholders] or ["- none"]
+    lines += ["", "## Placeholders (filled at deploy from your settings)", ""]
+    lines += [f"- `{_placeholder(v)}` — from `{v}`" for v in placeholders] or ["- none"]
     return "\n".join(lines) + "\n"
 
 

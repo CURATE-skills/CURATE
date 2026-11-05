@@ -33,8 +33,8 @@ Arguments: `$ARGUMENTS`
      A `needs_choice` gets the Keep / Rewrite / Ignore question below.
   3. **Ask before any stage work** — also when the user already said yes to the command:
      print the returned `summary` exactly as a message, then ask with AskUserQuestion — question
-     "Start this run?", header "Start", options **Yes** and **Stop**, each with the summary as
-     `preview`. Use AskUserQuestion whenever it is available; only without it (e.g. headless)
+     "Start this run?", header "Start", options **Yes** and **Stop** (no previews: the summary is
+     already printed). Use AskUserQuestion whenever it is available; only without it (e.g. headless)
      end with "Reply **yes** to start or **stop** to leave it." and end the turn. Wait.
      - **Yes** → `spec.py confirm-start --run <new run>` (for `--start-at deploy` this records
        the user's Yes as the deploy choice), then the loop.

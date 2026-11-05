@@ -187,7 +187,7 @@ def test_generate_inline_code_labels_match_what_happens(imp, capsys, mode, sourc
     # keep → no node is generated (no subagents); rewrite/ignore → every node gets a subagent
     assert all(n["generate"] is (mode != "keep") for n in built["nodes"])
     md = ok(S, ["show", "--run", str(run), "--gate", "3"], capsys)["markdown"]
-    assert f"| `map` | {tag} |" in md and "[import]" not in md
+    assert f"\nmap  {tag} · " in md and "[import]" not in md
     if mode == "rewrite":
         assert "seeded from import `map`" in (run / "functions" / "map" / "spec.md").read_text()
 

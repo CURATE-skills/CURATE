@@ -340,7 +340,9 @@ def test_gate3_after_a_kept_import_says_kept_and_passed(tmp_path, capsys, monkey
     ok(S, ["end", "--run", run, "--stage", "generate"], capsys)
     md = ok(S, ["show", "--run", run, "--gate", "3"], capsys)["markdown"]
     for n in built["order"]:
-        assert f"| `{n}` | kept: your code | passed (not regenerated) |" in md
+        block = md.split(f"\n{n}  ", 1)[1].split("\n\n", 1)[0]
+        assert block.startswith("kept: your code · ") and "stub test: passed (not regenerated)" in block
+        assert "\n  kept (not regenerated)" in block
 
 
 # ── from the user's weather run (results log #25) ──
@@ -355,20 +357,18 @@ WEATHER = {"name": "weather", "description": "compare winter weather",
 
 
 @pytest.mark.parametrize("gate", [1, 2, 3, 4])
-def test_show_returns_question_header_and_compact_table(make_run, capsys, gate):
+def test_show_returns_a_short_question_options_and_the_marker(make_run, capsys, gate):
     spec = coded_spec()
     run = make_run(skeleton_draft={"spec": spec}, spec=spec, mga={"map": {"status": "reused"}},
                    validation={"ok": True, "level": "faasr_py"}, bundle_dir="/b")
     out = ok(S, ["show", "--run", str(run), "--gate", str(gate)], capsys)
     assert out["header"] == f"Gate {gate}" and out["question"].endswith('(Type in "Other" to request changes.)')
-    assert out["markdown"].startswith(f"## Gate {gate}")
-    names = [n["name"] for n in spec["nodes"]]
-    if gate < 4:
-        assert all(n in out["compact"] for n in names)
-    else:
-        assert "validation: passed" in out["compact"]
-    if gate == 3:
-        assert "map | " in out["compact"] and "passed (not regenerated)" in out["compact"]
+    assert out["markdown"].startswith(f"## Gate {gate}") and "compact" not in out
+    run_id = json.loads((run / "state.json").read_text())["run_id"]
+    assert out["markdown"].endswith(f"— end of Gate {gate} · run {run_id} —") and out["marker"] in out["markdown"]
+    assert out["options"] == {1: ["Approve", "Stop here"], 2: ["Approve", "Stop here"],
+                              3: ["Approve", "Show the full code", "Stop here"],
+                              4: ["Approve & deploy", "Approve, no deploy", "Stop here"]}[gate]
 
 
 def test_gate1_shows_each_rank_once(make_run, capsys):
@@ -378,20 +378,20 @@ def test_gate1_shows_each_rank_once(make_run, capsys):
     rows = [l for l in out["markdown"].splitlines() if l.startswith("| ") and "`process_variable`" in l]
     assert len(rows) == 1 and rows[0].split("|")[3].strip() == "3"
     assert "Rank: 3" not in out["markdown"] and out["markdown"].count("process_variable ×3") == 2  # 2 DAG edges
-    compact = out["compact"]
-    assert compact.count("process_variable ×3 —") == 1
 
 
 def test_gate_procedures_always_print_then_ask_with_the_table():
     """Bug report: tables not printed before the question; question tool dropped for chat."""
     root = Path(__file__).resolve().parents[1] / "references"
-    gates = (root / "gates.md").read_text()
+    gates = " ".join((root / "gates.md").read_text().split())
     assert "Print its `markdown` exactly as a message" in gates
     assert "Ask with AskUserQuestion whenever it is available" in gates and "never switch to plain chat" in gates
     for stage in ("skeleton", "resolve", "generate", "emit"):
         text = (root / "stages" / f"{stage}.md").read_text()
         assert "print its `markdown` verbatim as a message — never re-formatted" in text, stage
-        assert "`compact` as `preview`" in text and "every time" in text, stage
+        assert "no previews" in text and "every time" in text and "`compact`" not in text, stage
+    assert "**Never give an option a `preview`**" in gates and "the returned `options`" in gates
+    assert "`preview`" not in (root.parent / "skills" / "curate" / "SKILL.md").read_text().split("Start this run?")[1][:200]
     assert "whenever it is available" in (root / "stages" / "finalize.md").read_text()
 
 

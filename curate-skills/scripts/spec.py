@@ -2169,16 +2169,16 @@ def show_gate(s: dict, gate: int) -> str:
     spec = spec_of(s.get("spec"))
     if spec is None:
         return f"## Gate {gate}\n\nNo spec yet."
+    order = [next(x for x in spec.nodes if x.name == nm) for nm in topo_order(spec)]
     if gate == 2:
         out += [f"## Gate 2 — Candidates and data flow  (iteration {s['iteration']}/{s['max_iterations']})",
-                "", f"**{spec.name}** — {spec.description}", "",
-                "| Function | Reuse decision | Parallel copies | Inputs | Outputs | Packages | Secrets |",
-                "|---|---|---|---|---|---|---|"]
-        for name in topo_order(spec):
-            n = next(x for x in spec.nodes if x.name == name)
-            out.append(f"| `{n.name}` | {_origin(n)} | {n.rank} | {_io_names(n.inputs)} | "
-                       f"{_io_names(n.outputs)} | {', '.join(n.dependencies) or '—'} | "
-                       f"{', '.join(n.secrets) or '—'} |")
+                "", f"**{spec.name}** — {spec.description}", "", "```text"]
+        for n in order:
+            out += [f"{n.name}  {_origin(n)} · {_copies(n)}",
+                    f"  in:  {_plain_names(n.inputs)}",
+                    f"  out: {_plain_names(n.outputs)}",
+                    f"  packages: {', '.join(n.dependencies) or '—'} · secrets: {', '.join(n.secrets) or '—'}", ""]
+        out[-1] = "```"
         out += ["", "```", *dag_lines(spec), "```"]
         if spec.data_flow:
             out += ["", "Data flow:"] + [f"- `{d.file}`: {d.from_node} → {d.to_node}" for d in spec.data_flow]
@@ -2195,41 +2195,38 @@ def show_gate(s: dict, gate: int) -> str:
         out += assumption_lines(spec) or ["- none"]
         return "\n".join(out)
     if gate == 3:
-        out += [f"## Gate 3 — Code  (iteration {s['iteration']}/{s['max_iterations']}, "
-                f"stub tests: {s['stubtest_mode']})", "",
-                "| Function | Source | Stub test | Attempts | Lines | File |", "|---|---|---|---|---|---|"]
         mga = s.get("mga") or {}
-        for name in topo_order(spec):
-            n = next(x for x in spec.nodes if x.name == name)
-            m = mga.get(name, {})
-            lines = len((n.code or "").splitlines())
-            path = f"functions/{name}/{name}.py"
-            out.append(f"| `{name}` | {_origin(n)} | {STATUS_LABELS.get(m.get('status'), m.get('status') or 'pending')} | "
-                       f"{m.get('attempts', 0)} | {lines} | `{path}` |")
-        warn = [k for k, v in mga.items() if v.get("status") in ("failed", "external_only")]
-        if warn:
-            out += ["", "Needs attention:"] + [f"- `{k}`: {mga[k]['status']} — {_last_line(mga[k].get('last_output_tail'))}"
-                                               for k in warn]
-        out += ["", "### Assumptions made while coding", ""]
-        coded = [(name, a) for name in topo_order(spec) for a in (mga.get(name) or {}).get("assumptions") or []]
-        out += [f"- `{name}`: {a}" for name, a in coded] or ["- none"]
-        for name in topo_order(spec):
-            n = next(x for x in spec.nodes if x.name == name)
-            m = mga.get(name, {})
-            kept = m.get("status") in ("reused", "reused_failed")
-            out += ["", f"### `{name}` — " + ("kept (not regenerated); " if kept else "")
-                    + f"stub test: {STATUS_LABELS.get(m.get('status'), m.get('status') or 'pending')}"]
+        out += [f"## Gate 3 — Code  (iteration {s['iteration']}/{s['max_iterations']}, "
+                f"stub tests: {s['stubtest_mode']})", "", "```text"]
+        for n in order:
+            m = mga.get(n.name, {})
+            status = STATUS_LABELS.get(m.get("status"), m.get("status") or "pending")
+            out += [f"{n.name}  {_origin(n)} · {_copies(n)} · stub test: {status}"
+                    + (f" ({m['attempts']} attempts)" if (m.get("attempts") or 0) > 1 else ""),
+                    *([f"  {_cut(_first_sentence(n.description), 110)}"] if n.description.strip() else []),
+                    f"  in:  {_plain_names(n.inputs)}",
+                    f"  out: {_plain_names(n.outputs)}",
+                    f"  code: {len((n.code or '').splitlines())} lines · {_code_path(s, n.name)}"]
+            if m.get("status") in ("reused", "reused_failed"):
+                out.append("  kept (not regenerated)")
             if m.get("status") in ("failed", "reused_failed", "external_only") and m.get("last_output_tail"):
-                out.append(f"Last line of its stub test: {_last_line(m.get('last_output_tail'))}")
-            out += ["", "```python", (n.code or "# (no code)").rstrip("\n"), "```"]
+                out += ["  last test lines:"] + [f"    {l}" for l in _last_lines(m["last_output_tail"], 3)]
+            coded = (m.get("assumptions") or [])
+            out += ["  assumptions made while coding: " + ("none" if not coded else "")] + [f"    - {a}" for a in coded]
+            out.append("")
+        out[-1] = "```"
+        out += ["", "Full code: in the review file below and each function's .py file; or choose "
+                "**Show the full code**."]
         return "\n".join(out)
     if gate == 4:
         v = s.get("validation") or {}
-        out += ["## Gate 4 — Bundle", "", f"**{spec.name}** — {spec.description}", ""]
-        for i, name in enumerate(topo_order(spec), 1):
-            n = next(x for x in spec.nodes if x.name == name)
-            out.append(f"{i}. `{n.name}`" + (f" ×{n.rank} (parallel copies)" if n.rank > 1 else "")
-                       + f" — {_cut(n.description, 120)}")
+        out += ["## Gate 4 — Bundle", "", f"**{spec.name}** — {spec.description}", "", "```text"]
+        for i, n in enumerate(order, 1):
+            out += [f"{i}. {n.name}  {_origin(n)} · {_copies(n)}",
+                    *([f"   {_cut(_first_sentence(n.description), 110)}"] if n.description.strip() else []),
+                    f"   in:  {_plain_names(n.inputs)}",
+                    f"   out: {_plain_names(n.outputs)}", ""]
+        out[-1] = "```"
         out += ["", "```", *dag_lines(spec), "```", "", f"- bundle: `{s.get('bundle_dir')}`",
                 f"- validation: {'passed' if v.get('ok') else 'FAILED'} (level `{v.get('level')}`)"]
         if v.get("error"):
@@ -2240,13 +2237,7 @@ def show_gate(s: dict, gate: int) -> str:
         failed = [k for k, m in (s.get("mga") or {}).items() if m.get("status") in ("failed", "reused_failed")]
         if failed:
             out.append(f"- functions whose stub test failed: {', '.join(failed)}")
-        bundle_readme = Path(s["bundle_dir"]) / "README.md" if s.get("bundle_dir") else None
-        if bundle_readme and bundle_readme.exists():
-            holders = sorted(set(re.findall(r"<FAASR_[A-Z0-9_]+>", bundle_readme.read_text())))
-            if holders:
-                out.append(f"- placeholders to fill before deploying: {', '.join(holders)}")
-        names = sorted({x for n in spec.nodes for x in n.secrets} | {"GH_PAT", "S3_AccessKey", "S3_SecretKey"})
-        out += ["", "Secrets to set before deploying (names only):"] + [f"- `{x}`" for x in names]
+        out.append(f"- deploying: {DEPLOY_ADVICE}")
         ext = external_inputs(spec)
         out += ["", "Files to upload before running:"] + (
             [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
@@ -2255,6 +2246,55 @@ def show_gate(s: dict, gate: int) -> str:
     if gate == 5:
         return "\n".join([summary_md(s), "", *save_preview(s)])
     raise InputError("--gate must be 1-5")
+
+
+DEPLOY_ADVICE = ("Placeholders are filled from your settings at deploy; run "
+                 "`/curate-skills:curate-doctor --deploy --online` if you haven't.")
+
+
+def _copies(n: FunctionSpec) -> str:
+    return "1 copy" if n.rank <= 1 else f"{n.rank} copies"
+
+
+def _plain_names(items) -> str:
+    return ", ".join(i.name for i in items) or "—"
+
+
+def _first_sentence(text: str) -> str:
+    t = " ".join((text or "").split())
+    m = re.match(r"(.+?[.!?])(\s|$)", t)
+    return m.group(1) if m else t
+
+
+def _last_lines(text: str, n: int) -> list[str]:
+    lines = [l.rstrip() for l in (text or "").splitlines() if l.strip() and not l.startswith("===")]
+    return lines[-n:]
+
+
+def _code_path(s: dict, name: str) -> str:
+    run = Path(s.get("run_dir") or "")
+    path = run / "functions" / name / f"{name}.py"
+    try:
+        return os.path.relpath(path, s.get("project_dir") or os.getcwd())
+    except ValueError:
+        return str(path)
+
+
+def full_code(s: dict) -> str:
+    """Gate 3's "Show the full code": every function's code, verbatim, in workflow order."""
+    spec = spec_of(s.get("spec"))
+    if spec is None:
+        return "## Gate 3 — Full code\n\nNo spec yet."
+    out = ["## Gate 3 — Full code"]
+    for nm in topo_order(spec):
+        n = next(x for x in spec.nodes if x.name == nm)
+        out += ["", f"### `{nm}` — {_code_path(s, nm)}", "", "```python", (n.code or "# (no code)").rstrip("\n"), "```"]
+    return "\n".join(out)
+
+
+def gate_marker(s: dict, gate: int) -> str:
+    """The last line of every gate display: lets a check confirm the content was printed."""
+    return f"— end of Gate {gate} · run {s.get('run_id')} —"
 
 
 BUNDLE_SKIP = re.compile(r"(^|/)(\.DS_Store|Thumbs\.db|desktop\.ini|\._[^/]*|__pycache__(/.*)?)$")
@@ -2355,50 +2395,6 @@ def _cut(text: str, n: int) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def gate_compact(s: dict, gate: int) -> str:
-    """A short plain-text version of the gate display, for the question's preview."""
-    if gate == 1:
-        spec = spec_of((s.get("skeleton_draft") or {}).get("spec"))
-        if spec is None:
-            return "No valid skeleton yet."
-        lines = [f"{spec.name}"]
-        for i, name in enumerate(topo_order(spec), 1):
-            n = next(x for x in spec.nodes if x.name == name)
-            lines.append(f"{i}. {n.name}" + (f" ×{n.rank}" if n.rank > 1 else "") + f" — {_cut(n.description, 70)}")
-        return "\n".join(lines + ["", *[l.strip() for l in dag_lines(spec)]])
-    spec = spec_of(s.get("spec"))
-    if spec is None:
-        return "No spec yet."
-    order = [next(x for x in spec.nodes if x.name == nm) for nm in topo_order(spec)]
-    if gate == 2:
-        lines = [f"{spec.name} (revision {s['iteration']}/{s['max_iterations']})"]
-        for n in order:
-            io = f"{', '.join(i.name for i in n.inputs) or '—'} → {', '.join(o.name for o in n.outputs) or '—'}"
-            lines.append(f"{n.name}" + (f" ×{n.rank}" if n.rank > 1 else "") + f" | {_origin(n)} | {io}")
-        errors = sum(p["severity"] == "error" for p in check_spec(spec))
-        return "\n".join(lines + ([f"! {errors} check error(s)"] if errors else []))
-    if gate == 3:
-        mga = s.get("mga") or {}
-        lines = [f"{spec.name} (revision {s['iteration']}/{s['max_iterations']})"]
-        for n in order:
-            m = mga.get(n.name, {})
-            status = STATUS_LABELS.get(m.get("status"), m.get("status") or "pending")
-            lines.append(f"{n.name} | {_origin(n)} | {status} | attempts {m.get('attempts', 0)}")
-        return "\n".join(lines)
-    if gate == 5:
-        mga = s.get("mga") or {}
-        return "\n".join([f"{spec.name}", f"run: {s['run_id']}"] + [
-            f"{n.name} | {STATUS_LABELS.get((mga.get(n.name) or {}).get('status'), (mga.get(n.name) or {}).get('status') or '—')}"
-            for n in order])
-    if gate == 4:
-        v = s.get("validation") or {}
-        missing = [n.name for n in spec.nodes if not n.code]
-        return "\n".join([f"{spec.name}", f"bundle: {s.get('bundle_dir')}",
-                          f"validation: {'passed' if v.get('ok') else 'FAILED'} ({v.get('level')})"]
-                         + ([f"no code: {', '.join(missing)}"] if missing else []))
-    raise InputError("--gate must be 1-4")
-
-
 GATE_QUESTION = {1: "Approve this skeleton (the steps and their order)?",
                  2: "Approve the reuse decisions, files and data flow?",
                  3: "Approve the generated code?",
@@ -2406,17 +2402,31 @@ GATE_QUESTION = {1: "Approve this skeleton (the steps and their order)?",
                  5: "Save to the catalog?"}
 
 
+GATE_OPTIONS = {1: ["Approve", "Stop here"], 2: ["Approve", "Stop here"],
+                3: ["Approve", "Show the full code", "Stop here"],
+                4: ["Approve & deploy", "Approve, no deploy", "Stop here"],
+                5: ["Save functions", "Save workflow", "Save both", "Don't save"]}
+
+
 def cmd_show(args) -> dict:
-    """The gate's full content (`markdown`: print it as a message BEFORE asking), also written to
-    <run>/review/gate<N>.md (`review_line`: print it after the content)."""
+    """The gate's full content (`markdown`: print it as a message BEFORE asking; it ends with the
+    gate's marker line), also written to <run>/review/gate<N>.md (`review_line`). The question is
+    short: `question`, `header`, `options` (no previews; "Other" requests changes). --full (Gate 3):
+    every function's code verbatim, for the "Show the full code" option."""
     s = load_state(args.run)
-    md = show_gate(s, args.gate)
+    marker = gate_marker(s, args.gate)
     review = Path(args.run) / "review" / f"gate{args.gate}.md"
-    review.parent.mkdir(parents=True, exist_ok=True)
-    review.write_text(md + "\n")
+    if getattr(args, "full", False):
+        if args.gate != 3:
+            raise InputError("--full is only for Gate 3")
+        md = full_code(s) + "\n\n" + marker
+    else:
+        md = show_gate(s, args.gate) + "\n\n" + marker
+        review.parent.mkdir(parents=True, exist_ok=True)
+        review.write_text(md + ("\n\n" + full_code(s) if args.gate == 3 else "") + "\n")
     q = GATE_QUESTION[args.gate] + ("" if args.gate == 5 else ' (Type in "Other" to request changes.)')
-    return {"ok": True, "markdown": md, "compact": gate_compact(s, args.gate), "question": q,
-            "header": f"Gate {args.gate}", "review_file": str(review), "review_line": f"Full review: {review}"}
+    return {"ok": True, "markdown": md, "marker": marker, "question": q, "header": f"Gate {args.gate}",
+            "options": GATE_OPTIONS[args.gate], "review_file": str(review), "review_line": f"Full review: {review}"}
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -2475,7 +2485,9 @@ def build_parser() -> argparse.ArgumentParser:
     with_run("set-cap").add_argument("--max", type=int, required=True)
     with_run("confirm-start")
     with_run("set-stage").add_argument("--stage", required=True, choices=STAGES)
-    with_run("show").add_argument("--gate", type=int, required=True, choices=[1, 2, 3, 4, 5])
+    sp = with_run("show")
+    sp.add_argument("--gate", type=int, required=True, choices=[1, 2, 3, 4, 5])
+    sp.add_argument("--full", action="store_true", help="Gate 3: every function's full code")
     with_run("summary")
     sp = sub.add_parser("start")
     sp.add_argument("--at", required=True, choices=STAGE_NAMES)

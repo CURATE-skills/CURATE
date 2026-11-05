@@ -1427,3 +1427,41 @@ live run from #46: 9 results lines, then layout, file formats/dpi and the source
 deployed, last invoked with the count, reused by, torn down; times as `YYYY-MM-DD HH:MM UTC`)
 instead of a wide table whose long run ids wrapped. The request for this ("part B, the --list
 block layout") did not reach this session; this is the reading used.
+
+## 48. Gate display fixes: no previews, blocks, short Gate 3, end marker; hook check not built (2026-11-05)
+
+Context: run 20261104-232410 (`~/curate-tests/weather-fresh2`, left untouched): Gates 1 and 4
+printed a one-line summary plus a truncated menu preview, Gate 2 printed fully, Gate 3 printed all
+code.
+
+**Done.** (1) Gate questions never use option previews; `spec.py show` returns `options` (Gate 3:
+Approve / Show the full code / Stop here) and no `compact`; "Start this run?" dropped its preview
+too. (2, partly) Every display ends with `— end of Gate N · run <id> —`. (3) Gates 2, 3 and 4 show
+one block per function in a ```text fence (`name  [source] · N copies`, `in:`, `out:`,
+packages/secrets) instead of wide tables that wrapped ("Parall / el"). (4) Gate 3 per function:
+first sentence of the purpose, inputs/outputs, line count and the .py path, stub-test result
+(attempts if more than one; last three test lines if it failed), assumptions made while coding,
+"kept (not regenerated)"; full code only in `review/gate3.md`, the .py files, and
+`spec.py show --gate 3 --full` for the "Show the full code" option (not a change request, no
+round). (5) Gate 4 says "Placeholders are filled from your settings at deploy; run
+/curate-skills:curate-doctor --deploy --online if you haven't." instead of "placeholders to fill /
+secrets to set before deploying"; the bundle README's "fill in workflow.json and re-run bundle" is
+replaced by a "Deploying" section saying the same.
+
+**Hook check (item 2) — not built: the hook can't see the message.** Test: a PreToolUse hook on
+Bash (headless, `claude -p`) logged the transcript at hook time while the model wrote
+`MARKER-GATE-7` and then called Bash in the same reply. The hook saw 23 entries and no assistant
+entry; the assistant text (entry 24) and the tool call (entry 25) were written only after the hook
+ran. So the text printed in the same message as AskUserQuestion is not visible to a PreToolUse hook.
+(Headless runs don't offer AskUserQuestion; the transcript mechanism is the same for every tool, but
+an interactive session was not tested.) Proposed fallback: check the assistant text since the
+user's last message, which includes earlier messages of the same turn — have the gate print its
+content in a message that also makes a cheap tool call, then ask in the next message; if the model
+prints and asks in one message, the hook denies once and the retry finds the marker in the now-
+written previous message. Waiting for the user's decision.
+
+**Live check** (headless, temp folder, empty catalog; session `08b61bef`, $0.32 + $0.78): Gate 1
+(transcript entry 84) and Gate 2 (entry 174) each printed the full content ending with the marker,
+then the review line, then the question, in that order in one message. Gate 2 showed the block
+layout and the grouped assumptions. One denied Bash call in turn 1: the model chained
+`R=… && uv run …`, which the allow rule doesn't match; it retried in the plain form.
