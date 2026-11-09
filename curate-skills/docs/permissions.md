@@ -13,8 +13,8 @@ every project:
 {
   "permissions": {
     "allow": [
-      "Bash(uv run --quiet /absolute/path/to/skill-curate/curate-skills/scripts/*)",
-      "Read(//absolute/path/to/skill-curate/curate-skills/**)",
+      "Bash(uv run --quiet /absolute/path/to/CURATE/curate-skills/scripts/*)",
+      "Read(//absolute/path/to/CURATE/curate-skills/**)",
       "Edit(./.curate/**)"
     ]
   }

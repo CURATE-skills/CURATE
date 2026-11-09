@@ -39,14 +39,14 @@ Internal, not run directly: the `curate-mga` subagent writes each function, with
 ## Install
 
 ```bash
-git clone https://github.com/laurakuo1006/skill-curate.git
+git clone https://github.com/CURATE-skills/CURATE.git
 ```
 
 The plugin is the `curate-skills/` folder inside the clone. Add an alias to `~/.zshrc` (or
 `~/.bashrc`), with the **absolute** path to that folder, then open a new terminal:
 
 ```bash
-alias curate='CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude --plugin-dir /absolute/path/to/skill-curate/curate-skills'
+alias curate='CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude --plugin-dir /absolute/path/to/CURATE/curate-skills'
 ```
 
 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` is required: generation spawns one subagent per function
@@ -174,11 +174,11 @@ Read-only check of the file, token, repo, branch and bucket. Values are never sh
 **Auto mode** blocks deploy after the first step. Use manual mode (Shift+Tab) for deploy (it asks
 before each command), or add these to the `allow` list in `~/.claude/settings.json` — deploy offers
 to, and `doctor --deploy` prints them with your path; in Claude Code,
-`! uv run --quiet /absolute/path/to/skill-curate/curate-skills/scripts/allow_deploy.py` adds them
+`! uv run --quiet /absolute/path/to/CURATE/curate-skills/scripts/allow_deploy.py` adds them
 (`--project` for this project only; it backs the file up and shows the change):
 ```
-Bash(uv run --quiet /absolute/path/to/skill-curate/curate-skills/scripts/deploy.py *)
-Bash(uv run --quiet /absolute/path/to/skill-curate/curate-skills/scripts/monitor.py *)
+Bash(uv run --quiet /absolute/path/to/CURATE/curate-skills/scripts/deploy.py *)
+Bash(uv run --quiet /absolute/path/to/CURATE/curate-skills/scripts/monitor.py *)
 ```
 
 ### 4. Deploy

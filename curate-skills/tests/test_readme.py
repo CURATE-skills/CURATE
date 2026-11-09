@@ -9,7 +9,7 @@ import pytest
 
 PLUGIN = Path(__file__).resolve().parents[1]
 README = (PLUGIN / "README.md").read_text()
-PLACEHOLDER = "/absolute/path/to/skill-curate/curate-skills"
+PLACEHOLDER = "/absolute/path/to/CURATE/curate-skills"
 
 
 def test_every_skill_named_exists_and_every_user_skill_is_named():
@@ -63,14 +63,14 @@ def test_permission_rules_live_in_docs_not_the_install_flow():
     assert "Permissions (recommended" not in README and '"permissions"' not in README
     assert "Edit(./.curate/**)" not in README and "docs/permissions.md" not in README
     doc = (PLUGIN / "docs" / "permissions.md").read_text()
-    for rule in ('"Bash(uv run --quiet /absolute/path/to/skill-curate/curate-skills/scripts/*)"',
-                 '"Read(//absolute/path/to/skill-curate/curate-skills/**)"', '"Edit(./.curate/**)"'):
+    for rule in ('"Bash(uv run --quiet /absolute/path/to/CURATE/curate-skills/scripts/*)"',
+                 '"Read(//absolute/path/to/CURATE/curate-skills/**)"', '"Edit(./.curate/**)"'):
         assert rule in doc
 
 
 def test_root_readme_points_to_the_plugin_readme():
     root = (PLUGIN.parent / "README.md").read_text()
-    assert "git clone https://github.com/laurakuo1006/skill-curate.git" in root
+    assert "git clone https://github.com/CURATE-skills/CURATE.git" in root
     assert "](curate-skills/README.md)" in root and len(root.splitlines()) < 15
 
 
@@ -123,9 +123,9 @@ def test_after_gate_4_matches_the_stage_flow():
 
 def test_auto_mode_advice_matches_doctor():
     import doctor
-    root = "/absolute/path/to/skill-curate/curate-skills"
+    root = "/absolute/path/to/CURATE/curate-skills"
     deploy = README.split("## Deploy", 1)[1].split("\n## ", 1)[0]
     for script in ("deploy.py", "monitor.py"):
         assert doctor.auto_mode_rule(root, script) in deploy
     assert "blocks deploy after the first step" in deploy and "manual mode" in deploy and "default mode" not in deploy
-    assert "`! uv run --quiet /absolute/path/to/skill-curate/curate-skills/scripts/allow_deploy.py`" in deploy
+    assert "`! uv run --quiet /absolute/path/to/CURATE/curate-skills/scripts/allow_deploy.py`" in deploy
