@@ -17,3 +17,4 @@ __pycache__/
 # Secrets
 .env
 *.env
+faasr_output/
