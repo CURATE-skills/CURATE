@@ -17,7 +17,7 @@ def weather():
         name="weather", description="compare winter weather", entry="download",
         nodes=[FunctionSpec(name="download", description="Download the station CSV.",
                             code="def download():\n    return 'csv'\n", dependencies=["requests"]),
-               FunctionSpec(name="process", rank=3, description="One variable per copy.",
+               FunctionSpec(name="process", rank=3, description="One variable per rank.",
                             code="def process():\n    pass\n"),
                FunctionSpec(name="plot", description="Plot three panels.", source="catalog",
                             origin_kind="catalog", origin_name="plot0", code="def plot():\n    pass\n")],
@@ -33,9 +33,9 @@ def test_gate1_shows_one_block_per_step_in_order(make_run, capsys):
     md = show(run, 1, capsys)["markdown"]
     blocks = md.split("```text\n")[1].split("\n```")[0].split("\n\n")
     assert [b.splitlines() for b in blocks] == [
-        ["1. download  · 1 copy", "   Download the station CSV."],
-        ["2. process  · 3 copies", "   One variable per copy."],
-        ["3. plot  · 1 copy", "   Plot three panels."]]
+        ["1. download", "   Download the station CSV."],
+        ["2. process  · 3 ranks", "   One variable per rank."],
+        ["3. plot", "   Plot three panels."]]
     assert "| # |" not in md  # no wide table
 
 
@@ -44,8 +44,8 @@ def test_gate2_shows_one_block_per_function(make_run, capsys):
     md = show(run, 2, capsys)["markdown"]
     blocks = md.split("```text\n")[1].split("\n```")[0]
     assert blocks.split("\n\n")[0].splitlines() == [
-        "download  [new] · 1 copy", "  in:  —", "  out: —", "  packages: requests · secrets: —"]
-    assert "process  [new] · 3 copies" in blocks and "plot  [catalog] ← [catalog] plot0 · 1 copy" in blocks
+        "download  [new]", "  in:  —", "  out: —", "  packages: requests · secrets: —"]
+    assert "process  [new] · 3 ranks" in blocks and "plot  [catalog] ← [catalog] plot0" in blocks
     assert "| Function |" not in md  # no wide table: it wraps in a terminal
 
 
@@ -59,9 +59,9 @@ def test_gate3_is_short_per_function_and_full_code_is_on_request(make_run, capsy
     blocks = md.split("```text\n")[1].split("\n```")[0].split("\n\n")
     run_rel = __import__("os").path.relpath(run, json.loads((run / "state.json").read_text())["project_dir"])
     assert blocks[0].splitlines() == [
-        "download  [new] · 1 copy · stub test: passed", "  Download the station CSV.", "  in:  —", "  out: —",
+        "download  [new] · stub test: passed", "  Download the station CSV.", "  in:  —", "  out: —",
         f"  code: 2 lines · {run_rel}/functions/download/download.py", "  assumptions made while coding: none"]
-    assert blocks[1].splitlines()[0] == "process  [new] · 3 copies · stub test: failed (2 attempts)"
+    assert blocks[1].splitlines()[0] == "process  [new] · 3 ranks · stub test: failed (2 attempts)"
     assert "  last test lines:\n    line a\n    line b\n    ValueError: rank out of range" in blocks[1]
     assert "  kept (not regenerated)" in blocks[2] and "stub test: passed (not regenerated)" in blocks[2]
     assert "def download():" not in md and "```python" not in md  # no code in the default display
@@ -86,7 +86,7 @@ def test_gate4_shows_the_workflow_and_every_file_in_the_bundle(make_run, capsys,
     md = show(run, 4, capsys)["markdown"]
     assert "**weather** — compare winter weather" in md
     blocks = md.split("```text\n")[1].split("\n```")[0].split("\n\n")
-    assert blocks[1].splitlines() == ["2. process  [new] · 3 copies", "   One variable per copy.", "   in:  —", "   out: —"]
+    assert blocks[1].splitlines() == ["2. process  [new] · 3 ranks", "   One variable per rank.", "   in:  —", "   out: —"]
     files = md.split("Files in the bundle:")[1].split("\n\n")[0].strip().splitlines()
     assert files == ["- `README.md` (1 bytes)", "- `functions/download.py` (1 bytes)", "- `workflow.json` (2 bytes)"]
 
@@ -242,7 +242,7 @@ def test_long_step_descriptions_wrap_inside_the_block(make_run, capsys):
     spec = json.loads(weather().model_dump_json())
     spec["nodes"][1]["description"] = "For each variable take the values from 2025-01-01 to 2025-03-01, " * 4
     md = show(make_run(skeleton_draft={"spec": spec}), 1, capsys)["markdown"]
-    block = md.split("2. process  · 3 copies\n")[1].split("\n\n")[0].splitlines()
+    block = md.split("2. process  · 3 ranks\n")[1].split("\n\n")[0].splitlines()
     assert len(block) > 1 and all(l.startswith("   ") and len(l) <= 99 for l in block)
 
 
@@ -265,7 +265,7 @@ def test_gate1_question_carries_the_whole_outline_verbatim(make_run, capsys):
     run = make_run(skeleton_draft={"spec": json.loads(weather().model_dump_json())})
     out = show(run, 1, capsys)
     q = out["question"]
-    assert q.startswith("weather\n\n1. download  · 1 copy\n   Download the station CSV.\n\n2. process  · 3 copies")
+    assert q.startswith("weather\n\n1. download\n   Download the station CSV.\n\n2. process  · 3 ranks")
     assert q.endswith('Approve this skeleton (the steps and their order)? (Type in "Other" to request changes.)')
     assert "download → process ×3" in q and "```" not in q  # graph included; plain text, no fences
     blocks = out["markdown"].split("```text\n")[1].split("\n```")[0]

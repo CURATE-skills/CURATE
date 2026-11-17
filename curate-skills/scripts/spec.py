@@ -1010,8 +1010,8 @@ def check_spec(spec: WorkflowSpec) -> list[dict]:
         if n.rank > 1:
             for o in n.outputs:
                 if "{rank}" not in o.name:
-                    add("warning", f"{n.name} runs ×{n.rank} but output '{o.name}' has no {{rank}}: "
-                                   f"instances would overwrite each other")
+                    add("warning", f"{n.name} is a ranked step ({n.rank} ranks) but output '{o.name}' has no "
+                                   f"{{rank}}: ranks would overwrite each other")
         if not n.outputs:
             add("warning", f"{n.name} declares no outputs")
     for e in spec.edges:
@@ -2150,12 +2150,12 @@ def resume_commands(s: dict) -> dict:
 
 
 def gate1_outline(spec: WorkflowSpec) -> tuple[list[str], list[str]]:
-    """Gate 1's step blocks (in order, copies, the description wrapped) and the graph lines: the
+    """Gate 1's step blocks (in order, ranks, the description wrapped) and the graph lines: the
     same text in the printed display and in the question."""
     blocks = []
     for i, name in enumerate(topo_order(spec), 1):
         n = next(x for x in spec.nodes if x.name == name)
-        blocks.append(f"{i}. {n.name}  · {_copies(n)}")
+        blocks.append(f"{i}. {n.name}{_rank_tag(n, gap='  ')}")
         blocks += textwrap.wrap(" ".join(n.description.split()) or "—", 96,
                                 initial_indent="   ", subsequent_indent="   ") + [""]
     return blocks[:-1], dag_lines(spec)
@@ -2195,7 +2195,7 @@ def show_gate(s: dict, gate: int) -> str:
         out += [f"## Gate 2 — Candidates and data flow  (iteration {s['iteration']}/{s['max_iterations']})",
                 "", f"**{spec.name}** — {spec.description}", "", "```text"]
         for n in order:
-            out += [f"{n.name}  {_origin(n)} · {_copies(n)}",
+            out += [f"{n.name}  {_origin(n)}{_rank_tag(n)}",
                     f"  in:  {_plain_names(n.inputs)}",
                     f"  out: {_plain_names(n.outputs)}",
                     f"  packages: {', '.join(n.dependencies) or '—'} · secrets: {', '.join(n.secrets) or '—'}", ""]
@@ -2222,7 +2222,7 @@ def show_gate(s: dict, gate: int) -> str:
         for n in order:
             m = mga.get(n.name, {})
             status = STATUS_LABELS.get(m.get("status"), m.get("status") or "pending")
-            out += [f"{n.name}  {_origin(n)} · {_copies(n)} · stub test: {status}"
+            out += [f"{n.name}  {_origin(n)}{_rank_tag(n)} · stub test: {status}"
                     + (f" ({m['attempts']} attempts)" if (m.get("attempts") or 0) > 1 else ""),
                     *([f"  {_cut(_first_sentence(n.description), 110)}"] if n.description.strip() else []),
                     f"  in:  {_plain_names(n.inputs)}",
@@ -2243,7 +2243,7 @@ def show_gate(s: dict, gate: int) -> str:
         v = s.get("validation") or {}
         out += ["## Gate 4 — Bundle", "", f"**{spec.name}** — {spec.description}", "", "```text"]
         for i, n in enumerate(order, 1):
-            out += [f"{i}. {n.name}  {_origin(n)} · {_copies(n)}",
+            out += [f"{i}. {n.name}  {_origin(n)}{_rank_tag(n)}",
                     *([f"   {_cut(_first_sentence(n.description), 110)}"] if n.description.strip() else []),
                     f"   in:  {_plain_names(n.inputs)}",
                     f"   out: {_plain_names(n.outputs)}", ""]
@@ -2288,8 +2288,9 @@ DEPLOY_ADVICE = ("Placeholders are filled from your settings at deploy; run "
                  "`/curate-skills:curate-doctor --deploy --online` if you haven't.")
 
 
-def _copies(n: FunctionSpec) -> str:
-    return "1 copy" if n.rank <= 1 else f"{n.rank} copies"
+def _rank_tag(n: FunctionSpec, gap: str = " ") -> str:
+    """A ranked step's rank count (FaaSr: its parallel invocations are ranks); nothing otherwise."""
+    return "" if n.rank <= 1 else f"{gap}· {n.rank} ranks"
 
 
 def _plain_names(items) -> str:

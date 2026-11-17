@@ -79,10 +79,10 @@ Read <run>/CONTEXT.md first, then <run>/functions/<N>/spec.md.
 ```
 
 **Rank rule** — pick by the node's rank:
-- rank N > 1: `- THIS FUNCTION IS RANKED: it runs as N parallel instances. Call r = faasr_rank()
-  (it reports THIS instance's own index) and use r['rank'] (1..N) to process ONLY this
-  instance's shard. The input/output names in the spec contain a {rank} placeholder — substitute
-  r['rank'] (e.g. input1.format(rank=r['rank'])). Implement ONE function, never copies.`
+- rank N > 1: `- THIS FUNCTION IS RANKED: it runs as N ranks. Call r = faasr_rank()
+  (it reports THIS rank's own index) and use r['rank'] (1..N) to process ONLY this
+  rank's shard. The input/output names in the spec contain a {rank} placeholder — substitute
+  r['rank'] (e.g. input1.format(rank=r['rank'])). Implement ONE function, never one function per rank.`
 - rank 1: `- faasr_rank() reports THIS function's OWN rank and is only valid when this function
   is itself ranked — which it is NOT. Do NOT call faasr_rank(). If you feed a ranked successor,
   follow the spec's fan-out section exactly (do not derive counts from faasr_rank()).`

@@ -59,12 +59,12 @@ needs a credential that `spec.md` does not list, introduce it with an UPPER_SNAK
 name (`^[A-Z][A-Z_0-9]*$`); it is detected automatically. A missing secret makes
 `faasr_secret` raise — let it.
 
-## Ranks (parallel instances)
+## Ranks (parallel invocations)
 
-- **Ranked function** (`rank: N > 1`): it runs as N parallel instances. Call
+- **Ranked function** (`rank: N > 1`): it is a ranked step and runs as N ranks. Call
   `r = faasr_rank()` and process only shard `r["rank"]` (1..N). File names contain a
   `{rank}` placeholder; substitute it, e.g. `input1.format(rank=r["rank"])`.
-  Implement ONE function, never N copies.
+  Implement ONE function, never one function per rank.
 - **Not ranked**: `faasr_rank()` reports this function's own rank (1). Do not call it.
 - **Fan-out** to a ranked successor ×N: write exactly N shards with the literal count N
   from `spec.md`, substituting `{rank}` with 1..N:
@@ -72,7 +72,7 @@ name (`^[A-Z][A-Z_0-9]*$`); it is detected automatically. A missing secret makes
   for i in range(1, N + 1):
       faasr_put_file(local_file=..., remote_folder=folder, remote_file=output1.replace("{rank}", str(i)))
   ```
-- **Fan-in** from a ranked predecessor ×N: you run once after all N instances finish.
+- **Fan-in** from a ranked predecessor ×N: you run once after all N ranks finish.
   Discover their outputs with `faasr_get_folder_list(prefix=...)` and read each one; do
   not assume a fixed count.
 - `{rank}` is the only placeholder allowed in file names.

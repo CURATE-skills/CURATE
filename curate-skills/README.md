@@ -13,7 +13,7 @@ before you see them. Verified functions go into a catalog that later runs reuse.
 | Skill | What it does |
 |---|---|
 | `/curate-skills:curate` | Runs the full pipeline, stopping at each gate |
-| `/curate-skills:curate-skeleton` | Turns the sketch into an outline: steps, order, parallel copies (Gate 1) |
+| `/curate-skills:curate-skeleton` | Turns the sketch into an outline: steps, order, ranked steps (Gate 1) |
 | `/curate-skills:curate-reuse` | Searches the catalog; decides reuse, adapt or new for each step |
 | `/curate-skills:curate-resolve` | Adds the details: input/output files, data flow, packages (Gate 2) |
 | `/curate-skills:curate-generate` | Writes and tests each function (Gate 3) |
@@ -216,7 +216,7 @@ invocation (nothing is redeployed; the new result replaces the old one):
 
 A flag beats the environment variable, which beats the default. `CURATE_DEPLOY_NAME_SUFFIX` and
 `CURATE_MONITOR_MINUTES` can also go in `~/.config/curate/.env` (the environment overrides it). A run pins the first three when
-it starts and the monitor time when monitoring starts. `strict` tests every rank of a parallel
+it starts and the monitor time when monitoring starts. `strict` tests every rank of a ranked
 step, installs the function's packages in an isolated environment and requires every declared
 output; `parity` is the original CURATE behaviour (rank 1 only, no installs).
 

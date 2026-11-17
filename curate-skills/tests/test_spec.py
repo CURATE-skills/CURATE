@@ -276,7 +276,7 @@ def test_check_finds_problems():
         data_flow=[{"from_node": "a", "to_node": "b", "file": "y.csv"},
                    {"from_node": "b", "to_node": "a", "file": "z.csv"}])
     msgs = " | ".join(p["message"] for p in S.check_spec(spec))
-    assert "{part}" in msgs and "instances would overwrite" in msgs
+    assert "{part}" in msgs and "ranks would overwrite" in msgs
     assert "not among a's outputs" in msgs and "can run before" in msgs and "no trigger" in msgs
 
 

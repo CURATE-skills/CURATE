@@ -376,7 +376,7 @@ def test_gate1_shows_each_rank_once(make_run, capsys):
     run = make_run(skeleton_draft={"spec": WEATHER})
     out = ok(S, ["show", "--run", str(run), "--gate", "1"], capsys)
     rows = [l for l in out["markdown"].splitlines() if l.startswith("2. process_variable")]
-    assert rows == ["2. process_variable  · 3 copies"]
+    assert rows == ["2. process_variable  · 3 ranks"]
     assert "Rank: 3" not in out["markdown"] and out["markdown"].count("process_variable ×3") == 2  # 2 DAG edges
 
 
