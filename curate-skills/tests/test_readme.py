@@ -109,9 +109,14 @@ def test_sketch_not_prompt():
 def test_after_gate_4_matches_the_stage_flow():
     """README's after-Gate-4 text matches the code: invoke → monitor, monitor success → finalize."""
     gates = " ".join(README[README.index("## Gates"):README.index("## Start at a stage")].split())
-    assert ("**approve & deploy** → deploy → after invoke, monitor watches the run → on success, finalize "
-            "(Gate 5).") in gates
+    assert ("**approve & deploy to FaaSr (cloud)** → deploy → after invoke, monitor watches the run → on "
+            "success, finalize (Gate 5).") in gates
+    assert ("**approve & run on Pegasus** → the Pegasus steps (prepare, [copy,] launch, each asked) → monitor "
+            "→ finalize") in gates
     assert "**approve, no deploy** → straight to finalize (Gate 5)." in gates
+    peg_src = (PLUGIN / "scripts" / "pegasus_deploy.py").read_text()
+    assert 'x.update(stage="monitor", begun=None) if name == "launch"' in peg_src  # after launch
+    assert 'x.update(stage="finalize", begun=None)' in (PLUGIN / "scripts" / "pegasus_monitor.py").read_text()
     assert "stops after its stage and prints the next command" in gates
     deploy_src = (PLUGIN / "scripts" / "deploy.py").read_text()
     monitor_src = (PLUGIN / "scripts" / "monitor.py").read_text()

@@ -15,6 +15,22 @@ Settings (`CURATE_PEGASUS_HOST`, `CURATE_PEGASUS_RUNTIME`, `CURATE_PEGASUS_IMAGE
 script from the environment or `~/.config/curate/.env`; never open that file. If a Pegasus tool is
 missing, point the user to `/curate-skills:curate-doctor --pegasus`.
 
+## Before the first step: permission for later turns
+
+Only if `pegasus_deploy.py status --run <run>` shows no step done yet: `allow_deploy.py --check
+--pegasus` (read-only; the same check as doctor --pegasus). If `ok` is false, ask once with
+AskUserQuestion — question `The Pegasus run needs permission to run its scripts in later turns. Add
+it to your settings?`, header `Permission`, options **Yes** / **No**:
+- **Yes**: show the returned `command` exactly (e.g. `! uv run --quiet <plugin>/scripts/allow_deploy.py
+  --pegasus`), for the **user** to type into Claude Code. **Never run it yourself**, by any means.
+  Say it adds two rules (pegasus_deploy.py, monitor.py) to `~/.claude/settings.json`, backs the
+  file up and shows the change, and the returned `takes_effect`. Wait for the user's next message.
+- **No**: go on, and tell the user in one line each: in auto mode, the run will stop after the
+  first step (auto mode blocks its later commands); manual mode (Shift+Tab) asks before each
+  command instead.
+
+Never edit a settings file yourself.
+
 ## 1. Preflight (read-only)
 
 `pegasus_deploy.py preflight --run <run>`, plus `--inputs <folder>` if the user named a folder for

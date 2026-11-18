@@ -18,11 +18,11 @@ before you see them. Verified functions go into a catalog that later runs reuse.
 | `/curate-skills:curate-resolve` | Adds the details: input/output files, data flow, packages (Gate 2) |
 | `/curate-skills:curate-generate` | Writes and tests each function (Gate 3) |
 | `/curate-skills:curate-emit` | Builds and validates the FaaSr workflow file and bundle (Gate 4) |
-| `/curate-skills:curate-deploy` | Deploys the bundle to your repo and bucket, asking before each step (optional) |
-| `/curate-skills:curate-monitor` | Watches a deployed run until it succeeds, fails or times out |
+| `/curate-skills:curate-deploy` | Deploys the bundle to your repo and bucket, or runs it on Pegasus/HTCondor, asking before each step (optional) |
+| `/curate-skills:curate-monitor` | Watches a deployed or Pegasus run until it succeeds, fails or times out |
 | `/curate-skills:wda-finalize` | Summarizes the run and saves verified functions to the catalog (Gate 5) |
 | `/curate-skills:curate-catalog` | Inspects and manages the catalog: where, list, search, import, export |
-| `/curate-skills:curate-doctor` | Checks your setup (and deploy settings with `--deploy`) |
+| `/curate-skills:curate-doctor` | Checks your setup (deploy settings with `--deploy`, the Pegasus target with `--pegasus`) |
 
 Internal, not run directly: the `curate-mga` subagent writes each function, with the
 `faasr-reference` skill preloaded.
@@ -104,7 +104,7 @@ words.
 | 1 | skeleton | the steps and their order |
 | 2 | reuse + resolve | per function: new, from the catalog, adapted, or cached; files and data flow; packages |
 | 3 | generate | the code and each function's stub-test result (ask to see any function) |
-| 4 | emit | the validated bundle; **approve & deploy**, **approve, no deploy**, or **stop** (see below) |
+| 4 | emit | the validated bundle; **approve & deploy to FaaSr (cloud)**, **approve & run on Pegasus (this machine or your host)**, **approve, no deploy**, or **stop** (see below) |
 | 5 | finalize | the summary; which verified functions to save to the catalog |
 
 A change at Gates 2–4 sends the run back to the right stage (structural changes to the skeleton,
@@ -112,9 +112,11 @@ functional ones to reuse; working functions come back as `[cached]`). Each chang
 revision round; after 5, only approve or stop.
 
 **After Gate 4**, `/curate-skills:curate` carries on in the same session:
-- **approve & deploy** → deploy → after invoke, monitor watches the run → on success, finalize (Gate 5).
-  It stops early only if you choose **Stop here** at a deploy step, or monitor ends with
-  `failure` or `timeout`; each time it prints the command to continue.
+- **approve & deploy to FaaSr (cloud)** → deploy → after invoke, monitor watches the run → on
+  success, finalize (Gate 5). It stops early only if you choose **Stop here** at a deploy step, or
+  monitor ends with `failure` or `timeout`; each time it prints the command to continue.
+- **approve & run on Pegasus** → the Pegasus steps (prepare, [copy,] launch, each asked) → monitor
+  → finalize, with the same stops ([Run on Pegasus](#run-on-pegasus-optional)).
 - **approve, no deploy** → straight to finalize (Gate 5).
 
 A stage skill started on its own (`/curate-skills:curate-deploy`, `curate-monitor`, …) stops
@@ -182,7 +184,7 @@ Bash(uv run --quiet /absolute/path/to/CURATE/curate-skills/scripts/monitor.py *)
 ```
 
 ### 4. Deploy
-At Gate 4, choose **approve & deploy** (or run `/curate-skills:curate-deploy --run <run_id>`).
+At Gate 4, choose **approve & deploy to FaaSr (cloud)** (or run `/curate-skills:curate-deploy --run <run_id>`).
 After a read-only preflight, deploy asks before each of four steps:
 1. **Publish:** function files to the repo
 2. **Upload:** `workflow.json` to the repo
@@ -203,6 +205,52 @@ invocation (nothing is redeployed; the new result replaces the old one):
 ```
 /curate-skills:curate-monitor --run <run_id> --minutes 20
 ```
+
+## Run on Pegasus (optional)
+
+Runs the approved workflow with [Pegasus](https://pegasus.isi.edu) on an HTCondor pool, on this
+machine or on a host you reach with ssh, instead of FaaSr on GitHub Actions. Nothing goes to
+GitHub or S3. The functions run unchanged, each in a container, through CURATE's workflow format
+(`curate_ir/`, described in the repository's `docs/IR_SPEC.md`).
+
+### 1. Prerequisites
+On the Pegasus machine: Pegasus 5.1+, HTCondor, Docker (or Apptainer), and a `python3` that can
+import `Pegasus.api` and `yaml` with `PYTHONPATH=$(pegasus-config --python)`. For another host:
+ssh login that doesn't ask for a password (`ssh <host> true` works).
+
+### 2. Settings
+In `~/.config/curate/.env` (see `.env.template`; none are secrets):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CURATE_PEGASUS_HOST` | this machine | an ssh host to run on instead |
+| `CURATE_PEGASUS_RUNTIME` | `docker` | `docker` or `singularity` (Apptainer) |
+| `CURATE_PEGASUS_IMAGE` | `docker:///python:3.12-slim` | the image every function runs in; it must already have their packages |
+
+```
+/curate-skills:curate-doctor --pegasus
+```
+checks them: Pegasus, its Python API, HTCondor and the container runtime, here or over ssh.
+
+**Auto mode** blocks the Pegasus run after its first step, as for deploy; the run offers to add
+two rules (`pegasus_deploy.py`, `monitor.py`), or in Claude Code:
+`! uv run --quiet /absolute/path/to/CURATE/curate-skills/scripts/allow_deploy.py --pegasus`.
+
+### 3. Run
+At Gate 4, choose **approve & run on Pegasus** (the label names the machine). Gate 4 shows what it
+would write, or why the workflow can't run on Pegasus (e.g. a conditional edge). After a read-only
+preflight, it asks before each step:
+1. **Prepare:** writes the workflow folder `.curate/runs/<run_id>/pegasus/ir/` (validated); input
+   files, if the workflow needs any, are copied from a folder you name
+2. **Copy** (ssh host only): to `<host>:~/curate-runs/<run_id>/`
+3. **Launch:** plans and submits to HTCondor, and returns at once; HTCondor runs the workflow
+
+The monitor then follows it (as for FaaSr; it reads the Pegasus run folder recorded at launch, so
+it also works after a logout or reboot). When the workflow has finished, the results are in
+`.curate/runs/<run_id>/pegasus/work/deliver/` (from an ssh host: `…/pegasus/result/deliver/`),
+then Gate 5. Nothing is ever overwritten; each run has its own name `<workflow>-<MMDD-HHMM>` and
+folders. A run started with `--start-at deploy --from-run <run_id>` asks whether to deploy to
+FaaSr or run on Pegasus.
 
 ## Settings
 
@@ -234,8 +282,12 @@ The plugin also declares Claude Code plugin settings (`catalog_dir`, `mga_retrie
   only secret **names** are written.
 - The catalog folder (`~/.curate/catalog` by default): `functions/<uuid>.json`,
   `workflows/<uuid>.json`, in the original prototype's format.
-- `~/.config/curate/.env`: your deploy settings (mode 600), read by deploy, monitor and doctor; an
-  environment variable of the same name overrides it.
+- `.curate/runs/<run_id>/pegasus/` (Pegasus runs): `ir/` (the workflow, functions, inputs),
+  `work/` (Pegasus's folder: its run folder under `submit/`, results in `deliver/`),
+  `deploy-log.jsonl`, `monitor-report.md`; with an ssh host also `result/`, and the run's copy on
+  the host in `~/curate-runs/<run_id>/`.
+- `~/.config/curate/.env`: your deploy and Pegasus settings (mode 600), read by deploy, monitor
+  and doctor; an environment variable of the same name overrides it.
 - `.curate/mga_guard.log`: writes the guard denied.
 
 ## License

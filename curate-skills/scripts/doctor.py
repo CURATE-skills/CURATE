@@ -311,6 +311,7 @@ def check_deploy_vars(r: Report, env, sources: dict | None = None) -> bool:
 
 
 AUTO_MODE_SCRIPTS = ("deploy.py", "monitor.py")
+PEGASUS_AUTO_MODE_SCRIPTS = ("pegasus_deploy.py", "monitor.py")  # allow_deploy.py --pegasus
 
 
 def _settings_files(claude_dir: Path, project: Path) -> list[tuple[str, Path]]:
@@ -343,9 +344,12 @@ def auto_mode_rule(root: str, script: str) -> str:
     return f"Bash(uv run --quiet {root}/scripts/{script} *)"
 
 
-def check_auto_mode_rules(r: Report, plugin_root: str | None, claude_dir: Path, project: Path):
+def check_auto_mode_rules(r: Report, plugin_root: str | None, claude_dir: Path, project: Path,
+                          scripts=AUTO_MODE_SCRIPTS, group="deploy"):
     """Auto mode's classifier blocks deploy's writing steps (the skill's own permissions cover only
-    the first turn); a narrow allow rule for deploy.py / monitor.py lets them through."""
+    the first turn); a narrow allow rule for deploy.py / monitor.py (Pegasus: pegasus_deploy.py /
+    monitor.py) lets them through."""
+    flag = " --pegasus" if group == "pegasus" else ""
     root = plugin_root if plugin_root and not plugin_root.startswith("${") else str(SCRIPT_DIR.parent)
     roots = list(dict.fromkeys([root.rstrip("/"), str(Path(root).resolve())]))
     found: dict = {}
@@ -354,18 +358,19 @@ def check_auto_mode_rules(r: Report, plugin_root: str | None, claude_dir: Path, 
             allow = (json.loads(f.read_text()).get("permissions") or {}).get("allow") or []
         except (OSError, ValueError, AttributeError):
             continue
-        for script in AUTO_MODE_SCRIPTS:
+        for script in scripts:
             if any(isinstance(x, str) and _bash_rule_covers(x, roots, script) for x in allow):
                 found.setdefault(script, scope)
-    missing = [s for s in AUTO_MODE_SCRIPTS if s not in found]
+    missing = [s for s in scripts if s not in found]
     if not missing:
-        r.add("deploy", "auto mode", "ok", "allow rules for " + ", ".join(f"{s} ({found[s]} settings)"
-                                                                            for s in AUTO_MODE_SCRIPTS))
+        r.add(group, "auto mode", "ok", "allow rules for " + ", ".join(f"{s} ({found[s]} settings)"
+                                                                         for s in scripts))
         return
     rules = ", ".join(auto_mode_rule(root, s) for s in missing)
-    r.add("deploy", "auto mode", "warn", "In auto mode, deploy will be blocked after the first step. Add: "
+    what = "the Pegasus run" if group == "pegasus" else "deploy"
+    r.add(group, "auto mode", "warn", f"In auto mode, {what} will be blocked after the first step. Add: "
           f"{rules} to ~/.claude/settings.json (permissions → allow) — in Claude Code: "
-          f"! uv run --quiet {root}/scripts/allow_deploy.py — or use manual mode for deploy.")
+          f"! uv run --quiet {root}/scripts/allow_deploy.py{flag} — or use manual mode for {what}.")
 
 
 def gh_cli_token() -> str | None:
@@ -655,6 +660,7 @@ def run_checks(args, env=None, claude_dir: Path | None = None, opener=None) -> R
         check_ir_tools(r)
         if check_pegasus_settings(r, s):
             check_pegasus_host(r, s)
+        check_auto_mode_rules(r, args.plugin_root, claude_dir, project, PEGASUS_AUTO_MODE_SCRIPTS, "pegasus")
     if deploy:
         check_deploy_vars(r, env, info["sources"])
         token = check_token(r, env, info["sources"])

@@ -208,3 +208,73 @@ def test_settings_file_loading_keeps_faasr_names_only_by_default(tmp_path):
     assert env == {"CURATE_PEGASUS_HOST": "maxwell", "CURATE_PEGASUS_IMAGE": "docker:///x:1"}
     import pegasus_ir
     assert pegasus_ir.settings({}) == {"host": None, "runtime": "docker", "image": "docker:///python:3.12-slim"}
+
+
+# ── doctor --pegasus: the auto-mode rules ──
+
+def test_doctor_pegasus_auto_mode_rules(tmp_path):
+    import doctor
+    root = str(Path(doctor.__file__).resolve().parent.parent)
+    claude, project = tmp_path / "claude", tmp_path / "proj"
+    claude.mkdir()
+    project.mkdir()
+    r = doctor.Report()
+    doctor.check_auto_mode_rules(r, root, claude, project, doctor.PEGASUS_AUTO_MODE_SCRIPTS, "pegasus")
+    (row,) = r.rows
+    assert row["group"] == "pegasus" and row["status"] == "warn"
+    assert "the Pegasus run will be blocked after the first step" in row["message"]
+    assert f"scripts/pegasus_deploy.py *)" in row["message"] and "allow_deploy.py --pegasus" in row["message"]
+    (claude / "settings.json").write_text(json.dumps({"permissions": {"allow": [
+        doctor.auto_mode_rule(root, s) for s in doctor.PEGASUS_AUTO_MODE_SCRIPTS]}}))
+    r = doctor.Report()
+    doctor.check_auto_mode_rules(r, root, claude, project, doctor.PEGASUS_AUTO_MODE_SCRIPTS, "pegasus")
+    assert r.rows[0]["status"] == "ok"
+    r = doctor.Report()  # FaaSr's check: same group, same text as before
+    doctor.check_auto_mode_rules(r, root, claude, project)
+    assert r.rows[0]["group"] == "deploy" and "In auto mode, deploy will be blocked" in r.rows[0]["message"]
+    assert r.rows[0]["message"].endswith("allow_deploy.py — or use manual mode for deploy.")
+
+
+# ── --start-at deploy --from-run: FaaSr or Pegasus ──
+
+def test_start_at_deploy_offers_both_targets_and_runs_on_pegasus(source_run, capsys, monkeypatch):
+    from test_start import start
+    monkeypatch.setenv("CURATE_PEGASUS_HOST", "maxwell")
+    code, out = start(capsys, source_run, "deploy", "--from-run", state(source_run)["run_id"])
+    assert code == 0, out
+    assert out["start_options"] == ["Yes, deploy to FaaSr (cloud)", "Yes, run on Pegasus (maxwell)", "Stop"]
+    new = Path(out["run"])
+    res = ok(S, ["confirm-start", "--run", str(new), "--deploy", "pegasus"], capsys)
+    assert res["recorded"] == "deploy_choice" and res["deploy_choice"] == "pegasus"
+    s = state(new)
+    assert s["deploy_choice"] == "pegasus" and s["pegasus"] is None and s["stage"] == "deploy"
+    assert s["history"][-1]["deploy"] == "pegasus" and "Yes (run on Pegasus)" in s["history"][-1]["text"]
+    assert ok(S, ["require", "--run", str(new), "--stage", "deploy"], capsys)["problems"] == []
+    assert ok(S, ["confirm-start", "--run", str(new)], capsys)["deploy_choice"] == "pegasus"  # once only
+    import pegasus_deploy as PD
+    monkeypatch.setattr(PD, "RUN", lambda cmd, timeout=600: (0, "5.1.3", "") if cmd[-1] == "pegasus-version"
+                        else (1, "", ""))
+    pf = PD.preflight(str(new))
+    assert pf["ok"] and pf["name"].startswith("mapreduce-word-count-") and pf["name"] != ""
+    assert pf["name"].endswith(f"{s['run_id'][4:8]}-{s['run_id'][9:13]}")  # the new run's own name
+
+
+def test_start_at_deploy_pegasus_refused_when_it_cannot_run(source_run, capsys):
+    from test_start import start
+    with_conditional_edge(source_run)
+    ok(S, ["approve", "--run", str(source_run), "--gate", "4"], capsys)
+    code, out = start(capsys, source_run, "deploy", "--from-run", state(source_run)["run_id"])
+    assert code == 0, out
+    new = Path(out["run"])
+    code, res = call(S, ["confirm-start", "--run", str(new), "--deploy", "pegasus"], capsys)
+    assert code == 2 and res["error"].startswith("this workflow cannot run on Pegasus: conditional edge")
+    assert state(new)["deploy_choice"] is None
+    assert ok(S, ["confirm-start", "--run", str(new)], capsys)["deploy_choice"] == "yes"  # FaaSr still possible
+
+
+def test_start_options_only_for_deploy_and_deploy_flag_only_there(source_run, capsys):
+    from test_start import start
+    code, out = start(capsys, source_run, "finalize", "--from-run", state(source_run)["run_id"])
+    assert code == 0 and "start_options" not in out
+    code, res = call(S, ["confirm-start", "--run", out["run"], "--deploy", "pegasus"], capsys)
+    assert code == 2 and "only applies to a run started with --start-at deploy" in res["error"]

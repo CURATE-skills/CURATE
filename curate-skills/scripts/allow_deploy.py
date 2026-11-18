@@ -2,7 +2,8 @@
 # requires-python = ">=3.9"
 # dependencies = []
 # ///
-"""allow_deploy: add the two allow rules deploy needs in later turns (deploy.py, monitor.py).
+"""allow_deploy: add the two allow rules deploy needs in later turns (deploy.py, monitor.py; with
+--pegasus, the Pegasus target's: pegasus_deploy.py, monitor.py).
 
 Run it yourself (in Claude Code: `! uv run --quiet <plugin>/scripts/allow_deploy.py`); Claude never
 runs it. It merges into `permissions.allow` of ~/.claude/settings.json (or, with --project, this
@@ -56,14 +57,14 @@ def project_settings(cwd: Path) -> Path:
     return root / ".claude" / "settings.local.json"
 
 
-def missing_rules(allow: list, root: str) -> list[str]:
+def missing_rules(allow: list, root: str, scripts=doctor.AUTO_MODE_SCRIPTS) -> list[str]:
     roots = list(dict.fromkeys([root, str(Path(root).resolve())]))
-    return [doctor.auto_mode_rule(root, s) for s in doctor.AUTO_MODE_SCRIPTS
+    return [doctor.auto_mode_rule(root, s) for s in scripts
             if not any(isinstance(x, str) and doctor._bash_rule_covers(x, roots, s) for x in allow)]
 
 
-def check(root: str, claude_dir: Path, project: Path) -> dict:
-    """Read-only: the same check as doctor --deploy (user, project and local settings)."""
+def check(root: str, claude_dir: Path, project: Path, scripts=doctor.AUTO_MODE_SCRIPTS) -> dict:
+    """Read-only: the same check as doctor --deploy / --pegasus (user, project and local settings)."""
     allow: list = []
     files = [f for _, f in doctor._settings_files(claude_dir, project)] + [project_settings(project)]
     for f in dict.fromkeys(files):
@@ -71,9 +72,10 @@ def check(root: str, claude_dir: Path, project: Path) -> dict:
             allow += (json.loads(f.read_text()).get("permissions") or {}).get("allow") or []
         except (OSError, ValueError, AttributeError):
             pass
-    missing = missing_rules(allow, root)
+    missing = missing_rules(allow, root, scripts)
+    flag = " --pegasus" if tuple(scripts) == doctor.PEGASUS_AUTO_MODE_SCRIPTS else ""
     return {"ok": not missing, "missing": missing,
-            "command": f"! uv run --quiet {root}/scripts/allow_deploy.py",
+            "command": f"! uv run --quiet {root}/scripts/allow_deploy.py{flag}",
             "takes_effect": TAKES_EFFECT}
 
 
@@ -87,7 +89,7 @@ def _indent_of(text: str):
     return 2
 
 
-def add_rules(path: Path, root: str, now: datetime | None = None) -> dict:
+def add_rules(path: Path, root: str, now: datetime | None = None, scripts=doctor.AUTO_MODE_SCRIPTS) -> dict:
     existed = path.is_file()
     before = path.read_text() if existed else ""
     try:
@@ -101,7 +103,7 @@ def add_rules(path: Path, root: str, now: datetime | None = None) -> dict:
     if not isinstance(perms, dict) or not isinstance(perms.setdefault("allow", []), list):
         return {"ok": False, "changed": False, "path": str(path),
                 "error": f"{path}: permissions.allow is not a list; nothing was changed"}
-    add = missing_rules(perms["allow"], root)
+    add = missing_rules(perms["allow"], root, scripts)
     if not add:
         return {"ok": True, "changed": False, "path": str(path), "added": [],
                 "message": f"Both rules are already in {path}; nothing changed."}
@@ -130,13 +132,16 @@ def main(argv=None) -> int:
                    help="write this project's .claude/settings.local.json instead of ~/.claude/settings.json")
     p.add_argument("--check", action="store_true", help="only report which rules are missing (JSON)")
     p.add_argument("--plugin-root", help="the plugin folder (default: this script's)")
+    p.add_argument("--pegasus", action="store_true",
+                   help="the rules the Pegasus target needs instead (pegasus_deploy.py, monitor.py)")
     args = p.parse_args(argv)
     root = plugin_root(args.plugin_root)
+    scripts = doctor.PEGASUS_AUTO_MODE_SCRIPTS if args.pegasus else doctor.AUTO_MODE_SCRIPTS
     cwd = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     if args.check:
-        print(json.dumps(check(root, user_settings().parent, cwd), indent=2))
+        print(json.dumps(check(root, user_settings().parent, cwd, scripts), indent=2))
         return 0
-    out = add_rules(project_settings(cwd) if args.project else user_settings(), root)
+    out = add_rules(project_settings(cwd) if args.project else user_settings(), root, scripts=scripts)
     if not out["ok"]:
         print(out["error"])
         return 1

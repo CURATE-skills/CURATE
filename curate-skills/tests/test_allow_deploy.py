@@ -132,3 +132,21 @@ def test_the_deploy_stage_asks_once_and_never_runs_it():
     assert text.index("permission for later turns") < text.index("## 0. Invoke only")
     for f in ("README.md", "scripts/doctor.py", "skills/curate-deploy/SKILL.md", "references/stages/deploy.md"):
         assert "default mode" not in (plugin / f).read_text(), f
+
+
+# ── --pegasus: the Pegasus target's rules (the FaaSr default above is unchanged) ──
+
+PEG_RULES = [f"Bash(uv run --quiet {ROOT}/scripts/pegasus_deploy.py *)",
+             f"Bash(uv run --quiet {ROOT}/scripts/monitor.py *)"]
+
+
+def test_pegasus_check_and_add(isolated, capsys):
+    code, out = run(capsys, "--check", "--pegasus")
+    res = json.loads(out)
+    assert res["missing"] == PEG_RULES and res["command"] == f"! uv run --quiet {ROOT}/scripts/allow_deploy.py --pegasus"
+    run(capsys)  # the FaaSr rules first: monitor.py is shared, so only pegasus_deploy.py is missing
+    assert json.loads(run(capsys, "--check", "--pegasus")[1])["missing"] == PEG_RULES[:1]
+    code, out = run(capsys, "--pegasus")
+    assert code == 0 and json.loads(isolated.read_text())["permissions"]["allow"] == RULES + PEG_RULES[:1]
+    assert json.loads(run(capsys, "--check", "--pegasus")[1])["ok"] is True
+    assert json.loads(run(capsys, "--check")[1])["ok"] is True  # FaaSr's check unaffected

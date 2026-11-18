@@ -38,8 +38,14 @@ Arguments: `$ARGUMENTS`
      "Start this run?", header "Start", options **Yes** and **Stop** (no previews: the summary is
      already printed). Use AskUserQuestion whenever it is available; only without it (e.g. headless)
      end with "Reply **yes** to start or **stop** to leave it." and end the turn. Wait.
-     - **Yes** → `spec.py confirm-start --run <new run>` (for `--start-at deploy` this records
-       the user's Yes as the deploy choice), then the loop.
+     For `--start-at deploy` the returned `start_options` replace Yes / Stop (use them exactly as
+     returned): the answer is also where the run goes.
+     - **Yes** → `spec.py confirm-start --run <new run>`, then the loop.
+     - **Yes, deploy to FaaSr (cloud)** → `spec.py confirm-start --run <new run>` (records it as the
+       deploy choice), then the loop.
+     - **Yes, run on Pegasus (…)** → `spec.py confirm-start --run <new run> --deploy pegasus`, then
+       the loop. If it is refused, show the `error` exactly (why the workflow cannot run on
+       Pegasus) and ask again.
      - **Stop** → `spec.py set-stage --run <new run> --stage stopped`. Nothing is deleted: the
        source was never touched, and the new run stays, marked stopped and unchanged otherwise.
        Tell the user the `resume_command` it returns.

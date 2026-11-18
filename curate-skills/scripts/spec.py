@@ -1227,17 +1227,26 @@ def cmd_confirm_start(args) -> dict:
     s = load_state(run)
     hist = s.get("history") or []
     first = hist[0] if hist else {}
+    target = getattr(args, "deploy", None) or "yes"
     if not (first.get("decision") == "copied" and first.get("gate") == 4 and first.get("deploy") == "pending"):
+        if target != "yes":
+            raise InputError("--deploy only applies to a run started with --start-at deploy")
         return {"ok": True, "recorded": None, "stage": s["stage"]}
-    if s.get("deploy_choice") == "yes":
-        return {"ok": True, "recorded": None, "stage": s["stage"], "deploy_choice": "yes"}
-    s["deploy_choice"] = "yes"
+    if s.get("deploy_choice") in ("yes", "pegasus"):
+        return {"ok": True, "recorded": None, "stage": s["stage"], "deploy_choice": s["deploy_choice"]}
+    if target == "pegasus":
+        p = pegasus_plan(s)
+        if not p["ok"]:
+            raise InputError("this workflow cannot run on Pegasus: " + " | ".join(p["problems"]))
+        s["pegasus"] = None
+    s["deploy_choice"] = target
+    where = " (run on Pegasus)" if target == "pegasus" else ""
     _record(s, 4, "deploy-confirmed",
-            'the user answered Yes to "Start this run?" for --start-at deploy; this is the deploy choice '
+            f'the user answered Yes{where} to "Start this run?" for --start-at deploy; this is the deploy choice '
             f"(the source's Gate 4 recorded: {first.get('source_deploy_choice') or 'no deploy choice, approved before deploying existed'})")
-    s["history"][-1]["deploy"] = "yes"
+    s["history"][-1]["deploy"] = target
     save_state(run, s)
-    return {"ok": True, "recorded": "deploy_choice", "deploy_choice": "yes", "stage": s["stage"],
+    return {"ok": True, "recorded": "deploy_choice", "deploy_choice": target, "stage": s["stage"],
             "next_skill": next_skill(s)}
 
 
@@ -1790,9 +1799,17 @@ def cmd_start(args) -> dict:
         if at == "skeleton":
             raise InputError("starting at skeleton needs a sketch (--sketch or --sketch-file)")
         out = _start_from_run(args, at)
+    extra = {"start_options": start_deploy_options()} if at == "deploy" else {}
     if args.dry_run:
-        return {"ok": True, "dry_run": True, "start_at": at, **out, "summary": start_summary(at, out)}
-    return {"ok": True, "start_at": at, **out, "summary": start_summary(at, out)}
+        return {"ok": True, "dry_run": True, "start_at": at, **out, "summary": start_summary(at, out), **extra}
+    return {"ok": True, "start_at": at, **out, "summary": start_summary(at, out), **extra}
+
+
+def start_deploy_options() -> list[str]:
+    """"Start this run?" for --start-at deploy: the answer is also where it runs (confirm-start
+    --deploy yes|pegasus). The Pegasus label names the target, as at Gate 4."""
+    peg = gate4_options()[1].replace("Approve & run on Pegasus", "Yes, run on Pegasus")
+    return ["Yes, deploy to FaaSr (cloud)", peg, "Stop"]
 
 
 def start_summary(at: str, p: dict) -> str:
@@ -1945,7 +1962,7 @@ def require_problems(s: dict, name: str, env=None) -> list[str]:
         approvals = [i for i, h in enumerate(hist) if h.get("gate") == 4 and h.get("decision") in ("approve", "copied")]
         if not approvals or _superseded_by(hist, approvals[-1], 4):
             out.append(f"Gate 4 has not been approved for the current bundle — run {_run_cmd(s, 'emit')}")
-        elif s.get("deploy_choice") != "yes" and hist[approvals[-1]].get("deploy") == "pending":
+        elif s.get("deploy_choice") not in ("yes", "pegasus") and hist[approvals[-1]].get("deploy") == "pending":
             out.append('the user has not confirmed starting this run yet ("Start this run?" → Yes, then '
                        f"spec.py confirm-start --run {s['run_id']})")
         elif s.get("deploy_choice") not in ("yes", "pegasus"):
@@ -2578,7 +2595,9 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--text", required=True)
     q.add_argument("--structural")
     with_run("set-cap").add_argument("--max", type=int, required=True)
-    with_run("confirm-start")
+    with_run("confirm-start").add_argument(
+        "--deploy", choices=["yes", "pegasus"],
+        help="--start-at deploy only: Yes, deploy to FaaSr (yes; default) or Yes, run on Pegasus (pegasus)")
     with_run("set-stage").add_argument("--stage", required=True, choices=STAGES)
     sp = with_run("show")
     sp.add_argument("--gate", type=int, required=True, choices=[1, 2, 3, 4, 5])
