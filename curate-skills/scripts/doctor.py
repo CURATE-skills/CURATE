@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """curate-doctor: is this machine ready to run curate-skills? Read-only.
 
-  python3 doctor.py [--deploy [--online]] [--plugin-root DIR] [--catalog-dir DIR]
+  python3 doctor.py [--deploy [--online]] [--pegasus] [--plugin-root DIR] [--catalog-dir DIR]
                     [--config-catalog-dir VALUE] [--json]
 
 Core checks (always): uv; the python3 the write-guard hook runs (>= 3.9); uv can provide
@@ -10,6 +10,10 @@ the plugin is not loaded twice; the catalog folder is writable; `.curate/` is gi
 --deploy adds: the deploy variables are set (names only) and a GitHub token is available
 (GH_PAT, else `gh auth token`). --online adds: the action repo and branch are readable with that
 token, and the S3 bucket answers head_bucket (read-only; run through uv with deploy.py's client).
+--pegasus adds the Pegasus target: CURATE_PEGASUS_* settings are valid, the plugin's curate_ir/
+tools are present, and pegasus-version, python3 with Pegasus.api + yaml, HTCondor (condor_q) and
+the container runtime work, here or, when CURATE_PEGASUS_HOST names one, on that ssh host
+(BatchMode, so it never prompts; it only runs those read-only commands there).
 
 Prints one line per check: ok / warn / FAIL. Exit 1 if any check that ran FAILed (core, or
 deploy when asked for), else 0. Never prints a credential value: every line goes through
@@ -522,6 +526,116 @@ def s3_probe() -> int:
     return 0
 
 
+# ── pegasus ──────────────────────────────────────────────────────────────────
+
+PLUGIN_DIR = SCRIPT_DIR.parent
+IR_TOOLS = ("curate_ir/validate.py", "curate_ir/expand.py", "curate_ir/backends/pegasus_backend.py",
+            "curate_ir/runner/curate_run.py")
+PEGASUS_RUNTIMES = ("docker", "singularity")
+DEFAULT_PEGASUS_IMAGE = "docker:///python:3.12-slim"
+IMAGE_SCHEMES = ("docker://", "file://", "library://", "shub://", "oras://")
+# An ssh destination as ~/.ssh/config names it, or user@host: never an option (leading '-').
+SSH_HOST_RX = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@-]*$")
+SSH_OPTS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=5")
+PEGASUS_PY = 'PYTHONPATH="$(pegasus-config --python)" python3 -c "import Pegasus.api, yaml"'
+
+
+def pegasus_settings(env) -> dict:
+    """The Pegasus target's settings with their defaults; host is None for this machine."""
+    host = str(env.get("CURATE_PEGASUS_HOST", "")).strip()
+    return {"host": None if host in ("", "local", "localhost") else host,
+            "runtime": str(env.get("CURATE_PEGASUS_RUNTIME", "")).strip() or "docker",
+            "image": str(env.get("CURATE_PEGASUS_IMAGE", "")).strip() or DEFAULT_PEGASUS_IMAGE}
+
+
+def _on(host: str | None, command: str, timeout=60):
+    """Run a shell command here, or on `host` through ssh (no password prompt, 5 s to connect)."""
+    if host is None:
+        return _run(["sh", "-c", command], timeout=timeout)
+    return _run(["ssh", *SSH_OPTS, host, command], timeout=timeout)
+
+
+def check_pegasus_settings(r: Report, s: dict) -> bool:
+    where = f"ssh host {s['host']}" if s["host"] else "this machine (CURATE_PEGASUS_HOST unset or local)"
+    bad = []
+    if s["host"] and not SSH_HOST_RX.match(s["host"]):
+        bad.append(f"CURATE_PEGASUS_HOST {s['host']!r} is not an ssh host name (letters, digits, . _ - @; "
+                   "no spaces, not starting with -)")
+    if s["runtime"] not in PEGASUS_RUNTIMES:
+        bad.append(f"CURATE_PEGASUS_RUNTIME is {s['runtime']!r}; use docker or singularity")
+    if not s["image"].startswith(IMAGE_SCHEMES):
+        bad.append(f"CURATE_PEGASUS_IMAGE {s['image']!r} needs a scheme, e.g. docker:///python:3.12-slim "
+                   "or file:///path/image.tar")
+    if bad:
+        r.add("pegasus", "settings", "fail", "; ".join(bad) + ". Fix it in ~/.config/curate/.env.")
+        return False
+    r.add("pegasus", "settings", "ok", f"runs on {where}; runtime {s['runtime']}; default image {s['image']}")
+    return True
+
+
+def check_ir_tools(r: Report, plugin_dir: Path = PLUGIN_DIR):
+    missing = [t for t in IR_TOOLS if not (plugin_dir / t).is_file()]
+    if missing:
+        r.add("pegasus", "IR tools", "fail", f"missing in the plugin ({plugin_dir}): {', '.join(missing)}. "
+              "Reinstall or update curate-skills.")
+    else:
+        r.add("pegasus", "IR tools", "ok", f"{plugin_dir / 'curate_ir'}")
+
+
+def check_pegasus_host(r: Report, s: dict):
+    """Pegasus, its Python API, HTCondor and the container runtime, here or on the ssh host."""
+    host = s["host"]
+    there = f" on {host}" if host else ""
+    if host:
+        code, out, err = _on(host, "true", timeout=20)
+        if code != 0:
+            r.add("pegasus", "ssh", "fail", f"cannot log in to {host} without a prompt ({_tail(err)}). Check "
+                  f"`ssh {host} true` works in a terminal (key-based login, host key accepted).")
+            r.add("pegasus", "pegasus", "fail", f"not checked: {host} is not reachable (see above).")
+            return
+        r.add("pegasus", "ssh", "ok", f"{host} reachable (key-based, no prompt)")
+
+    code, out, err = _on(host, "pegasus-version")
+    ver = (out or "").strip()
+    if code != 0 or not ver:
+        r.add("pegasus", "pegasus-version", "fail", f"pegasus-version not found or failed{there} ({_tail(err)}). "
+              "Install Pegasus 5.1+ (pegasus-env's setup_server.sh install) and put it on PATH.")
+        return
+    major = ver.split(".")[0]
+    r.add("pegasus", "pegasus-version", "ok" if major == "5" else "warn",
+          f"Pegasus {ver}{there}" + ("" if major == "5" else "; CURATE is tested with Pegasus 5.1"))
+
+    code, out, err = _on(host, PEGASUS_PY)
+    if code != 0:
+        r.add("pegasus", "Pegasus Python API", "fail", f"python3{there} cannot import Pegasus.api and yaml with "
+              f"PYTHONPATH=$(pegasus-config --python) ({_tail(err)}). Install python3-yaml / Pegasus's Python "
+              "package for the system python3.")
+    else:
+        r.add("pegasus", "Pegasus Python API", "ok", f"python3{there} imports Pegasus.api and yaml")
+
+    code, out, err = _on(host, "condor_q -totals")
+    if code != 0:
+        r.add("pegasus", "HTCondor", "fail", f"condor_q{there} failed ({_tail(err)}). Is HTCondor installed "
+              "and running (`systemctl status condor`)?")
+    else:
+        r.add("pegasus", "HTCondor", "ok", f"the HTCondor scheduler{there} answers")
+
+    if s["runtime"] == "docker":
+        code, out, err = _on(host, "docker info --format '{{.ServerVersion}}'")
+        if code != 0:
+            r.add("pegasus", "container runtime", "fail", f"docker{there} is not usable by this user "
+                  f"({_tail(err)}). Install Docker and add the user to the docker group (log out and in).")
+        else:
+            r.add("pegasus", "container runtime", "ok", f"Docker {out.strip()}{there}")
+    else:
+        code, out, err = _on(host, "apptainer --version || singularity --version")
+        if code != 0:
+            r.add("pegasus", "container runtime", "fail", f"neither apptainer nor singularity found{there}. "
+                  "Install Apptainer, or set CURATE_PEGASUS_RUNTIME=docker.")
+        else:
+            r.add("pegasus", "container runtime", "ok", f"{out.strip()}{there}")
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def run_checks(args, env=None, claude_dir: Path | None = None, opener=None) -> Report:
@@ -537,10 +651,16 @@ def run_checks(args, env=None, claude_dir: Path | None = None, opener=None) -> R
     check_catalog(r, args.catalog_dir, env, args.config_catalog_dir)
     check_gitignore(r, project)
     deploy = args.deploy or args.online
+    pegasus = getattr(args, "pegasus", False)
     # Fill unset deploy variables from ~/.config/curate/.env, as deploy.py and monitor.py do
-    # (environment wins). Only with --deploy; the file's own check runs whenever it exists.
-    info = envfile.load(env if deploy else {}, getattr(args, "env_file", None))
+    # (environment wins). Only with --deploy / --pegasus; the file's own check runs whenever it exists.
+    info = envfile.load(env if deploy or pegasus else {}, getattr(args, "env_file", None))
     check_settings_file(r, info, deploy)
+    if pegasus:
+        s = pegasus_settings(env)
+        check_ir_tools(r)
+        if check_pegasus_settings(r, s):
+            check_pegasus_host(r, s)
     if deploy:
         check_deploy_vars(r, env, info["sources"])
         token = check_token(r, env, info["sources"])
@@ -568,6 +688,9 @@ def main(argv=None) -> int:
     p.add_argument("--deploy", action="store_true", help="also check deploy variables and a GitHub token")
     p.add_argument("--online", action="store_true", help="with --deploy: also read the action repo and "
                    "head_bucket the S3 bucket (implies --deploy)")
+    p.add_argument("--pegasus", action="store_true", help="also check the Pegasus target: settings, "
+                   "pegasus-version, its Python API, HTCondor and the container runtime (over ssh when "
+                   "CURATE_PEGASUS_HOST names a host)")
     p.add_argument("--plugin-root", help="the plugin folder as loaded (the skill passes ${CLAUDE_PLUGIN_ROOT})")
     p.add_argument("--catalog-dir", help="as /curate --catalog")
     p.add_argument("--config-catalog-dir", help="plugin setting value; empty or unsubstituted = unset")

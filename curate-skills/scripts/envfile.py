@@ -1,6 +1,6 @@
 """The deploy settings file, ~/.config/curate/.env, read by deploy.py, monitor.py and doctor.py.
 
-Copied from the plugin's .env.template and filled in by the user. Only the deploy names below are
+Copied from the plugin's .env.template and filled in by the user. Only the names below are
 read from it, and only when the environment doesn't already set them: environment variables
 always win. The file is parsed as plain KEY=VALUE lines (optional `export `, optional matching
 single or double quotes, `#` comments); nothing is evaluated by a shell. Values are never
@@ -20,7 +20,9 @@ from pathlib import Path
 DEPLOY_NAMES = ("FAASR_GH_USERNAME", "FAASR_ACTION_REPO", "FAASR_ACTION_BRANCH", "FAASR_S3_ENDPOINT",
                 "FAASR_S3_BUCKET", "FAASR_S3_REGION", "GH_PAT", "S3_AccessKey", "S3_SecretKey",
                 "CURATE_DEPLOY_NAME_SUFFIX", "CURATE_MONITOR_MINUTES")
-_WANTED = {n.upper() for n in DEPLOY_NAMES}
+# The Pegasus target's settings (none are secrets): where Pegasus runs and how its jobs start.
+PEGASUS_NAMES = ("CURATE_PEGASUS_HOST", "CURATE_PEGASUS_RUNTIME", "CURATE_PEGASUS_IMAGE")
+_WANTED = {n.upper() for n in DEPLOY_NAMES + PEGASUS_NAMES}
 LINE_RX = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
 
 

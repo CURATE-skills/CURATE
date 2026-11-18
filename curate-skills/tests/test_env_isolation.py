@@ -8,8 +8,9 @@ def test_names_matched():
     names = ["FAASR_S3_BUCKET", "FAASR_GH_USERNAME", "faasr_action_repo", "GH_PAT", "S3_AccessKey",
              "S3_SECRETKEY", "CURATE_DEPLOY_NAME_SUFFIX", "CURATE_MONITOR_MINUTES", "CURATE_CATALOG_DIR",
              "AWS_AccessKey", "AWS_SECRET_ACCESS_KEY", "AWS_ARN", "GITHUB_REPOSITORY",
+             "CURATE_PEGASUS_HOST", "curate_pegasus_image",
              "PATH", "HOME", "GH_PATH", "MY_FAASR_X", "CURATE_GUARD_DEBUG", "GITHUB_REPOSITORY_X"]
-    assert isolated_env_names(names) == names[:13]
+    assert isolated_env_names(names) == names[:15]
 
 
 def test_none_left_in_a_test():

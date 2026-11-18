@@ -10,6 +10,7 @@ import pytest
 
 import doctor
 import emit
+import envfile
 import leakcheck
 
 PLUGIN = Path(__file__).resolve().parents[1]
@@ -35,8 +36,11 @@ def assignments():
 def test_every_deploy_variable_present_and_empty():
     got = {k: v for k, v, _ in assignments()}
     needed = set(doctor.DEPLOY_VARS) | set(doctor.S3_KEY_VARS) | set(emit.PLACEHOLDER_VARS) | set(SECRETS) \
-        | {"FAASR_ACTION_BRANCH", "CURATE_DEPLOY_NAME_SUFFIX", "CURATE_MONITOR_MINUTES"}
+        | {"FAASR_ACTION_BRANCH", "CURATE_DEPLOY_NAME_SUFFIX", "CURATE_MONITOR_MINUTES"} \
+        | set(envfile.PEGASUS_NAMES)
     assert needed <= set(got)
+    # Every name the template documents is one the scripts read from the file.
+    assert {k.upper() for k in got} <= {n.upper() for n in envfile.DEPLOY_NAMES + envfile.PEGASUS_NAMES}
     assert all(v == "" for v in got.values())  # no values, not even examples
 
 
