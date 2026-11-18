@@ -1124,10 +1124,16 @@ def cmd_approve(args) -> dict:
         if choice == "yes" and not has_bundle:
             raise InputError(f"the bundle {bundle} is missing, so it cannot be deployed; run "
                              f"/{PLUGIN}:curate-emit --run {s['run_id']} again")
+        if choice == "pegasus":
+            p = pegasus_plan(s)
+            if not p["ok"]:
+                raise InputError("this workflow cannot run on Pegasus: " + " | ".join(p["problems"]))
         # The approved bundle's hash: curate-deploy refuses to deploy a bundle that changed since.
         s.update(feedback=None, bundle_hash=tree_hash(bundle) if has_bundle else None,
                  deploy_choice=choice, deploy=None,
-                 stage="deploy" if choice == "yes" else "finalize")
+                 stage="deploy" if choice in ("yes", "pegasus") else "finalize")
+        if choice == "pegasus" or "pegasus" in s:
+            s["pegasus"] = None
     s["begun"] = None
     _record(s, g, "approve")
     if g == 4:
@@ -1830,7 +1836,7 @@ def start_summary(at: str, p: dict) -> str:
 # ── stages: next / require / begin / end ─────────────────────────────────────
 
 # Fields a stage (and everything after it) produces; cleared on a fresh entry.
-DEPLOY_OUTPUTS = ("bundle_hash", "deploy_choice", "deploy", "monitor")
+DEPLOY_OUTPUTS = ("bundle_hash", "deploy_choice", "deploy", "monitor", "pegasus")
 STAGE_OUTPUTS = {
     "skeleton": ("enriched_spec", "enriched_basis", "spec_basis", "candidates", "mga",
                  "validation", "bundle_dir") + DEPLOY_OUTPUTS,
@@ -1844,6 +1850,7 @@ STAGE_OUTPUTS = {
     "finalize": (),
 }
 _EMPTY = {"mga": {}, "candidates": []}
+OPTIONAL_OUTPUTS = ("pegasus",)  # written only for the Pegasus target (pegasus_deploy.py)
 
 
 def stage_index(stage_value: str) -> Optional[int]:
@@ -1941,7 +1948,7 @@ def require_problems(s: dict, name: str, env=None) -> list[str]:
         elif s.get("deploy_choice") != "yes" and hist[approvals[-1]].get("deploy") == "pending":
             out.append('the user has not confirmed starting this run yet ("Start this run?" → Yes, then '
                        f"spec.py confirm-start --run {s['run_id']})")
-        elif s.get("deploy_choice") != "yes":
+        elif s.get("deploy_choice") not in ("yes", "pegasus"):
             out.append("Gate 4 was approved without deploying; to deploy this bundle, start a new run "
                        f"from it: /{PLUGIN}:curate --start-at deploy --from-run {s['run_id']}")
         v = s.get("validation") or {}
@@ -1951,6 +1958,11 @@ def require_problems(s: dict, name: str, env=None) -> list[str]:
             out.append(f"no bundle hash was recorded at Gate 4 — approve Gate 4 again ({_run_cmd(s, 'emit')})")
         return out
     if name == "monitor":
+        if s.get("deploy_choice") == "pegasus":
+            peg = s.get("pegasus") or {}
+            if not (peg.get("steps") or {}).get("launch", {}).get("ok"):
+                out.append(f"nothing to monitor: the Pegasus run was not started — run {_run_cmd(s, 'deploy')}")
+            return out
         dep = s.get("deploy") or {}
         if not (dep.get("steps") or {}).get("invoke", {}).get("ok") or not dep.get("invocation_id"):
             out.append(f"nothing to monitor: the workflow was not started — run {_run_cmd(s, 'deploy')}")
@@ -1960,6 +1972,11 @@ def require_problems(s: dict, name: str, env=None) -> list[str]:
             mon = s.get("monitor") or {}
             if mon.get("result") not in ("success", "success_unconfirmed"):
                 out.append("the deployed run has not been confirmed to work (monitor result "
+                           f"{mon.get('result') or 'none'}) — run {_run_cmd(s, 'monitor')}")
+        if s.get("deploy_choice") == "pegasus" and s.get("pegasus"):
+            mon = s.get("monitor") or {}
+            if mon.get("result") != "success":
+                out.append("the Pegasus run has not been confirmed to work (monitor result "
                            f"{mon.get('result') or 'none'}) — run {_run_cmd(s, 'monitor')}")
         v = s.get("validation") or {}
         if not v.get("ok"):
@@ -1990,6 +2007,8 @@ def cmd_next(args) -> dict:
 def _clear_from(s: dict, name: str) -> list[str]:
     cleared = [f for f in STAGE_OUTPUTS[name] if s.get(f) not in (None, {}, [])]
     for f in STAGE_OUTPUTS[name]:
+        if f in OPTIONAL_OUTPUTS and f not in s:
+            continue  # never added to runs that never had it (FaaSr-only states stay as they were)
         s[f] = _EMPTY.get(f, None) if f in _EMPTY else None
     return cleared
 
@@ -2262,8 +2281,9 @@ def show_gate(s: dict, gate: int) -> str:
         ext = external_inputs(spec)
         out += ["", "Input files you must provide in S3 (none = nothing to do):"] + (
             [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
-        out += ["", "### Deploy would write", "", "If you choose **Approve & deploy** (nothing is written now; "
+        out += ["", "### Deploy would write", "", f"If you choose **{FAASR_OPTION}** (nothing is written now; "
                 "the deploy asks before each step):", ""] + deploy_plan(s)
+        out += ["", "### Pegasus run would write", ""] + pegasus_lines(s)
         out += ["", "Files in the bundle:"] + (bundle_files(s.get("bundle_dir")) or ["- none yet"])
         return "\n".join(out)
     if gate == 5:
@@ -2284,6 +2304,40 @@ def deploy_plan(s: dict) -> list[str]:
         return [f"- (could not work it out: {e})"]
 
 
+def _pegasus():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import pegasus_ir as P
+    return P
+
+
+def pegasus_plan(s: dict) -> dict:
+    """The Pegasus target for this run (pegasus_ir.plan: local, read-only)."""
+    P = _pegasus()
+    return P.plan(s, P.settings())
+
+
+def pegasus_lines(s: dict) -> list[str]:
+    """Gate 4's "Pegasus run would write" (pegasus_ir.plan_lines: local, read-only)."""
+    if not s.get("spec"):
+        return ["- (no spec yet)"]
+    try:
+        P = _pegasus()
+        return P.plan_lines(s, P.settings())
+    except Exception as e:  # noqa: BLE001 — informational; approve --deploy pegasus checks again
+        return [f"- (could not work it out: {e})"]
+
+
+def gate4_options() -> list[str]:
+    """Gate 4's options; the Pegasus one names where it would run (CURATE_PEGASUS_HOST)."""
+    try:
+        P = _pegasus()
+        peg = P.option_label(P.settings())
+    except Exception:  # noqa: BLE001 — never block the gate on the label
+        peg = "Approve & run on Pegasus (this machine)"
+    return [FAASR_OPTION, peg, "Approve, no deploy", "Stop here"]
+
+
+FAASR_OPTION = "Approve & deploy to FaaSr (cloud)"
 DEPLOY_ADVICE = ("Placeholders are filled from your settings at deploy; run "
                  "`/curate-skills:curate-doctor --deploy --online` if you haven't.")
 
@@ -2435,13 +2489,14 @@ def _cut(text: str, n: int) -> str:
 GATE_QUESTION = {1: "Approve this skeleton (the steps and their order)?",
                  2: "Approve the reuse decisions, files and data flow?",
                  3: "Approve the generated code?",
-                 4: "Approve this FaaSr bundle, and deploy it?",
+                 4: "Approve this bundle, and run it on FaaSr or Pegasus?",
                  5: "Save to the catalog?"}
 
 
 GATE_OPTIONS = {1: ["Approve", "Stop here"], 2: ["Approve", "Stop here"],
                 3: ["Approve", "Show the full code", "Stop here"],
-                4: ["Approve & deploy", "Approve, no deploy", "Stop here"],
+                4: [FAASR_OPTION, "Approve & run on Pegasus (this machine)", "Approve, no deploy",
+                    "Stop here"],  # Gate 4's Pegasus label is set per call: gate4_options()
                 5: ["Save functions", "Save workflow", "Save both", "Don't save"]}
 
 
@@ -2465,7 +2520,7 @@ def cmd_show(args) -> dict:
     if args.gate == 1 and not getattr(args, "full", False):
         q = gate1_question(s)  # the outline is in the question text too (not a preview)
     return {"ok": True, "markdown": md, "marker": marker, "question": q, "header": f"Gate {args.gate}",
-            "options": GATE_OPTIONS[args.gate], "review_file": str(review), "review_line": f"Full review: {review}"}
+            "options": gate4_options() if args.gate == 4 else GATE_OPTIONS[args.gate], "review_file": str(review), "review_line": f"Full review: {review}"}
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -2515,8 +2570,9 @@ def build_parser() -> argparse.ArgumentParser:
     with_run("toposort")
     q = with_run("approve")
     q.add_argument("--gate", type=int, required=True, choices=[1, 2, 3, 4])
-    q.add_argument("--deploy", choices=["yes", "no"],
-                   help="Gate 4 only: the user chose Approve & deploy (yes) or Approve, no deploy (no; default)")
+    q.add_argument("--deploy", choices=["yes", "pegasus", "no"],
+                   help="Gate 4 only: the user chose Approve & deploy to FaaSr (yes), Approve & run on "
+                        "Pegasus (pegasus) or Approve, no deploy (no; default)")
     q = with_run("directive")
     q.add_argument("--gate", required=True, choices=["1", "2", "3", "4", "emit"])
     q.add_argument("--text", required=True)

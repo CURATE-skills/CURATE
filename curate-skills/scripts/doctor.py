@@ -532,20 +532,13 @@ PLUGIN_DIR = SCRIPT_DIR.parent
 IR_TOOLS = ("curate_ir/validate.py", "curate_ir/expand.py", "curate_ir/backends/pegasus_backend.py",
             "curate_ir/runner/curate_run.py")
 PEGASUS_RUNTIMES = ("docker", "singularity")
-DEFAULT_PEGASUS_IMAGE = "docker:///python:3.12-slim"
+DEFAULT_PEGASUS_IMAGE = envfile.DEFAULT_PEGASUS_IMAGE
+pegasus_settings = envfile.pegasus_settings
 IMAGE_SCHEMES = ("docker://", "file://", "library://", "shub://", "oras://")
 # An ssh destination as ~/.ssh/config names it, or user@host: never an option (leading '-').
 SSH_HOST_RX = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@-]*$")
 SSH_OPTS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=5")
 PEGASUS_PY = 'PYTHONPATH="$(pegasus-config --python)" python3 -c "import Pegasus.api, yaml"'
-
-
-def pegasus_settings(env) -> dict:
-    """The Pegasus target's settings with their defaults; host is None for this machine."""
-    host = str(env.get("CURATE_PEGASUS_HOST", "")).strip()
-    return {"host": None if host in ("", "local", "localhost") else host,
-            "runtime": str(env.get("CURATE_PEGASUS_RUNTIME", "")).strip() or "docker",
-            "image": str(env.get("CURATE_PEGASUS_IMAGE", "")).strip() or DEFAULT_PEGASUS_IMAGE}
 
 
 def _on(host: str | None, command: str, timeout=60):
@@ -654,7 +647,8 @@ def run_checks(args, env=None, claude_dir: Path | None = None, opener=None) -> R
     pegasus = getattr(args, "pegasus", False)
     # Fill unset deploy variables from ~/.config/curate/.env, as deploy.py and monitor.py do
     # (environment wins). Only with --deploy / --pegasus; the file's own check runs whenever it exists.
-    info = envfile.load(env if deploy or pegasus else {}, getattr(args, "env_file", None))
+    names = (envfile.DEPLOY_NAMES if deploy else ()) + (envfile.PEGASUS_NAMES if pegasus else ())
+    info = envfile.load(env if names else {}, getattr(args, "env_file", None), names=names or None)
     check_settings_file(r, info, deploy)
     if pegasus:
         s = pegasus_settings(env)

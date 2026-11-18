@@ -368,7 +368,8 @@ def test_show_returns_a_short_question_options_and_the_marker(make_run, capsys, 
     assert out["markdown"].endswith(f"— end of Gate {gate} · run {run_id} —") and out["marker"] in out["markdown"]
     assert out["options"] == {1: ["Approve", "Stop here"], 2: ["Approve", "Stop here"],
                               3: ["Approve", "Show the full code", "Stop here"],
-                              4: ["Approve & deploy", "Approve, no deploy", "Stop here"]}[gate]
+                              4: ["Approve & deploy to FaaSr (cloud)", "Approve & run on Pegasus (this machine)",
+                                  "Approve, no deploy", "Stop here"]}[gate]
 
 
 def test_gate1_shows_each_rank_once(make_run, capsys):
@@ -436,7 +437,8 @@ def test_deploy_stage_asks_before_every_step_and_never_touches_credentials():
     skill = (plugin / "skills" / "curate-deploy" / "SKILL.md").read_text()
     assert "disable-model-invocation: true" in skill and "references/stages/deploy.md" in skill
     emit_md = (plugin / "references" / "stages" / "emit.md").read_text()
-    assert "**Approve & deploy**" in emit_md and "--deploy yes" in emit_md and "--deploy no" in emit_md
+    assert "**Approve & deploy to\n   FaaSr (cloud)**" in emit_md and "--deploy yes" in emit_md and "--deploy no" in emit_md
+    assert "--deploy pegasus" in emit_md and "use it exactly as\n   returned" in emit_md
 
 
 def test_monitor_stage_is_read_only_and_states_the_final_rules():

@@ -5,7 +5,11 @@ Paths below are relative to `<plugin>`; `spec.py …`, `deploy.py …` are the s
 Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
 
 Precondition: `spec.py begin --run <run> --stage deploy` returned `ok` (Gate 4 was approved with
-**Approve & deploy**, and the bundle's hash was recorded then).
+**Approve & deploy to FaaSr (cloud)**, and the bundle's hash was recorded then).
+
+**Pegasus runs:** if `spec.py status --run <run>` shows `deploy_choice` `pegasus`, this file does
+not apply and `deploy.py` refuses the run. The Pegasus steps are not available yet: tell the user
+so in one line, then stop as in step 4 below. Nothing is written.
 
 Deploying writes to the user's GitHub repo and starts a workflow on their account. **Each of the
 four steps is the user's decision, asked right before it runs.** A yes to one step is never a yes

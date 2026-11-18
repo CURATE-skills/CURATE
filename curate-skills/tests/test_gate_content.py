@@ -296,7 +296,7 @@ def test_gate4_lists_what_deploy_would_write_without_any_network_call(make_run, 
     run_id = json.loads((run / "state.json").read_text())["run_id"]
     sfx = f"-{run_id[4:8]}-{run_id[9:13]}"
     section = md.split("### Deploy would write")[1].split("\n\n— end of Gate 4")[0]
-    assert "If you choose **Approve & deploy** (nothing is written now" in section
+    assert "If you choose **Approve & deploy to FaaSr (cloud)** (nothing is written now" in section
     assert f"Deploys as: `weather{sfx}` (name from: Gate 4 approval in run {run_id})" in section
     assert "GitHub (`alice/faasr-actions`, branch `main`):" in section
     for path in (f"functions/weather{sfx}/download.py", f"workflows/weather{sfx}.json",

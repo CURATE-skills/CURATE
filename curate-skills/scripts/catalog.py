@@ -320,7 +320,11 @@ def export_entries(cat: Catalog, out: Path, ids: Optional[list[str]]) -> dict:
 
 def deployed_run_problem(state: dict) -> Optional[str]:
     """A deployed run is saved only after its monitor result is success, or success with an
-    unconfirmed match that the user accepted at Gate 5."""
+    unconfirmed match that the user accepted at Gate 5. A Pegasus run needs success."""
+    if state.get("deploy_choice") == "pegasus" and state.get("pegasus"):
+        result = (state.get("monitor") or {}).get("result")
+        return None if result == "success" else (
+            f"the Pegasus run has not been confirmed to work (monitor result {result or 'none'}); nothing is saved")
     if state.get("deploy_choice") != "yes" or not state.get("deploy"):
         return None
     mon = state.get("monitor") or {}

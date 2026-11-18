@@ -22,8 +22,20 @@ DEPLOY_NAMES = ("FAASR_GH_USERNAME", "FAASR_ACTION_REPO", "FAASR_ACTION_BRANCH",
                 "CURATE_DEPLOY_NAME_SUFFIX", "CURATE_MONITOR_MINUTES")
 # The Pegasus target's settings (none are secrets): where Pegasus runs and how its jobs start.
 PEGASUS_NAMES = ("CURATE_PEGASUS_HOST", "CURATE_PEGASUS_RUNTIME", "CURATE_PEGASUS_IMAGE")
-_WANTED = {n.upper() for n in DEPLOY_NAMES + PEGASUS_NAMES}
+_WANTED = {n.upper() for n in DEPLOY_NAMES}  # what load() takes by default (FaaSr deploy, monitor)
 LINE_RX = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
+
+
+DEFAULT_PEGASUS_IMAGE = "docker:///python:3.12-slim"
+
+
+def pegasus_settings(env) -> dict:
+    """The Pegasus target's settings with their defaults; host is None for this machine.
+    Shared by doctor, Gate 4 and the Pegasus deploy steps."""
+    host = str(env.get("CURATE_PEGASUS_HOST", "")).strip()
+    return {"host": None if host in ("", "local", "localhost") else host,
+            "runtime": str(env.get("CURATE_PEGASUS_RUNTIME", "")).strip() or "docker",
+            "image": str(env.get("CURATE_PEGASUS_IMAGE", "")).strip() or DEFAULT_PEGASUS_IMAGE}
 
 
 def default_path() -> Path:
@@ -65,8 +77,9 @@ def file_mode(path: Path) -> str | None:
         return None
 
 
-def load(environ=None, path: Path | None = None) -> dict:
-    """Fill unset deploy variables in `environ` (default os.environ) from the file.
+def load(environ=None, path: Path | None = None, names=None) -> dict:
+    """Fill unset deploy variables in `environ` (default os.environ) from the file. `names`: which
+    variables to take (default DEPLOY_NAMES; the Pegasus target passes PEGASUS_NAMES).
 
     A variable counts as set when any spelling of it (S3_AccessKey / S3_ACCESSKEY) is non-empty in
     the environment; then nothing of that name is taken from the file. Empty values in the file
@@ -74,10 +87,11 @@ def load(environ=None, path: Path | None = None) -> dict:
     problems}; names only."""
     environ = os.environ if environ is None else environ
     path = Path(path) if path else default_path()
+    wanted = _WANTED if names is None else {n.upper() for n in names}
     report = {"path": str(path), "exists": path.is_file(), "mode": None, "sources": {}, "problems": []}
-    set_in_env = {k.upper() for k, v in environ.items() if k.upper() in _WANTED and str(v).strip()}
+    set_in_env = {k.upper() for k, v in environ.items() if k.upper() in wanted and str(v).strip()}
     for k in environ:
-        if k.upper() in set_in_env and k.upper() in _WANTED:
+        if k.upper() in set_in_env and k.upper() in wanted:
             report["sources"][k] = "env"
     if not report["exists"]:
         return report
@@ -90,7 +104,7 @@ def load(environ=None, path: Path | None = None) -> dict:
     taken = set()
     for key, val in vals.items():
         up = key.upper()
-        if up not in _WANTED or up in set_in_env or up in taken or not val:
+        if up not in wanted or up in set_in_env or up in taken or not val:
             continue
         environ[key] = val
         report["sources"][key] = "file"

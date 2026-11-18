@@ -21,15 +21,20 @@ step 3.
    goes back to `reuse`), then finish as `gates.md` "After the gate decision" says. Otherwise show
    the error at Gate 4 and ask.
 3. **Gate 4**: `spec.py show --run <run> --gate 4`, print its `markdown` verbatim as a message — never re-formatted (the user does not see tool results) — then its `review_line` (`Full review: <path>`) on its own line. **Print the content first, then ask; never ask before printing it**
-   with AskUserQuestion — the returned `question`, `header` and `options` (**Approve & deploy** /
-   **Approve, no deploy** / **Stop here**), no previews —
+   with AskUserQuestion — the returned `question`, `header` and `options` (**Approve & deploy to
+   FaaSr (cloud)** / **Approve & run on Pegasus (…)** / **Approve, no deploy** / **Stop here**; the
+   Pegasus label names where it would run, e.g. `(this machine)` or `(<host>)`: use it exactly as
+   returned), no previews —
    every time, also after a change request or a question from the user
    (`<plugin>/references/gates.md`, "Asking at a gate").
-   - Approve & deploy → `spec.py approve --run <run> --gate 4 --deploy yes` (the run goes to the
-     deploy stage, which asks again before each of its four steps).
+   - Approve & deploy to FaaSr (cloud) → `spec.py approve --run <run> --gate 4 --deploy yes` (the
+     run goes to the deploy stage, which asks again before each of its four steps).
+   - Approve & run on Pegasus (…) → `spec.py approve --run <run> --gate 4 --deploy pegasus` (the
+     run goes to the deploy stage). If it is refused, show the `error` exactly (it names why the
+     workflow cannot run on Pegasus, as the Gate 4 content did) and ask again.
    - Approve, no deploy → `spec.py approve --run <run> --gate 4 --deploy no` (straight to
      finalize, as before).
-   - After either approval: for each id in `reused_catalog_ids`,
+   - After any approval: for each id in `reused_catalog_ids`,
      `catalog.py increment-usage --run <run> --id <id>`.
    - Changes → classify with `<plugin>/references/prompts/classify.md`, then
      `spec.py directive --run <run> --gate 4 --text "<verbatim>" --structural true|false`.

@@ -8,7 +8,7 @@ allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT
 # /curate — the whole CURATE pipeline
 
 /curate runs the CURATE stages in order — skeleton → reuse → resolve → generate → emit →
-deploy and monitor (only after **Approve & deploy** at Gate 4) → finalize — by following the same stage files
+deploy and monitor (only after **Approve & deploy to FaaSr** or **Approve & run on Pegasus** at Gate 4) → finalize — by following the same stage files
 the stage skills (`/curate-skills:curate-skeleton` …) use. It does no stage work of its own: `spec.py next` decides what comes next.
 
 Plugin folder (`<plugin>` in the stage files): `${CLAUDE_PLUGIN_ROOT}`.

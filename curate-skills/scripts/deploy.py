@@ -164,10 +164,16 @@ def load_run(run: str) -> tuple[dict, Path]:
     return s, bundle
 
 
+PEGASUS_REFUSAL = ("Gate 4 chose the Pegasus target for this run; the FaaSr deploy steps do not apply "
+                   "(nothing is written to GitHub or S3)")
+
+
 def gate4_problem(s: dict, bundle_hash: str | None = None) -> str | None:
     """None if the bundle is Gate 4-approved: approved in this run, or carried over from another
     run's approval by `start --at deploy|finalize --from-run` — then only if the hash recorded with
     the carried-over approval matches the bundle as it is now."""
+    if s.get("deploy_choice") == "pegasus":
+        return PEGASUS_REFUSAL
     hist = s.get("history") or []
     approvals = [i for i, h in enumerate(hist)
                  if h.get("gate") == 4 and h.get("decision") in ("approve", "copied")]
@@ -1102,6 +1108,8 @@ def deploy_step(run: str, step: str, suffix: str, gh: GitHub | None, token: str 
     if s.get("stage") != "deploy":
         return {**base, "ok": False, "error": f"the run is at stage {s.get('stage')!r}, not deploy; "
                 f"curate-deploy runs after Gate 4 is approved with Approve & deploy"}
+    if s.get("deploy_choice") == "pegasus":
+        return {**base, "ok": False, "error": PEGASUS_REFUSAL}
     if s.get("deploy_choice") != "yes":
         return {**base, "ok": False, "error": "Gate 4 was approved without deploying"}
     if rec.get("suffix") and rec["suffix"] != suffix:
@@ -1304,6 +1312,8 @@ def reuse(run: str, suffix: str, gh: GitHub | None, token: str | None, token_sou
     s, bundle = load_run(run)
     rec = s.get("deploy") or {}
     base = {"run": str(run_p.resolve()), "step": "reuse"}
+    if s.get("deploy_choice") == "pegasus":
+        return {**base, "ok": False, "error": PEGASUS_REFUSAL}
     if s.get("stage") != "deploy" or s.get("deploy_choice") != "yes":
         return {**base, "ok": False, "error": "invoke only runs in the deploy stage, after the user confirmed "
                 "starting the run (Start this run? → Yes)"}
