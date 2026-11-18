@@ -1,0 +1,34 @@
+ir_version: "0.2"
+name: fanout-ice-demo
+description: Same synthetic data as the diamond, computed per winter in parallel (1 -> N -> N -> 1)
+defaults:
+  image: docker:///python:3.12-slim
+  resources: {cpus: 1, memory_mb: 1024}
+axes:
+  winter: [2019, 2020, 2021, 2022]
+inputs:
+  - file: params.json
+    location: input/params.json             # relative to this file
+nodes:
+  - id: load_data                       # 1 job
+    code: functions/load_data.py
+    inputs:  {params: params.json}
+    outputs: {daily: daily.csv}
+  - id: detect_ice                      # fan-out: 4 parallel jobs, one per winter
+    for_each: [winter]
+    code: functions/detect_ice.py
+    inputs:  {daily: daily.csv}
+    outputs: {ice: "ice_{winter}.json"}
+    params:  {run_days: 5}              # params["winter"] is added per copy
+  - id: add_duration                    # 4 jobs, each waits only for its own winter
+    for_each: [winter]
+    code: functions/add_duration.py
+    inputs:  {ice: "ice_{winter}.json"}
+    outputs: {row: "row_{winter}.json"}
+  - id: assemble                        # gather: no for_each, so it gets all 4 files as a list
+    code: functions/assemble.py
+    inputs:  {rows: "row_{winter}.json"}
+    outputs: {result: ice_phenology_result.json}
+outputs:
+  - file: ice_phenology_result.json
+    deliver_as: results/ice_phenology_result.json
