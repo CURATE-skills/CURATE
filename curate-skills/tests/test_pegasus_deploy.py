@@ -348,11 +348,21 @@ def test_host_env_drops_every_venv_bin_only(tmp_path):
            "PYTHONHOME": "/p", "HOME": "/home/u"}
     assert PD.host_env(env) == {"PATH": f"{plain}:/usr/bin", "HOME": "/home/u"}
     assert PD.host_env({"PATH": "/a:/b"}) == {"PATH": "/a:/b"}  # no venv: unchanged
+    # uv run --python 3.13 also puts its managed interpreter first (not a venv)
+    env = {"PATH": "/home/u/.local/share/uv/python/cpython-3.13.18-linux/bin:/home/u/.local/bin:/usr/bin",
+           "HOME": "/home/u"}
+    assert PD.host_env(env)["PATH"] == "/home/u/.local/bin:/usr/bin"
+    env = {"PATH": "/data/uvpy/cpython-3.13/bin:/usr/bin", "UV_PYTHON_INSTALL_DIR": "/data/uvpy", "HOME": "/h"}
+    assert PD.host_env(env)["PATH"] == "/usr/bin"
+    env = {"PATH": "/x/uv/python/c/bin:/usr/bin", "XDG_DATA_HOME": "/x", "HOME": "/h"}
+    assert PD.host_env(env)["PATH"] == "/usr/bin"
 
 
 def test_commands_get_the_host_env(monkeypatch):
     seen = {}
-    monkeypatch.setattr(PD.subprocess, "run", lambda cmd, **kw: seen.update(kw) or
+    import hostcmd
+    monkeypatch.setattr(hostcmd.subprocess, "run", lambda cmd, **kw: seen.update(kw) or
                         subprocess.CompletedProcess(cmd, 0, "", ""))
     PD._run(["true"])
     assert seen["env"] == PD.host_env()
+    assert PD.host_env is hostcmd.host_env and PD.SSH_OPTS == hostcmd.SSH_OPTS

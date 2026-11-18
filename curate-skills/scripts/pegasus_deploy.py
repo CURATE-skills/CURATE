@@ -32,16 +32,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shlex
 import shutil
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
+import hostcmd  # noqa: E402
 import leakcheck  # noqa: E402
 import pegasus_ir as P  # noqa: E402
 import spec as S  # noqa: E402
@@ -52,7 +51,7 @@ PLUGIN_DIR = SCRIPT_DIR.parent
 IR_TOOLS = PLUGIN_DIR / "curate_ir"
 LOG = Path("pegasus") / "deploy-log.jsonl"
 REMOTE_ROOT = "curate-runs"
-SSH_OPTS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=10")
+SSH_OPTS = hostcmd.SSH_OPTS
 PEGASUS_PY = 'PYTHONPATH="$(pegasus-config --python)" python3'
 STEP_DONE = {"prepare": "prepared", "copy": "copied", "launch": "launched"}
 STEP_WHAT = {"prepare": "write the Pegasus workflow folder (IR, functions, inputs) and validate it",
@@ -64,46 +63,15 @@ class StepError(Exception):
     pass
 
 
-def _is_venv_bin(p: str) -> bool:
-    return (Path(p).parent / "pyvenv.cfg").is_file()
-
-
-def host_env(environ=None) -> dict:
-    """The environment for commands run here: without the virtual environments `uv run` put on
-    PATH (it stacks several: the script's, its --with layer, ...), so `python3` and pegasus-plan
-    (`#!/usr/bin/env python3`) are the system's Python, the one with Pegasus's own modules
-    (GitPython, ...), as when the user runs them in a terminal. A PATH entry is dropped when it
-    is a virtual environment's bin folder (its parent holds pyvenv.cfg)."""
-    env = dict(os.environ if environ is None else environ)
-    env.pop("VIRTUAL_ENV", None)
-    env.pop("PYTHONHOME", None)
-    env["PATH"] = os.pathsep.join(p for p in env.get("PATH", "").split(os.pathsep) if p and not _is_venv_bin(p))
-    return env
-
-
-def _run(cmd, timeout=600):
-    try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=host_env())
-        return p.returncode, p.stdout, p.stderr
-    except subprocess.TimeoutExpired:
-        return None, "", f"timed out after {timeout}s"
-    except OSError as e:
-        return None, "", f"{type(e).__name__}: {e}"
-
-
+host_env = hostcmd.host_env  # commands run with the system's Python, not uv's (hostcmd.py)
+_run = hostcmd.run
 RUN = _run  # tests replace this; every command this script runs goes through it
+_tail = hostcmd.tail
 
 
 def _on(host, command, timeout=600):
     """A shell command here, or on `host` over ssh (no password prompt)."""
-    if host is None:
-        return RUN(["sh", "-c", command], timeout=timeout)
-    return RUN(["ssh", *SSH_OPTS, host, command], timeout=timeout)
-
-
-def _tail(text, n=8):
-    lines = [l for l in (text or "").strip().splitlines() if l.strip()]
-    return "\n".join(lines[-n:]) or "no output"
+    return hostcmd.on(host, command, runner=RUN, timeout=timeout)
 
 
 def _now():

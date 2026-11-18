@@ -41,6 +41,15 @@ How it judges (for answering questions; don't recite it):
   there yet gets a 60-second grace period after the function's last run.
 - Output correctness (e.g. the plot itself) is not judged.
 
+**Pegasus runs** (`deploy_choice` `pegasus`): the same `monitor.py poll` command, the same `lines`
+and `result` values (no unconfirmed match). It reads, here or over ssh, the Pegasus run folder that
+`state.pegasus.run_dir` records (so it works after a logout or reboot): DAGMan's exit status and
+each job's state. It never submits, removes or changes the workflow. When DAGMan has finished, it
+copies the declared outputs into the run's Pegasus work folder (`deliver/`, plus `run-report.json`)
+and, for an ssh host, fetches both into `<run>/pegasus/result/`. Success needs DAGMan exit 0 and
+every declared output delivered. A `timeout` means DAGMan is still running the workflow; the
+re-check continues watching it. Its details file is `<run>/pegasus/monitor-report.md`.
+
 ## 2. The result
 
 The last entry of `lines` is the verdict (`✓ workflow succeeded` / `✗ workflow failed: …` /
@@ -54,7 +63,7 @@ The last entry of `lines` is the verdict (`✓ workflow succeeded` / `✗ workfl
 | `timeout` | the run is stopped. Tell the user `recheck_command` (add `--minutes N` for a longer watch): it continues watching the same invocation with a fresh budget. |
 
 Only if the user asks why or for details: read the `details` file (`deploy/monitor-report.md`
-in the run) and answer from it. Job-log text is never shown or saved; excerpts there are
+in the run; `pegasus/monitor-report.md` for a Pegasus run) and answer from it. Job-log text is never shown or saved; excerpts there are
 redacted by `monitor.py`.
 
 ## 3. Done

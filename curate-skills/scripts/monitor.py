@@ -700,7 +700,33 @@ def status(run: str) -> dict:
     mon = s.get("monitor") or {}
     return {"ok": True, "stage": s.get("stage"), "result": mon.get("result"), "accepted": mon.get("accepted"),
             "minutes_used": round(float(mon.get("seconds_used") or 0) / 60, 2), "settings": mon.get("settings"),
-            "summary": mon.get("summary")}
+            "summary": mon.get("summary"),
+            **({"deliver_dir": mon["deliver_dir"]} if mon.get("deliver_dir") else {})}  # Pegasus runs only
+
+
+# ── Pegasus runs (pegasus_monitor.py) ────────────────────────────────────────
+
+def _is_pegasus(run: str) -> bool:
+    try:
+        return json.loads((Path(run) / "state.json").read_text()).get("deploy_choice") == "pegasus"
+    except (OSError, ValueError):
+        return False  # the FaaSr path reports a missing or unreadable run as before
+
+
+def _pegasus_main(args, clock, sleep) -> int:
+    """A Pegasus run: no GitHub token or S3; pegasus_monitor polls the Pegasus host."""
+    import pegasus_monitor as PM
+    try:
+        if args.cmd == "download-outputs":
+            raise PM.InputError("a Pegasus run's results are already on disk: see deliver_dir in "
+                                "`monitor.py status` (state.monitor) after the monitor finished")
+        out = PM.poll(args.run, args.chunk, args.report_only, args.minutes, args.interval, args.config_minutes,
+                      clock, sleep)
+    except PM.InputError as e:
+        print(json.dumps({"ok": False, "error": str(e)}))
+        return 2
+    print(json.dumps(out, indent=2))
+    return 0 if out.get("ok") else 1
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -725,6 +751,8 @@ def main(argv=None, opener=None, s3_factory=None, clock=time.monotonic, sleep=ti
     q.add_argument("--run", required=True)
     q.add_argument("--confirmed", action="store_true")
     args = p.parse_args(argv)
+    if args.cmd in ("poll", "download-outputs") and _is_pegasus(args.run):
+        return _pegasus_main(args, clock, sleep)
     envfile.load()  # ~/.config/curate/.env fills deploy variables the environment leaves unset
     token, _ = D.get_token() if args.cmd == "poll" else (None, None)
     extra = {"gh_token": token} if token else None
