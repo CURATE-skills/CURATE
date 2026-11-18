@@ -32,6 +32,8 @@ from Pegasus.api import (  # noqa: E402
 )
 
 SHIM = HERE.parent / "runner" / "curate_run.py"
+# The node shim per IR contract (validate.CONTRACTS).
+RUNNERS = {"plain": SHIM, "faasr": HERE.parent / "runner" / "curate_faasr_run.py"}
 
 
 def normalize_image(url):
@@ -99,7 +101,8 @@ def emit(ir, work, runtime):
             image = n.get("image") or defaults["image"]
             c = container_for(image, runtime, containers)
             res = {**defaults.get("resources", {}), **n.get("resources", {})}
-            tr = Transformation(origin, site="local", pfn="file://" + str(SHIM),
+            runner = RUNNERS[n.get("contract", "plain")]
+            tr = Transformation(origin, site="local", pfn="file://" + str(runner),
                                 is_stageable=True, container=c)
             if "cpus" in res:
                 tr.add_pegasus_profile(cores=int(res["cpus"]))

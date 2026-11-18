@@ -17,9 +17,11 @@ system's format (Pegasus now; FaaSr, CWL, Snakemake, Nextflow later).
        """inputs/outputs map logical names to local file paths."""
    ```
 
-   Each backend ships a small shim (`runner/curate_run.py`) that turns its own
-   world into this call. For FaaSr the shim downloads/uploads S3 objects; for
-   Pegasus it is just local paths. This is what decouples CURATE from FaaSr.
+   Each backend ships a small shim (`curate-skills/curate_ir/runner/curate_run.py`)
+   that turns its own world into this call. For FaaSr the shim downloads/uploads S3
+   objects; for Pegasus it is just local paths. This is what decouples CURATE from FaaSr.
+   Interim exception: a node marked `contract: faasr` (below) runs today's
+   FaaSr-style functions unchanged; the validator reports it as a portability warning.
 3. **The image is part of the workflow; the runtime is not.** Nodes name an OCI
    image (`docker:///…` or a saved `file://….tar`). Docker vs Apptainer is chosen
    per site by the backend, so the same IR runs unchanged on a laptop, the lab
@@ -38,13 +40,14 @@ description: one line
 defaults:
   image: docker:///python:3.12-slim      # used when a node has none
   resources: {cpus: 1, memory_mb: 2048}
-inputs:                                 # files that exist before the run
+inputs:                                 # files that exist before the run (may be none)
   - file: params.json
-    location: file:///abs/path/params.json   # or https://, s3://
+    location: input/params.json         # relative to the IR file, or file:///abs, https://, s3://
 nodes:
   - id: make_data                       # unique, [a-z0-9_]+
     code: functions/make_data.py        # path relative to the IR file
     entrypoint: main                    # default: main
+    contract: plain                     # default; or faasr (see "contract: faasr")
     inputs:  {params: params.json}      # logical name -> file name
     outputs: {numbers: numbers.csv}
     params:  {n: 100}                   # JSON-serialisable
@@ -115,3 +118,40 @@ Rules:
 | Nextflow | channel of values; gather = `.collect()` |
 | FaaSr | to check (parallel invocations of one action) |
 
+
+## `contract: faasr` (interim: today's FaaSr-style functions)
+
+Until generation switches to the plain contract, CURATE's Pegasus target runs the
+approved FaaSr functions unchanged. Such a node says `contract: faasr`; the backend
+runs it through `curate-skills/curate_ir/runner/curate_faasr_run.py` instead of
+`curate_run.py` (same command line). That shim:
+
+- calls the function as FaaSr does, `fn(**params["faasr"]["args"])` (`folder`,
+  `input1`…, `output1`…, with `{rank}` left in), with the FaaSr API as globals;
+- `faasr_get_file` / `faasr_put_file` read and write the job's staged files by
+  name, and refuse any file the node does not declare;
+- `faasr_get_folder_list(prefix)` returns the staged inputs as `<folder>/<name>`
+  keys, like FaaSr's S3 keys; `faasr_rank()` reads the copy's value of
+  `params["faasr"]["rank_axis"]` (`max_rank` alongside);
+- writes outputs whose logical name starts with `curate_done` (ordering markers)
+  and fails if any declared output was not uploaded.
+
+The validator accepts FaaSr calls only in such nodes, with a portability warning
+(another backend needs the same shim). `contract` is any of `plain`, `faasr`.
+
+### How CURATE maps a FaaSr spec (`curate-skills/scripts/pegasus_ir.py`)
+
+| FaaSr spec | IR |
+|---|---|
+| step with `rank: N` | `for_each: [rankN]`, axis `rankN: ["1".."N"]` |
+| `{rank}` file | the axis of its ranked writer, else of the ranked steps that read it one copy per rank |
+| unranked step writes a `{rank}` file | one output per copy (`output1_1`, `output1_2`, …) |
+| ranked reader substitutes its own rank (`input1.replace("{rank}", …)`) | paired copy by copy (same axis) |
+| ranked reader lists the folder (`faasr_get_folder_list`) | gather through the alias axis `rankN_all` |
+| unranked reader of a `{rank}` file | gather |
+| edge with no file between its steps | marker file `curate_done__<step>[_{rankN}]`; the later step waits for every copy |
+| end files (written, read by no step) | `outputs`, delivered as `results/<file>`; an explicit list replaces this |
+
+Refused, each with its own message: conditional edges, per-rank N→M handoffs, a
+ranked reader whose code shows neither pattern, secrets, steps without code.
+Packages only warn: they must already be in the image.

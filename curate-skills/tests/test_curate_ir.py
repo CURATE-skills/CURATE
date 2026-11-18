@@ -19,6 +19,7 @@ sys.path.insert(0, str(IR_DIR))
 
 import expand  # noqa: E402
 import validate  # noqa: E402
+from ir_local import RUNNERS, run_locally  # noqa: E402
 
 yaml = pytest.importorskip("yaml")
 
@@ -110,39 +111,22 @@ def test_fanout_output_must_name_its_axis(tmp_path):
 
 # ── the runner shim, with condorio-style staging ──
 
-def run_locally(ir_path: Path, work: Path) -> dict:
-    """Run every expanded node through curate_run.py, each in its own job folder. Returns
-    {file name: path} of everything produced."""
-    ir, errors, _, deps = validate.prepare(validate.load(ir_path))
-    assert errors == []
-    base = Path(ir["_base"])
-    files = {i["file"]: Path(i["location"][len("file://"):]) for i in ir["inputs"]}
-    nodes = {n["id"]: n for n in ir["nodes"]}
-    done = set()
-    while len(done) < len(nodes):
-        ready = [k for k in nodes if k not in done and deps[k] <= done]
-        assert ready, "no node ready: cycle?"
-        for nid in ready:
-            n = nodes[nid]
-            job = work / nid
-            job.mkdir(parents=True)
-            code = job / ("code__" + Path(n["code"]).name)
-            shutil.copy(base / n["code"], code)
-            args = [sys.executable, str(RUNNER), "--code", code.name]
-            for name, v in n["inputs"].items():
-                for f in validate.files_of(v):
-                    shutil.copy(files[f], job / f)
-                    args += ["--in-list" if isinstance(v, list) else "--in", f"{name}={f}"]
-            for name, f in n["outputs"].items():
-                args += ["--out", f"{name}={f}"]
-            import json
-            args += ["--params-json", json.dumps(n.get("params", {}))]
-            p = subprocess.run(args, cwd=job, capture_output=True, text=True, timeout=60)
-            assert p.returncode == 0, (nid, p.stderr)
-            for f in n["outputs"].values():
-                files[f] = job / f
-            done.add(nid)
-    return files
+def test_contract_faasr_is_a_warning_and_unknown_contract_an_error(tmp_path):
+    ir = ir_dict(tmp_path, [{"id": "a", "contract": "faasr", "entrypoint": "a", "outputs": {"o": "o.txt"}},
+                            {"id": "b", "contract": "wasm", "inputs": {"i": "o.txt"}, "outputs": {"o": "p.txt"}}],
+                 outputs=[{"file": "p.txt"}])
+    (tmp_path / "functions" / "a.py").write_text(
+        "def a(folder, output1):\n    faasr_put_file(local_file='x', remote_folder=folder, remote_file=output1)\n")
+    _, errors, warnings, _ = validate.prepare(ir)
+    assert errors == ["b: contract must be one of plain, faasr, got 'wasm'"]
+    assert any(w.startswith("contract faasr (a):") for w in warnings)
+
+
+def test_backend_has_a_runner_per_contract():
+    src = (IR_DIR / "backends" / "pegasus_backend.py").read_text()
+    assert 'RUNNERS = {"plain": SHIM, "faasr": HERE.parent / "runner" / "curate_faasr_run.py"}' in src
+    assert set(validate.CONTRACTS) == set(RUNNERS)
+    assert all(p.is_file() for p in RUNNERS.values())
 
 
 def test_diamond_and_fanout_give_the_same_result(tmp_path):

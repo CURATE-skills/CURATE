@@ -147,6 +147,17 @@ def external_inputs(spec: WorkflowSpec) -> list[dict]:
     return out
 
 
+def faasr_arguments(spec: WorkflowSpec, node) -> dict[str, str]:
+    """The Arguments a FaaSr function is called with: folder, input1.., output1.. (file names,
+    `{rank}` left in). Shared with the Pegasus target's IR (pegasus_ir.py)."""
+    args: dict[str, str] = {"folder": spec.folder}
+    for i, inp in enumerate(node.inputs, 1):
+        args[f"input{i}"] = inp.name
+    for i, out in enumerate(node.outputs, 1):
+        args[f"output{i}"] = out.name
+    return args
+
+
 def emit_faasr_json(spec: WorkflowSpec) -> dict:
     """Convert a WorkflowSpec into a FaaSr workflow JSON dict.
 
@@ -183,11 +194,7 @@ def emit_faasr_json(spec: WorkflowSpec) -> dict:
 
     for node in spec.nodes:
         aname = action_name[node.name]
-        args: dict[str, str] = {"folder": spec.folder}
-        for i, inp in enumerate(node.inputs, 1):
-            args[f"input{i}"] = inp.name
-        for i, out in enumerate(node.outputs, 1):
-            args[f"output{i}"] = out.name
+        args = faasr_arguments(spec, node)
 
         # Always emit InvokeNext (empty list for terminal nodes): FaaSr_py's
         # check_dag reads it unconditionally.
