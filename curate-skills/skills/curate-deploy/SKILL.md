@@ -1,6 +1,6 @@
 ---
 name: curate-deploy
-description: CURATE deploy stage — put a Gate 4-approved bundle on FaaSr (GitHub Actions) under its own per-run name, asking the user before each of the four steps; also lists this project's deployments (--list) and removes one run's deployment (--teardown). Run it by name; /curate runs it after "Approve & deploy" at Gate 4.
+description: CURATE deploy stage — put a Gate 4-approved bundle on FaaSr (GitHub Actions) under its own per-run name, asking the user before each of the four steps, or (Gate 4 "Approve & run on Pegasus") prepare and submit it to Pegasus/HTCondor, asking before each step; also lists this project's FaaSr deployments (--list) and removes one run's deployment (--teardown). Run it by name; /curate runs it after Gate 4.
 argument-hint: "--run <run_id> [--overwrite-own-deploy] | --list | --teardown --run <run_id>"
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*)

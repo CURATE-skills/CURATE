@@ -8,8 +8,8 @@ Precondition: `spec.py begin --run <run> --stage deploy` returned `ok` (Gate 4 w
 **Approve & deploy to FaaSr (cloud)**, and the bundle's hash was recorded then).
 
 **Pegasus runs:** if `spec.py status --run <run>` shows `deploy_choice` `pegasus`, this file does
-not apply and `deploy.py` refuses the run. The Pegasus steps are not available yet: tell the user
-so in one line, then stop as in step 4 below. Nothing is written.
+not apply (and `deploy.py` refuses the run): follow `<plugin>/references/stages/deploy-pegasus.md`
+instead.
 
 Deploying writes to the user's GitHub repo and starts a workflow on their account. **Each of the
 four steps is the user's decision, asked right before it runs.** A yes to one step is never a yes
