@@ -92,6 +92,7 @@ def check(ir):
                             f"but FaaSr/cloud-only backends need a URL or s3:// location")
 
     producers, consumers, ids, seen_origin = {}, {}, set(), set()
+    list_outputs = []  # (node id, output name, [files]) for outputs written once per axis value
     faasr_nodes = []  # contract faasr: one warning for all of them, after the loop
     for n in ir.get("nodes", []):
         nid = n.get("id", "")
@@ -129,6 +130,9 @@ def check(ir):
         if first:
             for m in ABS_PATH.finditer(json.dumps(n.get("params", {}))):
                 warnings.append(f"{origin}: absolute path in params: {m.group(2)}")
+        for k, v in n.get("outputs", {}).items():
+            if isinstance(v, list):
+                list_outputs.append((nid, k, v))
         for f in (f for v in n.get("outputs", {}).values() for f in files_of(v)):
             if f in producers:
                 errors.append(f"file {f} produced by both {producers[f]} and {nid}")
@@ -152,6 +156,14 @@ def check(ir):
             errors.append(f"declared output {o.get('file')} is not produced by any node")
     if not ir.get("outputs"):
         warnings.append("no declared outputs; nothing will be delivered for grading")
+    # A list output (an axis the node does not fan out over) that nothing reads or delivers is
+    # most likely a misspelled file name: say so instead of silently writing unused copies.
+    delivered = {o.get("file") for o in ir.get("outputs", [])}
+    for nid, k, files in list_outputs:
+        if not any(f in consumers or f in delivered for f in files):
+            warnings.append(f"{nid}: output {k} writes {len(files)} files ({', '.join(files[:3])}"
+                            f"{', …' if len(files) > 3 else ''}) that no node reads and no output delivers; "
+                            "is the file name misspelled?")
 
     # cycle check (Kahn)
     deps = {n["id"]: {producers[f] for v in n.get("inputs", {}).values()

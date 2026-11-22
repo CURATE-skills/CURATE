@@ -21,7 +21,8 @@ of the same workflow and other runs' deployments are never touched. The suffix (
 "-<MMDD-HHMM>" of the run that approved Gate 4 (seconds added if that name is taken), inherited
 from the source run for a deploy-only run, $CURATE_DEPLOY_NAME_SUFFIX / --name-suffix if set,
 and pinned once a deploy step ran (older runs keep their "-cs"):
-  functions/<Name><sfx>/<function>.py        (FunctionGitRepo points only there)
+  functions/<Name><sfx>/<function>.py        (FunctionGitRepo points only there; a plain step
+  functions/<Name><sfx>/<function>_main.py    also ships its unchanged function next to its wrapper)
   workflows/<Name><sfx>.json
   .github/workflows/<Name><sfx>-<action>.yml
   S3: <folder><sfx>/... (each action's "folder" argument) and FaaSrLog/<Name><sfx>/...
@@ -242,6 +243,20 @@ def required_secret_names(wf: dict) -> list[str]:
 
 # ── the renamed deploy copy ──────────────────────────────────────────────────
 
+def _file_names(entry, fn: str) -> list[str]:
+    """The .py file names a FunctionGitRepo entry (a path or a list of paths) names."""
+    if entry is None:
+        return [f"{fn}.py"]
+    return [p.rsplit("/", 1)[-1] for p in ([entry] if isinstance(entry, str) else entry)]
+
+
+def function_files(wf: dict) -> list[tuple[str, str]]:
+    """(function, file name) for every file FunctionGitRepo names, by function. A FaaSr-style
+    step has one, <fn>.py; a plain step two: the FaaSr wrapper <fn>.py and its unchanged function
+    <fn>_main.py. The bundle holds each as functions/<file>; the deploy as functions/<new>/<file>."""
+    return [(fn, b) for fn, p in sorted((wf.get("FunctionGitRepo") or {}).items()) for b in _file_names(p, fn)]
+
+
 def deploy_copy(wf: dict, suffix: str, user: str, repo: str, branch: str
                 ) -> tuple[dict, list[dict], list[dict]]:
     """The workflow as curate-deploy would upload it, every repo path it would write, and every
@@ -268,8 +283,15 @@ def deploy_copy(wf: dict, suffix: str, user: str, repo: str, branch: str
         t["bucket"] = ((wf.get("DataStores") or {}).get(t["store"]) or {}).get("Bucket")
     folder = f"functions/{new}"
     fns = sorted({a["FunctionName"] for a in (wf.get("ActionList") or {}).values()})
-    out["FunctionGitRepo"] = {fn: f"{user}/{repo}/{branch}/{folder}/{fn}.py" for fn in fns}
-    targets = [{"step": "publish", "path": f"{folder}/{fn}.py", "kind": "function"} for fn in fns]
+    approved = wf.get("FunctionGitRepo") or {}
+
+    def repo_paths(fn):  # the same shape as the approved entry: one path, or a list of paths
+        base = [f"{user}/{repo}/{branch}/{folder}/{b}" for b in _file_names(approved.get(fn), fn)]
+        return base if isinstance(approved.get(fn), list) else base[0]
+
+    out["FunctionGitRepo"] = {fn: repo_paths(fn) for fn in fns}
+    targets = [{"step": "publish", "path": f"{folder}/{b}", "kind": "function"}
+               for fn in fns for b in _file_names(approved.get(fn), fn)]
     targets.append({"step": "upload", "path": f"workflows/{new}.json", "kind": "workflow"})
     servers = wf.get("ComputeServers") or {}
     for action, a in sorted((wf.get("ActionList") or {}).items()):
@@ -783,7 +805,7 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
                 problems.append(f"{t['path']} already exists ({whose}; {t.get('why')}); refusing — "
                                 + _new_or_own(overwrite_own))
             name = wf["WorkflowName"]
-            for p in [f"workflows/{name}.json"] + [f"functions/{fn}.py" for fn in sorted(copy_wf["FunctionGitRepo"])] \
+            for p in [f"workflows/{name}.json"] + [f"functions/{b}" for _, b in function_files(copy_wf)] \
                      + [f".github/workflows/{name}-{a}.yml" for a in sorted(wf.get("ActionList") or {})]:
                 st, _, _ = gh.get(f"/repos/{user}/{repo}/contents/{p}", ref=branch)
                 if st == 200:
@@ -1159,11 +1181,11 @@ def deploy_step(run: str, step: str, suffix: str, gh: GitHub | None, token: str 
         if step == "publish":
             # Every file is read and leak-checked before the first one is pushed.
             files = []
-            for fn in sorted(copy_wf["FunctionGitRepo"]):
-                src = bundle / "functions" / f"{fn}.py"
+            for fn, b in function_files(copy_wf):
+                src = bundle / "functions" / b
                 if not src.is_file():
-                    raise StepError(f"the bundle has no functions/{fn}.py")
-                files.append((fn, f"functions/{new}/{fn}.py", _checked(src.read_text(), f"functions/{fn}.py", extra)))
+                    raise StepError(f"the bundle has no functions/{b}")
+                files.append((fn, f"functions/{new}/{b}", _checked(src.read_text(), f"functions/{b}", extra)))
             for fn, path, code in files:
                 put_file(gh, user, repo, path, code, f"Add/update {fn} (curate-skills)", branch)
                 _log_written(run_p, {**log_base, "repo": f"{user}/{repo}", "branch": branch, "path": path,
@@ -1282,8 +1304,8 @@ def verify_identical(gh: GitHub, user: str, repo: str, branch: str, bundle: Path
     """GET each deployed repo file and compare it, byte for byte, with what publish, upload and
     register would write for this run. Returns (identical paths, problems)."""
     new = copy_wf["WorkflowName"]
-    expected = {f"functions/{new}/{fn}.py": (bundle / "functions" / f"{fn}.py").read_text()
-                for fn in copy_wf["FunctionGitRepo"] if (bundle / "functions" / f"{fn}.py").is_file()}
+    expected = {f"functions/{new}/{b}": (bundle / "functions" / b).read_text()
+                for _, b in function_files(copy_wf) if (bundle / "functions" / b).is_file()}
     expected[f"workflows/{new}.json"] = json.dumps(copy_wf, indent=2)
     expected.update(expected_actions_files(copy_wf))
     same, problems = [], []
@@ -1452,8 +1474,8 @@ def _expected_repo_contents(run_p: Path, s: dict, bundle: Path) -> dict[str, str
         return {}
     copy_wf = json.loads(copy_path.read_text())
     new = copy_wf["WorkflowName"]
-    out = {f"functions/{new}/{fn}.py": (bundle / "functions" / f"{fn}.py").read_text()
-           for fn in copy_wf.get("FunctionGitRepo") or {} if (bundle / "functions" / f"{fn}.py").is_file()}
+    out = {f"functions/{new}/{b}": (bundle / "functions" / b).read_text()
+           for _, b in function_files(copy_wf) if (bundle / "functions" / b).is_file()}
     out[f"workflows/{new}.json"] = json.dumps(copy_wf, indent=2)
     try:
         out.update(expected_actions_files(copy_wf))

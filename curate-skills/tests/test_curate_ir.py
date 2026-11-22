@@ -110,6 +110,33 @@ def test_output_on_an_axis_the_node_does_not_fan_out_over_is_a_list(tmp_path):
     assert errors == [] and deps["use__2"] == {"split"}
 
 
+def test_misspelled_rank_files_are_still_reported(tmp_path):
+    """List outputs replaced an error that, by accident, also caught typos: each typo still gets
+    a clear message."""
+    # misspelled axis: an error, as before
+    ir = ir_dict(tmp_path, [{"id": "s", "outputs": {"b": "batch_{rr}.txt"}}], axes={"r": [1, 2]})
+    _, errors, _, _ = validate.prepare(ir)
+    assert "s output: placeholder {rr} is not a declared axis" in errors
+    # misspelled on the writer's side, read by a consumer: the consumer's files have no producer
+    ir = ir_dict(tmp_path, [{"id": "s", "outputs": {"b": "btch_{r}.txt"}},
+                            {"id": "u", "for_each": ["r"], "inputs": {"b": "batch_{r}.txt"}, "outputs": {"o": "o_{r}"}}],
+                 axes={"r": [1, 2]})
+    _, errors, _, _ = validate.prepare(ir)
+    assert "file batch_2.txt (used by u__2) has no producer and is not an input" in errors
+    # misspelled with no consumer at all: a warning names it instead of a silent list output
+    ir = ir_dict(tmp_path, [{"id": "s", "outputs": {"b": "btch_{r}.txt", "m": "main.txt"}},
+                            {"id": "u", "inputs": {"m": "main.txt"}, "outputs": {"o": "o"}}],
+                 axes={"r": [1, 2]}, outputs=[{"file": "o"}])
+    _, errors, warnings, _ = validate.prepare(ir)
+    assert errors == []
+    assert warnings == ["s: output b writes 2 files (btch_1.txt, btch_2.txt) that no node reads and no output "
+                        "delivers; is the file name misspelled?"]
+    # a list output that is delivered is fine
+    ir["outputs"].append({"file": "btch_{r}.txt"})
+    _, _, warnings, _ = validate.prepare(ir)
+    assert warnings == []
+
+
 def test_folder_input_expands_like_a_gather(tmp_path):
     ir = ir_dict(tmp_path, [{"id": "m", "for_each": ["r"], "outputs": {"o": "part_{r}.csv"}},
                             {"id": "all", "inputs": {"parts": {"folder": "part_{r}.csv"}}, "outputs": {"o": "x"}},

@@ -946,3 +946,64 @@ def test_reuse_refuses_an_unfinished_source_or_a_run_that_started_deploying(reus
     (run / "state.json").write_text(json.dumps(s))
     code, out = step(capsys, run, "reuse", FakeGitHub(files=files, commits=commits), "--confirmed")
     assert code == 1 and "already started its own deploy steps" in out["error"]
+
+
+# ── a plain step ships two files: its FaaSr wrapper and its unchanged function ──
+
+PLAIN_MAIN = "def main(inputs, outputs, params):\n    open(outputs['output1'], 'w').write('png')\n"
+
+
+@pytest.fixture
+def plain_run(run):
+    """plot_weather is a plain step: FunctionGitRepo lists the wrapper and plot_weather_main.py."""
+    bundle = Path(json.loads((run / "state.json").read_text())["bundle_dir"])
+    wf = workflow()
+    wf["FunctionGitRepo"]["plot_weather"] = ["alice/faasr-actions/main/functions/plot_weather.py",
+                                             "alice/faasr-actions/main/functions/plot_weather_main.py"]
+    (bundle / "workflow.json").write_text(json.dumps(wf, indent=2))
+    (bundle / "functions" / "plot_weather.py").write_text("# wrapper\ndef plot_weather(folder): pass\n")
+    (bundle / "functions" / "plot_weather_main.py").write_text(PLAIN_MAIN)
+    return run
+
+
+def test_deploy_copy_keeps_both_files_of_a_plain_step(plain_run, env, capsys):
+    code, out = pre(capsys, plain_run, FakeGitHub())
+    assert code == 0 and out["ok"], out["problems"]
+    assert out["function_git_repo"]["plot_weather"] == [
+        "alice/faasr-actions/main/functions/weather-cs/plot_weather.py",
+        "alice/faasr-actions/main/functions/weather-cs/plot_weather_main.py"]
+    assert [t["path"] for t in out["targets"] if t["kind"] == "function"] == [
+        "functions/weather-cs/download_station.py", "functions/weather-cs/plot_weather.py",
+        "functions/weather-cs/plot_weather_main.py"]
+    assert D.function_files(workflow()) == [("download_station", "download_station.py"),
+                                            ("plot_weather", "plot_weather.py")]
+
+
+def test_publish_pushes_the_unchanged_function_byte_for_byte(plain_run, env, capsys, runners):
+    s = json.loads((plain_run / "state.json").read_text())
+    s.update(stage="deploy", deploy_choice="yes", bundle_hash=D.tree_hash(Path(s["bundle_dir"])))
+    (plain_run / "state.json").write_text(json.dumps(s))
+    fake = FakeGitHub(writable=True)
+    runners["fake"] = fake
+    code, out = step(capsys, plain_run, "publish", fake, "--confirmed")
+    assert code == 0 and out["ok"], out
+    assert [p for p, _ in fake.puts] == ["functions/weather-cs/download_station.py",
+                                         "functions/weather-cs/plot_weather.py",
+                                         "functions/weather-cs/plot_weather_main.py"]
+    assert fake.files["functions/weather-cs/plot_weather_main.py"].encode() == PLAIN_MAIN.encode()
+
+
+def test_verify_compares_both_files_of_a_plain_step(plain_run, env):
+    bundle = Path(json.loads((plain_run / "state.json").read_text())["bundle_dir"])
+    copy_wf, targets, _ = D.deploy_copy(json.loads((bundle / "workflow.json").read_text()), "-cs",
+                                        "alice", "faasr-actions", "main")
+    files = {f"functions/weather-cs/{b}": (bundle / "functions" / b).read_text() for _, b in D.function_files(copy_wf)}
+    files["workflows/weather-cs.json"] = json.dumps(copy_wf, indent=2)
+    targets = [t for t in targets if t["step"] in ("publish", "upload")]  # the Actions files are tested above
+    gh = D.GitHub(FAKE["GH_PAT"], opener=FakeGitHub(files=files))
+    same, problems = D.verify_identical(gh, "alice", "faasr-actions", "main", bundle, copy_wf, targets)
+    assert problems == [] and "functions/weather-cs/plot_weather_main.py" in same
+    files["functions/weather-cs/plot_weather_main.py"] += "# edited\n"
+    gh = D.GitHub(FAKE["GH_PAT"], opener=FakeGitHub(files=files))
+    _, problems = D.verify_identical(gh, "alice", "faasr-actions", "main", bundle, copy_wf, targets)
+    assert problems == ["functions/weather-cs/plot_weather_main.py differs from what this run would deploy"]
