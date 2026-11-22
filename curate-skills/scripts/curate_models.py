@@ -41,6 +41,13 @@ class IOSpec(BaseModel):
     name: str
     type: str = "any"
     description: str = ""
+    # Plain function contract (scripts/plain_contract.py). An input of kind "folder" reaches the
+    # function as ONE local directory holding every workflow file whose name starts with this
+    # name's prefix (the text before its first {rank}, or the whole name).
+    kind: Literal["file", "folder"] = "file"
+    # How a RANKED step reads a {rank} input: "own" (its own copy, the default) or "all" (every
+    # copy, as a list). Ignored elsewhere: an unranked step always gets every copy.
+    read: Optional[Literal["own", "all"]] = None
 
     @field_validator("name")
     @classmethod

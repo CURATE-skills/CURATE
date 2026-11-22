@@ -18,15 +18,25 @@ v0.2 adds, on top of v0.1:
 Rules
 - Placeholders {axis} may appear in node input/output file names, in string
   params, and in workflow inputs/outputs (file, location, deliver_as).
-- A fan-out copy gets each of its axis values in params (unless params sets it).
+- A fan-out copy gets each of its axis values in params (unless params sets it,
+  or passes it under another name as a whole value: `rank: "{rank3}"`).
 - An output of a fan-out node must contain every axis it fans out over
   (otherwise copies would write the same file).
 - An input placeholder whose axis is NOT in the node's for_each is a gather:
   the function receives a list of paths, in axis-value order.
+- The same holds for outputs: an output placeholder whose axis is NOT in the
+  node's for_each makes that output a LIST of paths, one per value, and the
+  function must write them all (e.g. one step that writes every batch).
+- A folder input, `inputs: {parts: {folder: "part_{r}.csv"}}` (a pattern or a
+  list of patterns), is expanded the same way into {"folder": [files]}; the
+  function receives ONE local directory holding those files.
+- A param whose whole value is one placeholder ("{r}") takes the axis value,
+  as an int when the value is all digits.
 - Axis values must be file-name safe: letters, digits, '.', '_', '-'.
 
-Expansion produces v0.1-shaped nodes (input values may be lists), so the
-validator's checks and every backend work on the expanded form.
+Expansion produces v0.1-shaped nodes (input and output values may be lists,
+an input may be {"folder": [files]}), so the validator's checks and every
+backend work on the expanded form.
 """
 import copy
 import itertools
@@ -50,6 +60,40 @@ def _fill_obj(obj, assign):
     if isinstance(obj, dict):
         return {k: _fill_obj(v, assign) for k, v in obj.items()}
     return obj
+
+
+def _fill_params(obj, assign):
+    """Like _fill_obj, but a string that is exactly one placeholder ("{r}") becomes the axis
+    value, as an int when it is all digits (so a rank arrives as a number)."""
+    if isinstance(obj, str):
+        m = PLACEHOLDER.fullmatch(obj)
+        if m and m.group(1) in assign:
+            v = assign[m.group(1)]
+            return int(v) if v.isdigit() else v
+        return _fill(obj, assign)
+    if isinstance(obj, list):
+        return [_fill_params(x, assign) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _fill_params(v, assign) for k, v in obj.items()}
+    return obj
+
+
+def patterns(value):
+    """The file-name patterns of a node input value: a name, a list of names, or a folder input
+    {folder: name | [names]}."""
+    if isinstance(value, dict):
+        f = value.get("folder")
+        return [str(x) for x in (f if isinstance(f, list) else [] if f is None else [f])]
+    if isinstance(value, list):
+        return [str(x) for x in value]
+    return [str(value)]
+
+
+def _spread(text, axes):
+    """A name whose placeholders are all filled stays one name; placeholders left over (axes the
+    node does not fan out over) make it a list, one name per combination, in axis order."""
+    left = [a for a in dict.fromkeys(PLACEHOLDER.findall(text)) if a in axes]
+    return [_fill(text, g) for g in _combos(left, axes)] if left else text
 
 
 def _combos(names, axes):
@@ -111,8 +155,11 @@ def expand(ir):
         if bad_fe:
             errors.append(f"{nid}: for_each uses undeclared axes {bad_fe}")
             continue
-        for f in (n.get("inputs") or {}).values():
-            unknown(str(f), f"{nid} input")
+        for k, f in (n.get("inputs") or {}).items():
+            if isinstance(f, dict) and not patterns(f):
+                errors.append(f"{nid}: folder input {k} needs folder: a file name or a list of names")
+            for pat in patterns(f):
+                unknown(pat, f"{nid} input")
         for name, f in (n.get("outputs") or {}).items():
             unknown(str(f), f"{nid} output")
             used = set(PLACEHOLDER.findall(str(f)))
@@ -121,9 +168,6 @@ def expand(ir):
                 errors.append(f"{nid}: output {name}={f} must contain "
                               + ", ".join("{%s}" % a for a in missing)
                               + " (otherwise its copies write the same file)")
-            extra = [a for a in used if a in axes and a not in fe]
-            if extra:
-                errors.append(f"{nid}: output {name}={f} uses {extra} but the node does not fan out over it")
 
         for assign in _combos(fe, axes):
             m = copy.deepcopy({k: v for k, v in n.items() if k != "for_each"})
@@ -131,19 +175,25 @@ def expand(ir):
             m["_assign"] = dict(assign)
             if fe:
                 m["id"] = nid + "__" + "__".join(_safe(assign[a]) for a in fe)
-            m["outputs"] = {k: _fill(str(v), assign) for k, v in (n.get("outputs") or {}).items()}
+            m["outputs"] = {k: _spread(_fill(str(v), assign), axes) for k, v in (n.get("outputs") or {}).items()}
             inputs = {}
             for k, v in (n.get("inputs") or {}).items():
-                v = _fill(str(v), assign)
-                gather = [a for a in dict.fromkeys(PLACEHOLDER.findall(v)) if a in axes]
-                if gather:
-                    inputs[k] = [_fill(v, g) for g in _combos(gather, axes)]
+                if isinstance(v, dict):  # folder input: every file of every pattern, in order
+                    files = []
+                    for pat in patterns(v):
+                        got = _spread(_fill(pat, assign), axes)
+                        files += got if isinstance(got, list) else [got]
+                    inputs[k] = {"folder": files}
                 else:
-                    inputs[k] = v
+                    inputs[k] = _spread(_fill(str(v), assign), axes)
             m["inputs"] = inputs
-            params = _fill_obj(copy.deepcopy(n.get("params") or {}), assign)
+            raw_params = n.get("params") or {}
+            renamed = {m.group(1) for v in raw_params.values() if isinstance(v, str)
+                       for m in [PLACEHOLDER.fullmatch(v)] if m}
+            params = _fill_params(copy.deepcopy(raw_params), assign)
             for a, val in assign.items():
-                params.setdefault(a, val)
+                if a not in renamed:  # a param that takes the whole value already passes it on
+                    params.setdefault(a, val)
             m["params"] = params
             nodes.append(m)
     out["nodes"] = nodes

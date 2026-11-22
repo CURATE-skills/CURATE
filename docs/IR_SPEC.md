@@ -106,7 +106,40 @@ Rules:
 - An output of a fan-out node must contain every axis it fans out over.
 - An input placeholder for an axis the node does *not* fan out over is a **gather**:
   the function receives a list of paths, in axis order.
+- The same holds for **outputs**: an output placeholder for an axis the node does
+  *not* fan out over makes that output a list of paths, one per value, and the
+  function must write every one (a 1 -> N "scatter" by a single step).
+- A copy gets each of its axis values in `params` (as a string), unless `params`
+  already sets that name or passes the value on under another name. A param whose
+  whole value is one placeholder (`rank: "{rank3}"`) takes the axis value, as an
+  int when the value is all digits.
 - Copies are named `<id>__<value>` (e.g. `detect_ice__2019`).
+
+### Folder inputs
+
+An input can be a **folder**: the function receives one local directory and lists
+it (`os.listdir`), instead of a path or a list of paths.
+
+```yaml
+  - id: shuffle
+    inputs:  {counts: {folder: "map_counts_{rank3}.json"}}   # or a list of names / patterns
+    outputs: {parts: "part_{rank5}.json"}                    # not fanned out: a list of 5 paths
+```
+
+`folder:` takes a file name or a list of them; each may hold placeholders, which
+expand like a gather (every value of an axis the node does not fan out over). After
+expansion the value is `{folder: [file, …]}`. The files are ordinary dataflow (each
+needs a producer or a workflow input), so the backend stages them like any input;
+the runner (`curate_run.py --in-dir name=file`) links them into one directory.
+
+### The runner's command line (`curate-skills/curate_ir/runner/curate_run.py`)
+
+`--in name=file` (a path), `--in-list name=file` (a gather), `--in-dir name=file`
+(a folder input), `--out name=file`, `--out-list name=file` (a list output), and
+`--params-json`. The function is called `main(inputs, outputs, params)`, and every
+declared output must exist afterwards. Inputs and outputs whose logical name starts
+with `curate_done` are ordering markers: the function does not see them, and the
+runner writes the output markers (empty) after `main` returns.
 - `expand.py ir.yaml` prints the expanded node list; validation and every backend
   work on the expanded form.
 
@@ -139,19 +172,25 @@ runs it through `curate-skills/curate_ir/runner/curate_faasr_run.py` instead of
 The validator accepts FaaSr calls only in such nodes, with a portability warning
 (another backend needs the same shim). `contract` is any of `plain`, `faasr`.
 
-### How CURATE maps a FaaSr spec (`curate-skills/scripts/pegasus_ir.py`)
+### How CURATE maps a spec (`curate-skills/scripts/pegasus_ir.py`)
 
-| FaaSr spec | IR |
-|---|---|
-| step with `rank: N` | `for_each: [rankN]`, axis `rankN: ["1".."N"]` |
-| `{rank}` file | the axis of its ranked writer, else of the ranked steps that read it one copy per rank |
-| unranked step writes a `{rank}` file | one output per copy (`output1_1`, `output1_2`, …) |
-| ranked reader substitutes its own rank (`input1.replace("{rank}", …)`) | paired copy by copy (same axis) |
-| ranked reader lists the folder (`faasr_get_folder_list`) | gather through the alias axis `rankN_all` |
-| unranked reader of a `{rank}` file | gather |
-| edge with no file between its steps | marker file `curate_done__<step>[_{rankN}]`; the later step waits for every copy |
-| end files (written, read by no step) | `outputs`, delivered as `results/<file>`; an explicit list replaces this |
+A step whose code follows the plain contract (`curate-skills/scripts/plain_contract.py`)
+becomes a plain node: slots `input1`…, `output1`… in the spec's order, `entrypoint`
+`main`. FaaSr-style code that has not been migrated yet becomes a `contract: faasr` node.
+
+| Spec | Plain step | FaaSr-style step |
+|---|---|---|
+| step with `rank: N` | `for_each: [rankN]`, axis `rankN: ["1".."N"]`; `params: {rank: "{rankN}", max_rank: N}` (an int per copy) | same axis; `params.faasr` |
+| `{rank}` file | the axis of its ranked writer, else of the ranked steps that read it one copy per rank | same |
+| unranked step writes a `{rank}` file | one list output (`output1: "f_{rankN}"`, not fanned out) | one output per copy (`output1_1`, …) |
+| ranked reader of its own copy | the default: paired copy by copy (same axis) | code substitutes its rank (`input1.replace("{rank}", …)`) |
+| ranked reader of every copy | the input says `read: all`: gather through the alias axis `rankN_all` | code lists the folder (`faasr_get_folder_list`) |
+| unranked reader of a `{rank}` file | gather (a list) | gather |
+| input `kind: folder` | `{folder: [...]}`: every workflow file whose name starts with the input's prefix (the text before `{rank}`), all copies | — |
+| edge with no file between its steps | marker file `curate_done__<step>[_{rankN}]`; the later step waits for every copy | same |
+| end files (written, read by no step) | `outputs`, delivered as `results/<file>`; an explicit list replaces this | same |
 
 Refused, each with its own message: conditional edges, per-rank N→M handoffs, a
-ranked reader whose code shows neither pattern, secrets, steps without code.
+FaaSr-style ranked reader whose code shows neither pattern, a folder input that
+matches no workflow file, secrets, steps without code.
 Packages only warn: they must already be in the image.

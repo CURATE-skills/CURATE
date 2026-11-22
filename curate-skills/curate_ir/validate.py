@@ -53,7 +53,10 @@ def load(path):
 
 
 def files_of(value):
-    """An input value is a file name, or (after a gather) a list of file names."""
+    """The file names of an expanded input or output value: a name, a list of names (a gather,
+    or an output written once per axis value), or a folder input {"folder": [names]}."""
+    if isinstance(value, dict):
+        return list(value.get("folder") or [])
     return value if isinstance(value, list) else [value]
 
 
@@ -126,13 +129,15 @@ def check(ir):
         if first:
             for m in ABS_PATH.finditer(json.dumps(n.get("params", {}))):
                 warnings.append(f"{origin}: absolute path in params: {m.group(2)}")
-        for f in n.get("outputs", {}).values():
+        for f in (f for v in n.get("outputs", {}).values() for f in files_of(v)):
             if f in producers:
                 errors.append(f"file {f} produced by both {producers[f]} and {nid}")
             if f in external:
                 errors.append(f"file {f} is both a workflow input and produced by {nid}")
             producers[f] = nid
-        for v in n.get("inputs", {}).values():
+        for k, v in n.get("inputs", {}).items():
+            if isinstance(v, dict) and not files_of(v):
+                errors.append(f"{nid}: folder input {k} holds no files")
             for f in files_of(v):
                 consumers.setdefault(f, []).append(nid)
 

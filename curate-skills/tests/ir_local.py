@@ -12,6 +12,9 @@ sys.path.insert(0, str(IR_DIR))
 
 import validate  # noqa: E402
 
+sys.path.insert(0, str(IR_DIR / "backends"))
+from pegasus_backend import runner_args  # noqa: E402
+
 RUNNERS = {"plain": IR_DIR / "runner" / "curate_run.py", "faasr": IR_DIR / "runner" / "curate_faasr_run.py"}
 
 
@@ -34,16 +37,16 @@ def run_locally(ir_path: Path, work: Path, inputs_dir: Path | None = None) -> di
             shutil.copy(base / n["code"], code)
             args = [sys.executable, str(RUNNERS[n.get("contract", "plain")]), "--code", code.name,
                     "--entrypoint", n.get("entrypoint", "main")]
-            for name, v in n["inputs"].items():
+            for v in n["inputs"].values():
                 for f in validate.files_of(v):
                     shutil.copy(files[f], job / f)
-                    args += ["--in-list" if isinstance(v, list) else "--in", f"{name}={f}"]
-            for name, f in n["outputs"].items():
-                args += ["--out", f"{name}={f}"]
+            for _, a in runner_args(n):
+                args += a
             args += ["--params-json", json.dumps(n.get("params", {}))]
             p = subprocess.run(args, cwd=job, capture_output=True, text=True, timeout=120)
             assert p.returncode == 0, (nid, p.stderr[-3000:])
-            for f in n["outputs"].values():
-                files[f] = job / f
+            for v in n["outputs"].values():
+                for f in validate.files_of(v):
+                    files[f] = job / f
             done.add(nid)
     return files

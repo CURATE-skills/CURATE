@@ -47,6 +47,20 @@ SHIM = HERE.parent / "runner" / "curate_run.py"
 RUNNERS = {"plain": SHIM, "faasr": HERE.parent / "runner" / "curate_faasr_run.py"}
 
 
+def runner_args(n):
+    """(slot, [flag, "slot=file"]) for every input and output file of an expanded node, as the
+    runner (runner/curate_run.py) takes them: --in / --in-list (a gather) / --in-dir (a folder
+    input), --out / --out-list (an output written once per axis value)."""
+    out = []
+    for name, v in n.get("inputs", {}).items():
+        flag = "--in-dir" if isinstance(v, dict) else "--in-list" if isinstance(v, list) else "--in"
+        out += [(name, [flag, f"{name}={f}"]) for f in files_of(v)]
+    for name, v in n.get("outputs", {}).items():
+        flag = "--out-list" if isinstance(v, list) else "--out"
+        out += [(name, [flag, f"{name}={f}"]) for f in files_of(v)]
+    return out
+
+
 def normalize_image(url):
     """Pegasus parses docker://python:3.12 as host 'python:3.12'; it needs docker:///repo:tag."""
     for scheme in ("docker://", "library://", "shub://", "oras://"):
@@ -127,14 +141,14 @@ def emit(ir, work, runtime):
         job = Job(origin, _id=n["id"])
         job.add_args("--code", code_lfn, "--entrypoint", n.get("entrypoint", "main"))
         job.add_inputs(File(code_lfn))
-        for name, v in n.get("inputs", {}).items():
-            flag = "--in-list" if isinstance(v, list) else "--in"
+        for name, args in runner_args(n):
+            job.add_args(*args)
+        for v in n.get("inputs", {}).values():
             for f in files_of(v):
-                job.add_args(flag, f"{name}={f}")
                 job.add_inputs(File(f))
-        for name, f in n.get("outputs", {}).items():
-            job.add_args("--out", f"{name}={f}")
-            job.add_outputs(File(f), stage_out=f in deliverables)
+        for v in n.get("outputs", {}).values():
+            for f in files_of(v):
+                job.add_outputs(File(f), stage_out=f in deliverables)
         job.add_args("--params-json", "'" + json.dumps(n.get("params", {})) + "'")
         wf.add_jobs(job)
 

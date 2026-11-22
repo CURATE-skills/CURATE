@@ -4,6 +4,7 @@ The examples run through the real runner shim (curate_ir/runner/curate_run.py) i
 executor that does what Pegasus's condorio staging does: each job runs in its own empty folder,
 gets its input files copied in under their flat names, and its outputs are picked up by name.
 """
+import json
 import shutil
 import subprocess
 import sys
@@ -95,12 +96,49 @@ def test_fanout_expands_and_gathers_in_axis_order():
     assert gather["inputs"]["rows"] == [f"row_{w}.json" for w in (2019, 2020, 2021, 2022)]
 
 
-def test_output_on_an_axis_the_node_does_not_fan_out_over_is_refused(tmp_path):
-    # One step writing one file per value without for_each: today's IR refuses it; the CURATE
-    # emitter lists such outputs one by one instead.
-    ir = ir_dict(tmp_path, [{"id": "split", "outputs": {"b": "batch_{r}.txt"}}], axes={"r": [1, 2]})
-    _, errors = expand.expand(ir)
-    assert any("does not fan out over it" in e for e in errors)
+def test_output_on_an_axis_the_node_does_not_fan_out_over_is_a_list(tmp_path):
+    # One step writing one file per value without for_each (a fan-out writer): its output is the
+    # list of every copy, the write-side mirror of a gather.
+    ir = ir_dict(tmp_path, [{"id": "split", "outputs": {"b": "batch_{r}.txt"}},
+                            {"id": "use", "for_each": ["r"], "inputs": {"b": "batch_{r}.txt"},
+                             "outputs": {"o": "o_{r}.txt"}}], axes={"r": [1, 2]})
+    exp, errors = expand.expand(ir)
+    assert errors == []
+    split = next(n for n in exp["nodes"] if n["id"] == "split")
+    assert split["outputs"] == {"b": ["batch_1.txt", "batch_2.txt"]}
+    _, errors, _, deps = validate.prepare(ir)
+    assert errors == [] and deps["use__2"] == {"split"}
+
+
+def test_folder_input_expands_like_a_gather(tmp_path):
+    ir = ir_dict(tmp_path, [{"id": "m", "for_each": ["r"], "outputs": {"o": "part_{r}.csv"}},
+                            {"id": "all", "inputs": {"parts": {"folder": "part_{r}.csv"}}, "outputs": {"o": "x"}},
+                            {"id": "two", "inputs": {"parts": {"folder": ["part_1.csv", "part_{r}.csv"]}},
+                             "outputs": {"o": "y"}}],
+                 axes={"r": ["1", "2", "3"]}, outputs=[{"file": "x"}, {"file": "y"}])
+    exp, errors, _, deps = validate.prepare(ir)
+    assert errors == []
+    nodes = {n["id"]: n for n in exp["nodes"]}
+    assert nodes["all"]["inputs"] == {"parts": {"folder": ["part_1.csv", "part_2.csv", "part_3.csv"]}}
+    assert nodes["two"]["inputs"]["parts"]["folder"][0] == "part_1.csv"
+    assert deps["all"] == {"m__1", "m__2", "m__3"}
+
+
+def test_empty_folder_input_is_an_error(tmp_path):
+    ir = ir_dict(tmp_path, [{"id": "a", "inputs": {"p": {"folder": []}}, "outputs": {"o": "o"}}])
+    _, errors, _, _ = validate.prepare(ir)
+    assert any("folder input p needs folder" in e for e in errors)
+
+
+def test_whole_value_param_takes_the_axis_value_as_an_int(tmp_path):
+    ir = ir_dict(tmp_path, [{"id": "m", "for_each": ["r", "w"], "outputs": {"o": "o_{r}_{w}"},
+                             "params": {"rank": "{r}", "label": "copy {r}", "name": "{w}"}}],
+                 axes={"r": ["1", "2"], "w": ["a", "b"]})
+    exp, errors = expand.expand(ir)
+    assert errors == []
+    p = next(n for n in exp["nodes"] if n["id"] == "m__2__b")["params"]
+    # r and w are passed on under other names, so they are not added again
+    assert p == {"rank": 2, "label": "copy 2", "name": "b"}
 
 
 def test_fanout_output_must_name_its_axis(tmp_path):
@@ -145,3 +183,47 @@ def test_runner_refuses_missing_inputs_and_unwritten_outputs(tmp_path):
     p = subprocess.run([sys.executable, str(RUNNER), "--code", str(code), "--out", "o=o.txt"],
                        cwd=tmp_path, capture_output=True, text=True, timeout=60)
     assert p.returncode != 0 and "declared outputs not written" in p.stderr
+
+
+def run_plain(tmp_path, body, args, files=()):
+    (tmp_path / "fn.py").write_text("import json, os\n\ndef main(inputs, outputs, params):\n" + body)
+    for f in files:
+        (tmp_path / f).write_text(f"content of {f}")
+    return subprocess.run([sys.executable, str(RUNNER), "--code", "fn.py", *args],
+                          cwd=tmp_path, capture_output=True, text=True, timeout=60)
+
+
+def test_runner_list_outputs_must_all_be_written(tmp_path):
+    body = "    for p in outputs['o'][:1]:\n        open(p, 'w').write('x')\n"
+    p = run_plain(tmp_path, body, ["--out-list", "o=a.txt", "--out-list", "o=b.txt"])
+    assert p.returncode != 0 and "declared outputs not written: ['b.txt']" in p.stderr
+    body = "    assert outputs == {'o': ['a.txt', 'b.txt']}, outputs\n" \
+           "    for p in outputs['o']:\n        open(p, 'w').write('x')\n"
+    p = run_plain(tmp_path, body, ["--out-list", "o=a.txt", "--out-list", "o=b.txt"])
+    assert p.returncode == 0, p.stderr
+
+
+def test_runner_folder_input_is_one_directory(tmp_path):
+    body = ("    d = inputs['parts']\n"
+            "    assert os.path.isdir(d), d\n"
+            "    names = sorted(os.listdir(d))\n"
+            "    texts = [open(os.path.join(d, n)).read() for n in names]\n"
+            "    json.dump([names, texts, inputs['one']], open(outputs['o'], 'w'))\n")
+    p = run_plain(tmp_path, body, ["--in-dir", "parts=part_2.csv", "--in-dir", "parts=part_1.csv",
+                                   "--in", "one=x.txt", "--out", "o=o.json"],
+                  files=["part_1.csv", "part_2.csv", "x.txt"])
+    assert p.returncode == 0, p.stderr
+    names, texts, one = json.loads((tmp_path / "o.json").read_text())
+    assert names == ["part_1.csv", "part_2.csv"] and texts == ["content of part_1.csv", "content of part_2.csv"]
+    assert one == "x.txt"
+    p = run_plain(tmp_path, "    pass\n", ["--in-dir", "parts=missing.csv"])
+    assert p.returncode != 0 and "declared inputs not present: ['missing.csv']" in p.stderr
+
+
+def test_runner_writes_markers_and_hides_them_from_the_function(tmp_path):
+    body = "    assert inputs == {'a': 'x.txt'} and outputs == {} and params == {'rank': 2}, (inputs, outputs)\n"
+    p = run_plain(tmp_path, body, ["--in", "a=x.txt", "--in-list", "curate_done_after_s=m_1",
+                                   "--out", "curate_done=done", "--params-json", '{"rank": 2}'],
+                  files=["x.txt", "m_1"])
+    assert p.returncode == 0, p.stderr
+    assert (tmp_path / "done").read_text() == ""

@@ -10,7 +10,7 @@ import pytest
 
 import emit
 import pegasus_ir as P
-from curate_models import WorkflowSpec
+from curate_models import IOSpec, WorkflowSpec
 from ir_local import IR_DIR, run_locally
 
 yaml = pytest.importorskip("yaml")
@@ -337,3 +337,131 @@ def test_runner_covers_the_stub_api():
                 if isinstance(n, ast.FunctionDef) and n.name.startswith("faasr_")}
     runner_src = FAASR_RUNNER.read_text()
     assert stub_api and all(f"def {name}(" in runner_src for name in stub_api)
+
+
+# ── plain functions (plain_contract.py): the same spec shapes, run by the plain IR runner ──
+
+PLAIN_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "e2-stages-plain"
+
+
+def plain_e2_spec() -> WorkflowSpec:
+    return WorkflowSpec.model_validate(json.loads((PLAIN_FIXTURES / "spec-with-code.json").read_text()))
+
+
+def word_totals(files):
+    totals = {}
+    for i in range(1, 6):
+        for word, n in json.loads(files[f"word_count_{i}.json"].read_text()).items():
+            assert word not in totals  # each reducer owns its words
+            totals[word] = n
+    return totals
+
+
+def test_plain_fixture_is_plain_and_matches_the_faasr_spec():
+    import plain_contract as PC
+    plain, faasr = plain_e2_spec(), e2_spec()
+    assert all(PC.is_plain(n.code) for n in plain.nodes)
+    assert not any(PC.is_plain(n.code) for n in faasr.nodes)
+    for p, f in zip(plain.nodes, faasr.nodes):  # same steps, ranks and file names
+        assert (p.name, p.rank, [i.name for i in p.inputs], [o.name for o in p.outputs]) == \
+               (f.name, f.rank, [i.name for i in f.inputs], [o.name for o in f.outputs])
+        assert p.code == (PLAIN_FIXTURES / "functions" / f"{p.name}.py").read_text()
+
+
+def test_plain_e2_mapping(tmp_path):
+    folder = build_folder(tmp_path, plain_e2_spec())
+    ir = yaml.safe_load((folder / "ir.yaml").read_text())
+    assert ir["axes"] == {"rank3": ["1", "2", "3"], "rank5": ["1", "2", "3", "4", "5"]}
+    assert all("contract" not in n and "entrypoint" not in n for n in ir["nodes"])  # plain, main
+    by_id = {n["id"]: n for n in ir["nodes"]}
+    assert by_id["map"]["params"] == {"rank": "{rank3}", "max_rank": 3}
+    assert by_id["split"]["params"] == {}
+    assert by_id["shuffle"]["inputs"] == {"input1": {"folder": ["map_counts_{rank3}.json"]}}
+    jobs = expanded(folder)
+    assert len(jobs) == 11
+    assert jobs["split"]["outputs"] == {"output1": [f"text_batch_{i}.txt" for i in (1, 2, 3)]}  # list
+    assert jobs["map__2"]["inputs"] == {"input1": "text_batch_2.txt"}                          # own copy
+    assert jobs["map__2"]["params"] == {"rank": 2, "max_rank": 3}                              # int, no rank3
+    assert jobs["shuffle"]["inputs"] == {"input1": {"folder": [f"map_counts_{i}.json" for i in (1, 2, 3)]}}
+    assert jobs["shuffle"]["outputs"] == {"output1": [f"shuffle_partition_{i}.json" for i in range(1, 6)]}
+    assert [o["file"] for o in ir["outputs"]] == ["word_count_{rank5}.json"]  # folder-read files are not end files
+    assert (folder / "functions" / "map.py").read_text() == next(n.code for n in plain_e2_spec().nodes
+                                                                  if n.name == "map")
+
+
+def test_plain_and_faasr_e2_give_the_same_word_counts(tmp_path):
+    plain = run_locally(build_folder(tmp_path / "p", plain_e2_spec()) / "ir.yaml", tmp_path / "pj")
+    faasr = run_locally(build_folder(tmp_path / "f", e2_spec()) / "ir.yaml", tmp_path / "fj")
+    expected = {w: 1000 for w in ("cat", "dog", "bird", "horse", "pig")}
+    assert word_totals(plain) == word_totals(faasr) == expected
+    for i in range(1, 6):  # same partition of words over reducers
+        assert json.loads(plain[f"word_count_{i}.json"].read_text()).keys() == \
+               json.loads(faasr[f"word_count_{i}.json"].read_text()).keys()
+
+
+def test_mixed_plain_and_faasr_steps(tmp_path):
+    spec = plain_e2_spec()
+    faasr = {n.name: n.code for n in e2_spec().nodes}
+    for n in spec.nodes:
+        if n.name in ("split", "reduce"):  # a FaaSr-style writer and reader among plain steps
+            n.code = faasr[n.name]
+    folder = build_folder(tmp_path, spec)
+    by_id = {n["id"]: n for n in yaml.safe_load((folder / "ir.yaml").read_text())["nodes"]}
+    assert by_id["split"]["contract"] == "faasr" and "contract" not in by_id["map"]
+    assert word_totals(run_locally(folder / "ir.yaml", tmp_path / "jobs")) == \
+        {w: 1000 for w in ("cat", "dog", "bird", "horse", "pig")}
+
+
+PLAIN_WRITE_RANK = '''
+def main(inputs, outputs, params):
+    open(outputs["output1"], "w").write(str(params["rank"]))
+'''
+PLAIN_READ = '''
+import os
+
+def main(inputs, outputs, params):
+    v = inputs["input1"]
+    if isinstance(v, list):
+        got = ",".join(open(p).read() for p in v)
+    elif os.path.isdir(v):
+        got = ",".join(open(os.path.join(v, n)).read() for n in sorted(os.listdir(v)))
+    else:
+        got = "own:" + open(v).read()
+    for p in outputs["output1"] if isinstance(outputs["output1"], list) else [outputs["output1"]]:
+        open(p, "w").write(got)
+'''
+
+
+def test_plain_read_own_all_and_folder(tmp_path):
+    for read, kind, want in [(None, "file", "own:2"), ("all", "file", "1,2,3"), (None, "folder", "1,2,3")]:
+        spec = spec_of([node("a", PLAIN_WRITE_RANK, outputs=["p_{rank}.txt"], rank=3),
+                        node("b", PLAIN_READ, [], ["q_{rank}.txt"], rank=3)])
+        spec.nodes[1].inputs = [IOSpec(name="p_{rank}.txt", read=read, kind=kind)]
+        folder = build_folder(tmp_path / f"{read}-{kind}", spec)
+        files = run_locally(folder / "ir.yaml", tmp_path / f"{read}-{kind}-jobs")
+        assert files["q_2.txt"].read_text() == want, (read, kind)
+
+
+def test_plain_unranked_reader_gets_a_list_and_writer_writes_one(tmp_path):
+    spec = spec_of([node("a", PLAIN_WRITE_RANK, outputs=["p_{rank}.txt"], rank=2),
+                    node("b", PLAIN_READ, ["p_{rank}.txt"], ["s.txt"])])
+    files = run_locally(build_folder(tmp_path, spec) / "ir.yaml", tmp_path / "jobs")
+    assert files["s.txt"].read_text() == "1,2"
+
+
+def test_plain_folder_input_matching_nothing_is_refused():
+    spec = spec_of([node("a", PLAIN_WRITE_RANK, outputs=["p_{rank}.txt"], rank=2),
+                    node("b", PLAIN_READ, [], ["s.txt"])])
+    spec.nodes[1].inputs = [IOSpec(name="zz_{rank}.txt", kind="folder")]
+    with pytest.raises(P.MappingError) as e:
+        P.build_ir(spec)
+    assert any(p.startswith("step b reads the folder input zz_{rank}.txt (every file starting with 'zz_')")
+               for p in e.value.problems)
+
+
+def test_plain_n_to_m_handoff_still_refused():
+    spec = spec_of([node("a", PLAIN_WRITE_RANK, outputs=["p_{rank}.txt"], rank=3),
+                    node("b", PLAIN_READ, ["p_{rank}.txt"], ["q_{rank}.txt"], rank=5)])
+    with pytest.raises(P.MappingError) as e:
+        P.build_ir(spec)
+    assert e.value.problems[0].startswith("N→M ranked handoff: ranked step a (×3) provides 3 copies")
