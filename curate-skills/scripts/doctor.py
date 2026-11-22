@@ -37,6 +37,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import envfile  # noqa: E402  (standard library only)
+import images  # noqa: E402  (standard library only)
 import leakcheck  # noqa: E402  (standard library only)
 
 PLUGIN_NAME = "curate-skills"
@@ -539,7 +540,6 @@ IR_TOOLS = ("curate_ir/validate.py", "curate_ir/expand.py", "curate_ir/backends/
 PEGASUS_RUNTIMES = ("docker", "singularity")
 DEFAULT_PEGASUS_IMAGE = envfile.DEFAULT_PEGASUS_IMAGE
 pegasus_settings = envfile.pegasus_settings
-IMAGE_SCHEMES = ("docker://", "file://", "library://", "shub://", "oras://")
 # An ssh destination as ~/.ssh/config names it, or user@host: never an option (leading '-').
 SSH_HOST_RX = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@-]*$")
 SSH_OPTS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=5")
@@ -561,9 +561,10 @@ def check_pegasus_settings(r: Report, s: dict) -> bool:
                    "no spaces, not starting with -)")
     if s["runtime"] not in PEGASUS_RUNTIMES:
         bad.append(f"CURATE_PEGASUS_RUNTIME is {s['runtime']!r}; use docker or singularity")
-    if not s["image"].startswith(IMAGE_SCHEMES):
-        bad.append(f"CURATE_PEGASUS_IMAGE {s['image']!r} needs a scheme, e.g. docker:///python:3.12-slim "
-                   "or file:///path/image.tar")
+    elif not bad:  # the image check may ssh to the host for a file:// image
+        img = images.check_image(s["image"], s["runtime"], s["host"], runner=_run)
+        if not img["ok"]:
+            bad.append(f"CURATE_PEGASUS_IMAGE: {img['error']}")
     if bad:
         r.add("pegasus", "settings", "fail", "; ".join(bad) + ". Fix it in ~/.config/curate/.env.")
         return False

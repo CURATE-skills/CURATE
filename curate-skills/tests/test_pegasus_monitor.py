@@ -103,13 +103,15 @@ def test_running_then_success(launched, monkeypatch, capsys):
     out = poll(launched, host, monkeypatch)
     s = state(launched)
     work = s["pegasus"]["work_dir"]
+    outdir = f"{s['project_dir']}/pegasus_output/mapreduce_word_count-{s['run_id']}"
     assert out["result"] == "success" and out["stage"] == "finalize" and out["next_skill"] == "curate-skills:wda-finalize"
     assert out["lines"] == ["✓ generate_text succeeded", "… split running", "✓ split succeeded",
                             "… map running (0/3)", "✓ map succeeded (3/3)", "✓ shuffle succeeded",
-                            "✓ reduce succeeded (5/5)", f"✓ workflow succeeded (11 jobs; results in {work}/deliver)"]
+                            "✓ reduce succeeded (5/5)", f"✓ workflow succeeded (11 jobs; results in {outdir})"]
     mon = s["monitor"]
     assert mon["target"] == "pegasus" and mon["run_dir"] == s["pegasus"]["run_dir"] and mon["result"] == "success"
     assert mon["deliver_dir"] == f"{work}/deliver" and mon["run_report"] == f"{work}/run-report.json"
+    assert mon["output_dir"] == outdir
     assert len(mon["delivered"]) == 5 and mon["missing"] == [] and mon["dagman_exit"] == 0
     assert s["history"][-1]["gate"] == "monitor" and s["history"][-1]["decision"] == "succeeded"
     assert (launched.resolve() / "pegasus" / "monitor-report.md").is_file()
@@ -122,7 +124,8 @@ def test_running_then_success(launched, monkeypatch, capsys):
     assert catalog.deployed_run_problem(s) is None
     md = ok(S, ["show", "--run", str(launched), "--gate", "5"], capsys)["markdown"]
     assert f"**Pegasus run** `{s['pegasus']['name']}` on this machine: success — 11/11 jobs done, DAGMan exit 0" in md
-    assert f"- Delivered to `{work}/deliver/`: `results/word_count_1.json`, `results/word_count_2.json`" in md
+    assert f"- Results in `{outdir}/`: `results/word_count_1.json`, `results/word_count_2.json`" in md
+    assert f"- Full Pegasus work folder: `{work}/`" in md and "- Image: `docker:///python:3.12-slim`" in md
     assert "Output correctness is not judged" in md
 
 
@@ -189,7 +192,10 @@ def test_remote_status_collect_and_fetch(peg_run, monkeypatch, tmp_path):  # noq
     host = Host([ALL], collect=report())
     out = poll(peg_run, host, monkeypatch)
     res = peg_run.resolve() / "pegasus" / "result"
-    assert out["result"] == "success" and out["lines"][-1].endswith(f"results in {res}/deliver)")
+    s = state(peg_run)
+    outdir = Path(s["project_dir"]) / "pegasus_output" / f"mapreduce_word_count-{s['run_id']}"
+    assert out["result"] == "success" and out["lines"][-1].endswith(f"results in {outdir})")
+    assert (outdir / "results" / "word_count_1.json").is_file() and (outdir / "run-report.json").is_file()
     ssh = [c for c in host.calls if c[0] == "ssh"]
     assert ssh and all(c[1:6] == ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "maxwell"] for c in ssh)
     assert f"{rec['remote_dir']}/curate_ir/backends/pegasus_backend.py status {rec['remote_dir']}/ir/ir.yaml" in ssh[0][-1]
@@ -248,6 +254,9 @@ def test_real_backend_local(launched, monkeypatch, tmp_path):
     c = Clock()
     out = PM.poll(str(launched), clock=c, sleep=c.sleep)  # PM.RUN is the real hostcmd.run
     assert out["result"] == "success", out
-    assert out["lines"] == ["✓ a succeeded", "✓ b succeeded (2/2)", f"✓ workflow succeeded (3 jobs; results in {work}/deliver)"]
+    outdir = Path(s["project_dir"]) / "pegasus_output" / f"mapreduce_word_count-{s['run_id']}"
+    assert out["lines"] == ["✓ a succeeded", "✓ b succeeded (2/2)", f"✓ workflow succeeded (3 jobs; results in {outdir})"]
     assert (work / "deliver" / "results" / "b_2.txt").read_text() == "b2"
+    assert (outdir / "results" / "b_2.txt").read_text() == "b2" and not (outdir / "FAILED.txt").exists()
+    assert json.loads((outdir / "run-report.json").read_text())["status"] == "success"
     assert json.loads((work / "run-report.json").read_text())["status"] == "success"

@@ -327,13 +327,42 @@ def settings(env=None) -> dict:
     return envfile.pegasus_settings(env)
 
 
+IMAGE_SOURCE_SETTING = "CURATE_PEGASUS_IMAGE"
+IMAGE_SOURCE_DEFAULT = "the built-in default"
+
+
+def effective(s: dict, current: dict | None = None) -> dict:
+    """The run's Pegasus settings: pinned by prepare; before that, the current settings with the
+    run's own image (chosen at Gate 4 or "Start this run?") if it has one. Adds `image_source`."""
+    rec = s.get("pegasus") or {}
+    if rec.get("runtime"):  # pinned
+        return {"host": rec.get("host"), "runtime": rec["runtime"], "image": rec["image"],
+                "image_source": rec.get("image_source") or IMAGE_SOURCE_SETTING}
+    st = dict(current or settings())
+    if rec.get("image_choice"):
+        st.update(image=rec["image_choice"], image_source=rec.get("image_source") or "this run only")
+    else:
+        explicit = settings_image_set()
+        st["image_source"] = IMAGE_SOURCE_SETTING if explicit else IMAGE_SOURCE_DEFAULT
+    return st
+
+
+def settings_image_set(env=None) -> bool:
+    env = dict(os.environ if env is None else env)
+    envfile.load(env, names=envfile.PEGASUS_NAMES)
+    return bool(str(env.get("CURATE_PEGASUS_IMAGE", "")).strip())
+
+
 def target_label(st: dict) -> str:
     return st["host"] or "this machine"
 
 
+DIFFERENT_IMAGE_OPTION = "Approve & run on Pegasus with a different image…"
+
+
 def option_label(st: dict) -> str:
-    """Gate 4's Pegasus option, naming where it would run."""
-    return f"Approve & run on Pegasus ({target_label(st)})"
+    """Gate 4's Pegasus option, naming where it would run and the image it would use."""
+    return f"Approve & run on Pegasus ({target_label(st)} · {st['image']})"
 
 
 def plan(s: dict, st: dict) -> dict:
@@ -352,11 +381,28 @@ def plan(s: dict, st: dict) -> dict:
         return {"ok": False, "name": name, "problems": [f"IR expansion: {e}" for e in errors]}
     return {"ok": True, "name": name, "jobs": len(exp["nodes"]), "functions": len(built["functions"]),
             "inputs": built["inputs"], "deliverables": [o["deliver_as"] for o in built["ir"]["outputs"]],
-            "warnings": built["warnings"]}
+            "deliverable_files": len(exp.get("outputs") or []), "warnings": built["warnings"]}
+
+
+def summary_lines(s: dict, st: dict, p: dict | None = None) -> list[str]:
+    """The short Pegasus summary: Gate 4's "Where it can run", and the image check before a run
+    with a different image. No file lists (those are in plan_lines, for the full review)."""
+    where = f"`{st['host']}` (over ssh)" if st["host"] else "this machine"
+    p = p or plan(s, st)
+    if not p["ok"]:
+        return [f"**Pegasus** on {where}: **cannot run on Pegasus:**"] + [f"- {x}" for x in p["problems"]]
+    src = st.get("image_source")
+    n = p["deliverable_files"]
+    out = [f"**Pegasus** on {where}: `{p['name']}`, {p['jobs']} jobs, image `{st['image']}`"
+           + (f" ({src})" if src else "") + f", runtime {st['runtime']}, {n} deliverable{'s' if n != 1 else ''}",
+           "- input files you must provide: " + (f"{len(p['inputs'])} (listed in the full review)"
+                                                  if p["inputs"] else "none")]
+    out += [f"- note: {w}" for w in p["warnings"]]
+    return out
 
 
 def plan_lines(s: dict, st: dict) -> list[str]:
-    """Gate 4's "Pegasus run would write" lines."""
+    """The full "Pegasus run would write" lines, for the Gate 4 review file."""
     run_dir = s.get("run_dir") or "<run>"
     local = f"{run_dir}/pegasus"
     out = [f"If you choose **{option_label(st)}** (nothing is written now; the run asks before each step):", ""]

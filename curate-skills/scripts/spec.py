@@ -1124,20 +1124,22 @@ def cmd_approve(args) -> dict:
         if choice == "yes" and not has_bundle:
             raise InputError(f"the bundle {bundle} is missing, so it cannot be deployed; run "
                              f"/{PLUGIN}:curate-emit --run {s['run_id']} again")
-        if choice == "pegasus":
-            p = pegasus_plan(s)
-            if not p["ok"]:
-                raise InputError("this workflow cannot run on Pegasus: " + " | ".join(p["problems"]))
+        image = getattr(args, "image", None)
+        if image and choice != "pegasus":
+            raise InputError("--image only applies to --deploy pegasus")
+        peg_rec = pegasus_choice(s, image, IMAGE_FROM_GATE4) if choice == "pegasus" else None
         # The approved bundle's hash: curate-deploy refuses to deploy a bundle that changed since.
         s.update(feedback=None, bundle_hash=tree_hash(bundle) if has_bundle else None,
                  deploy_choice=choice, deploy=None,
                  stage="deploy" if choice in ("yes", "pegasus") else "finalize")
         if choice == "pegasus" or "pegasus" in s:
-            s["pegasus"] = None
+            s["pegasus"] = peg_rec
     s["begun"] = None
     _record(s, g, "approve")
     if g == 4:
         s["history"][-1]["deploy"] = s["deploy_choice"]
+        if (s.get("pegasus") or {}).get("image_choice"):
+            s["history"][-1]["image"] = s["pegasus"]["image_choice"]
     snapshot_history(run, s, f"gate{g}-approve")
     save_state(run, s)
     out = {"ok": True, "stage": s["stage"]}
@@ -1234,17 +1236,19 @@ def cmd_confirm_start(args) -> dict:
         return {"ok": True, "recorded": None, "stage": s["stage"]}
     if s.get("deploy_choice") in ("yes", "pegasus"):
         return {"ok": True, "recorded": None, "stage": s["stage"], "deploy_choice": s["deploy_choice"]}
+    image = getattr(args, "image", None)
+    if image and target != "pegasus":
+        raise InputError("--image only applies to --deploy pegasus")
     if target == "pegasus":
-        p = pegasus_plan(s)
-        if not p["ok"]:
-            raise InputError("this workflow cannot run on Pegasus: " + " | ".join(p["problems"]))
-        s["pegasus"] = None
+        s["pegasus"] = pegasus_choice(s, image, IMAGE_FROM_START)
     s["deploy_choice"] = target
     where = " (run on Pegasus)" if target == "pegasus" else ""
     _record(s, 4, "deploy-confirmed",
             f'the user answered Yes{where} to "Start this run?" for --start-at deploy; this is the deploy choice '
             f"(the source's Gate 4 recorded: {first.get('source_deploy_choice') or 'no deploy choice, approved before deploying existed'})")
     s["history"][-1]["deploy"] = target
+    if (s.get("pegasus") or {}).get("image_choice"):
+        s["history"][-1]["image"] = s["pegasus"]["image_choice"]
     save_state(run, s)
     return {"ok": True, "recorded": "deploy_choice", "deploy_choice": target, "stage": s["stage"],
             "next_skill": next_skill(s)}
@@ -1799,17 +1803,20 @@ def cmd_start(args) -> dict:
         if at == "skeleton":
             raise InputError("starting at skeleton needs a sketch (--sketch or --sketch-file)")
         out = _start_from_run(args, at)
-    extra = {"start_options": start_deploy_options()} if at == "deploy" else {}
+    new_state = load_state(out["run"]) if out.get("run") and (Path(out["run"]) / "state.json").is_file() else None
+    extra = {"start_options": start_deploy_options(new_state)} if at == "deploy" else {}
     if args.dry_run:
         return {"ok": True, "dry_run": True, "start_at": at, **out, "summary": start_summary(at, out), **extra}
     return {"ok": True, "start_at": at, **out, "summary": start_summary(at, out), **extra}
 
 
-def start_deploy_options() -> list[str]:
+def start_deploy_options(s: dict | None = None) -> list[str]:
     """"Start this run?" for --start-at deploy: the answer is also where it runs (confirm-start
-    --deploy yes|pegasus). The Pegasus label names the target, as at Gate 4."""
-    peg = gate4_options()[1].replace("Approve & run on Pegasus", "Yes, run on Pegasus")
-    return ["Yes, deploy to FaaSr (cloud)", peg, "Stop"]
+    --deploy yes|pegasus [--image]). The Pegasus label names the target and image, as at Gate 4."""
+    P = _pegasus()
+    peg = P.option_label(P.effective(s or {})).replace("Approve & run on Pegasus", "Yes, run on Pegasus")
+    diff = P.DIFFERENT_IMAGE_OPTION.replace("Approve & run on Pegasus", "Yes, run on Pegasus")
+    return ["Yes, deploy to FaaSr (cloud)", peg, diff, "Stop"]
 
 
 def start_summary(at: str, p: dict) -> str:
@@ -2208,7 +2215,7 @@ def gate1_question(s: dict) -> str:
     return "\n".join([f"{spec.name}", "", *blocks, "", *[g.strip() for g in graph], "", q])
 
 
-def show_gate(s: dict, gate: int) -> str:
+def show_gate(s: dict, gate: int, detailed: bool = False) -> str:
     out: list[str] = []
     if gate == 1:
         draft = s.get("skeleton_draft") or {}
@@ -2294,14 +2301,15 @@ def show_gate(s: dict, gate: int) -> str:
         failed = [k for k, m in (s.get("mga") or {}).items() if m.get("status") in ("failed", "reused_failed")]
         if failed:
             out.append(f"- functions whose stub test failed: {', '.join(failed)}")
-        out.append(f"- deploying: {DEPLOY_ADVICE}")
-        ext = external_inputs(spec)
-        out += ["", "Input files you must provide in S3 (none = nothing to do):"] + (
-            [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
-        out += ["", "### Deploy would write", "", f"If you choose **{FAASR_OPTION}** (nothing is written now; "
-                "the deploy asks before each step):", ""] + deploy_plan(s)
-        out += ["", "### Pegasus run would write", ""] + pegasus_lines(s)
-        out += ["", "Files in the bundle:"] + (bundle_files(s.get("bundle_dir")) or ["- none yet"])
+        out += ["", "### Where it can run", "", *faasr_lines(s), "", *pegasus_lines(s)]
+        if detailed:  # the review file: every file, as each target's preflight will list it
+            ext = external_inputs(spec)
+            out += ["", "## Full details", "", "Input files you must provide in S3 (none = nothing to do):"] + (
+                [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
+            out += ["", "### Deploy would write", "", f"If you choose **{FAASR_OPTION}** (nothing is written now; "
+                    "the deploy asks before each step):", ""] + deploy_plan(s)
+            out += ["", "### Pegasus run would write", ""] + pegasus_lines(s, detailed=True)
+            out += ["", "Files in the bundle:"] + (bundle_files(s.get("bundle_dir")) or ["- none yet"])
         return "\n".join(out)
     if gate == 5:
         return "\n".join([summary_md(s), "", *save_preview(s)])
@@ -2327,30 +2335,109 @@ def _pegasus():
     return P
 
 
+IMAGE_FROM_GATE4 = "chosen at Gate 4, this run only"
+IMAGE_FROM_START = 'chosen at "Start this run?", this run only'
+
+
 def pegasus_plan(s: dict) -> dict:
     """The Pegasus target for this run (pegasus_ir.plan: local, read-only)."""
     P = _pegasus()
-    return P.plan(s, P.settings())
+    return P.plan(s, P.effective(s))
 
 
-def pegasus_lines(s: dict) -> list[str]:
-    """Gate 4's "Pegasus run would write" (pegasus_ir.plan_lines: local, read-only)."""
+def _check_image(s: dict, addr: str) -> tuple[dict, dict]:
+    """(the run's Pegasus settings with `addr` as its image, images.check_image's result).
+    The image is checked for the runtime and host of the current settings; never saved there."""
+    P = _pegasus()
+    import images
+    st = P.effective({**s, "pegasus": None})
+    chk = images.check_image(addr, st["runtime"], st["host"])
+    if chk["ok"]:
+        st.update(image=chk["image"], image_source="this run only")
+    return st, chk
+
+
+def pegasus_choice(s: dict, image: str | None, source: str) -> dict | None:
+    """Checks for deploy_choice "pegasus" (with the run's own image, if given); returns the
+    state.pegasus record to set (None without an image). Raises InputError with the reasons."""
+    P = _pegasus()
+    if image:
+        st, chk = _check_image(s, image)
+        if not chk["ok"]:
+            raise InputError(chk["error"])
+    else:
+        st = P.effective({**s, "pegasus": None})
+    p = P.plan(s, st)
+    if not p["ok"]:
+        raise InputError("this workflow cannot run on Pegasus: " + " | ".join(p["problems"]))
+    return {"image_choice": st["image"], "image_source": source} if image else None
+
+
+def cmd_pegasus_image(args) -> dict:
+    """Read-only: check an image address for a Pegasus run (Gate 4's or "Start this run?"'s
+    "different image" option) and show the Pegasus summary with it, package warnings included."""
+    s = load_state(args.run)
+    P = _pegasus()
+    import images
+    st, chk = _check_image(s, args.image)
+    if not chk["ok"]:
+        return {"ok": False, "error": chk["error"], "accepted": images.accepted(st["runtime"])}
+    p = P.plan(s, st)
+    return {"ok": p["ok"], "image": chk["image"], "summary": "\n".join(P.summary_lines(s, st, p)),
+            "problems": p.get("problems") or [], "question": f"Run on Pegasus with {chk['image']}?",
+            "header": "Image", "options": IMAGE_CONFIRM_OPTIONS}
+
+
+IMAGE_CONFIRM_OPTIONS = ["Yes, use this image", "Choose another image", "Back"]
+
+
+def pegasus_lines(s: dict, detailed: bool = False) -> list[str]:
+    """Gate 4's Pegasus summary (detailed: the full "would write" lines, for the review file).
+    Local and read-only."""
     if not s.get("spec"):
         return ["- (no spec yet)"]
     try:
         P = _pegasus()
-        return P.plan_lines(s, P.settings())
+        st = P.effective(s)
+        return P.plan_lines(s, st) if detailed else P.summary_lines(s, st)
     except Exception as e:  # noqa: BLE001 — informational; approve --deploy pegasus checks again
-        return [f"- (could not work it out: {e})"]
+        return [f"- Pegasus: (could not work it out: {e})"]
 
 
-def gate4_options() -> list[str]:
-    """Gate 4's options; the Pegasus one names where it would run (CURATE_PEGASUS_HOST)."""
+def faasr_lines(s: dict) -> list[str]:
+    """Gate 4's FaaSr summary: repo, branch, deploy name, inputs to provide (a count). Local only."""
+    run = s.get("run_dir")
+    n_in = len(external_inputs(spec_of(s["spec"]))) if s.get("spec") else 0
+    inputs = "- input files you must provide in S3: " + (f"{n_in} (listed in the full review)" if n_in else "none")
+    advice = f"- deploying: {DEPLOY_ADVICE}"
+    if not run or not s.get("bundle_dir"):
+        return ["**FaaSr (cloud)**: (no bundle yet)", inputs, advice]
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import deploy as D
+        g = D.gate4_summary(run)
+    except Exception as e:  # noqa: BLE001 — informational; the deploy preflight checks everything
+        return [f"**FaaSr (cloud)**: (could not work it out: {e})", inputs, advice]
+    out = [f"**FaaSr (cloud)**: repo `{g['user']}/{g['repo']}`, branch `{g['branch']}`, deploys as `{g['name']}`",
+           inputs, advice]
+    if g["unset"]:
+        out.append(f"- not set yet in your deploy settings: {', '.join(g['unset'])}")
+    return out
+
+
+def gate4_options(s: dict | None = None) -> list[str]:
+    """Gate 4's options. The Pegasus one names where it would run and its image. When the
+    workflow can run on Pegasus, a "different image" option takes the place of Stop (typed
+    instead, as the question says)."""
     try:
         P = _pegasus()
-        peg = P.option_label(P.settings())
+        st = P.effective(s or {})
+        peg = P.option_label(st)
+        available = bool(s and s.get("spec")) and P.plan(s, st)["ok"]
     except Exception:  # noqa: BLE001 — never block the gate on the label
-        peg = "Approve & run on Pegasus (this machine)"
+        peg, available = GATE_OPTIONS[4][1], False
+    if available:
+        return [FAASR_OPTION, peg, P.DIFFERENT_IMAGE_OPTION, "Approve, no deploy"]
     return [FAASR_OPTION, peg, "Approve, no deploy", "Stop here"]
 
 
@@ -2506,14 +2593,14 @@ def _cut(text: str, n: int) -> str:
 GATE_QUESTION = {1: "Approve this skeleton (the steps and their order)?",
                  2: "Approve the reuse decisions, files and data flow?",
                  3: "Approve the generated code?",
-                 4: "Approve this bundle, and run it on FaaSr or Pegasus?",
+                 4: 'Approve this workflow, and where should it run? (type "stop" to stop here)',
                  5: "Save to the catalog?"}
 
 
 GATE_OPTIONS = {1: ["Approve", "Stop here"], 2: ["Approve", "Stop here"],
                 3: ["Approve", "Show the full code", "Stop here"],
-                4: [FAASR_OPTION, "Approve & run on Pegasus (this machine)", "Approve, no deploy",
-                    "Stop here"],  # Gate 4's Pegasus label is set per call: gate4_options()
+                4: [FAASR_OPTION, "Approve & run on Pegasus (this machine · docker:///python:3.12-slim)",
+                    "Approve, no deploy", "Stop here"],  # set per call: gate4_options(s)
                 5: ["Save functions", "Save workflow", "Save both", "Don't save"]}
 
 
@@ -2532,12 +2619,14 @@ def cmd_show(args) -> dict:
     else:
         md = show_gate(s, args.gate) + "\n\n" + marker
         review.parent.mkdir(parents=True, exist_ok=True)
-        review.write_text(md + ("\n\n" + full_code(s) if args.gate == 3 else "") + "\n")
+        # Gate 4's review file is the detailed version (every file each target would write).
+        full = show_gate(s, 4, detailed=True) + "\n\n" + marker if args.gate == 4 else md
+        review.write_text(full + ("\n\n" + full_code(s) if args.gate == 3 else "") + "\n")
     q = GATE_QUESTION[args.gate] + ("" if args.gate == 5 else ' (Type in "Other" to request changes.)')
     if args.gate == 1 and not getattr(args, "full", False):
         q = gate1_question(s)  # the outline is in the question text too (not a preview)
     return {"ok": True, "markdown": md, "marker": marker, "question": q, "header": f"Gate {args.gate}",
-            "options": gate4_options() if args.gate == 4 else GATE_OPTIONS[args.gate], "review_file": str(review), "review_line": f"Full review: {review}"}
+            "options": gate4_options(s) if args.gate == 4 else GATE_OPTIONS[args.gate], "review_file": str(review), "review_line": f"Full review: {review}"}
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -2590,14 +2679,18 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--deploy", choices=["yes", "pegasus", "no"],
                    help="Gate 4 only: the user chose Approve & deploy to FaaSr (yes), Approve & run on "
                         "Pegasus (pegasus) or Approve, no deploy (no; default)")
+    q.add_argument("--image", help="with --deploy pegasus: this run's own image (checked; settings unchanged)")
     q = with_run("directive")
     q.add_argument("--gate", required=True, choices=["1", "2", "3", "4", "emit"])
     q.add_argument("--text", required=True)
     q.add_argument("--structural")
     with_run("set-cap").add_argument("--max", type=int, required=True)
-    with_run("confirm-start").add_argument(
-        "--deploy", choices=["yes", "pegasus"],
-        help="--start-at deploy only: Yes, deploy to FaaSr (yes; default) or Yes, run on Pegasus (pegasus)")
+    q = with_run("confirm-start")
+    q.add_argument("--deploy", choices=["yes", "pegasus"],
+                   help="--start-at deploy only: Yes, deploy to FaaSr (yes; default) or Yes, run on Pegasus (pegasus)")
+    q.add_argument("--image", help="with --deploy pegasus: this run's own image (checked; settings unchanged)")
+    with_run("pegasus-image").add_argument("--image", required=True,
+                                           help="check an image address for this run's Pegasus target (read-only)")
     with_run("set-stage").add_argument("--stage", required=True, choices=STAGES)
     sp = with_run("show")
     sp.add_argument("--gate", type=int, required=True, choices=[1, 2, 3, 4, 5])
@@ -2631,6 +2724,7 @@ COMMANDS = {
     "merge-resolved": cmd_merge_resolved, "check": cmd_check, "toposort": cmd_toposort,
     "approve": cmd_approve, "directive": cmd_directive, "set-cap": cmd_set_cap,
     "set-stage": cmd_set_stage, "confirm-start": cmd_confirm_start, "show": cmd_show, "summary": cmd_summary,
+    "pegasus-image": cmd_pegasus_image,
     "import": cmd_import, "start": cmd_start, "next": cmd_next, "require": cmd_require, "begin": cmd_begin,
     "end": cmd_end,
 }

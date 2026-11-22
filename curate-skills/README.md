@@ -104,7 +104,7 @@ words.
 | 1 | skeleton | the steps and their order |
 | 2 | reuse + resolve | per function: new, from the catalog, adapted, or cached; files and data flow; packages |
 | 3 | generate | the code and each function's stub-test result (ask to see any function) |
-| 4 | emit | the validated bundle; **approve & deploy to FaaSr (cloud)**, **approve & run on Pegasus (this machine or your host)**, **approve, no deploy**, or **stop** (see below) |
+| 4 | emit | the validated workflow and a short summary per target (no file lists; those are in the run's `review/gate4.md`); **approve & deploy to FaaSr (cloud)**, **approve & run on Pegasus (this machine or your host · image)**, **… with a different image…**, **approve, no deploy**, or type **stop** (see below) |
 | 5 | finalize | the summary; which verified functions to save to the catalog |
 
 A change at Gates 2–4 sends the run back to the right stage (structural changes to the skeleton,
@@ -237,9 +237,14 @@ two rules (`pegasus_deploy.py`, `monitor.py`), or in Claude Code:
 `! uv run --quiet /absolute/path/to/CURATE/curate-skills/scripts/allow_deploy.py --pegasus`.
 
 ### 3. Run
-At Gate 4, choose **approve & run on Pegasus** (the label names the machine). Gate 4 shows what it
-would write, or why the workflow can't run on Pegasus (e.g. a conditional edge). After a read-only
-preflight, it asks before each step:
+At Gate 4, choose **approve & run on Pegasus** (the label names the machine and the image). Gate 4
+shows a short summary (run name, jobs, image, deliverables), or why the workflow can't run on
+Pegasus (e.g. a conditional edge). To use another image for this run only, choose **approve & run
+on Pegasus with a different image…** and give its address; it is checked, the summary is shown
+again with it (with package warnings), and you confirm. Your settings file is not changed.
+Accepted addresses: `docker:///<repo>:<tag>` (or `docker://…`), or a `file:///…` `docker save` tar;
+with `CURATE_PEGASUS_RUNTIME=singularity` also `library://`, `shub://`, `oras://` and `file:///….sif`.
+After a read-only preflight, it asks before each step:
 1. **Prepare:** writes the workflow folder `.curate/runs/<run_id>/pegasus/ir/` (validated); input
    files, if the workflow needs any, are copied from a folder you name
 2. **Copy** (ssh host only): to `<host>:~/curate-runs/<run_id>/`
@@ -247,10 +252,11 @@ preflight, it asks before each step:
 
 The monitor then follows it (as for FaaSr; it reads the Pegasus run folder recorded at launch, so
 it also works after a logout or reboot). When the workflow has finished, the results are in
-`.curate/runs/<run_id>/pegasus/work/deliver/` (from an ssh host: `…/pegasus/result/deliver/`),
-then Gate 5. Nothing is ever overwritten; each run has its own name `<workflow>-<MMDD-HHMM>` and
-folders. A run started with `--start-at deploy --from-run <run_id>` asks whether to deploy to
-FaaSr or run on Pegasus.
+`pegasus_output/<workflow>-<run_id>/` next to `faasr_output/` (`results/`, `run-report.json`, and
+`FAILED.txt` if it failed: then the outputs are partial), then Gate 5. Nothing is ever overwritten;
+each run has its own name `<workflow>-<MMDD-HHMM>` and folders. A run started with
+`--start-at deploy --from-run <run_id>` asks whether to deploy to FaaSr or run on Pegasus (with
+the set image or a different one).
 
 ## Settings
 
@@ -280,10 +286,13 @@ The plugin also declares Claude Code plugin settings (`catalog_dir`, `mga_retrie
 - `faasr_output/<workflow>-<run_id>/`: the bundle — `workflow.json`, `functions/`, `spec.json`,
   `external_inputs.json`, `README.md`. Unset deploy values appear as `<FAASR_…>` placeholders;
   only secret **names** are written.
+- `pegasus_output/<workflow>-<run_id>/` (Pegasus runs): the delivered results (`results/`) and
+  `run-report.json`; `FAILED.txt` when the run failed (the outputs are partial). One folder per
+  launch (`-2`, `-3`… for a later launch); never overwritten.
 - The catalog folder (`~/.curate/catalog` by default): `functions/<uuid>.json`,
   `workflows/<uuid>.json`, in the original prototype's format.
 - `.curate/runs/<run_id>/pegasus/` (Pegasus runs): `ir/` (the workflow, functions, inputs),
-  `work/` (Pegasus's folder: its run folder under `submit/`, results in `deliver/`),
+  `work/` (Pegasus's full work folder: its run folder under `submit/`, results in `deliver/`),
   `deploy-log.jsonl`, `monitor-report.md`; with an ssh host also `result/`, and the run's copy on
   the host in `~/curate-runs/<run_id>/`.
 - `~/.config/curate/.env`: your deploy and Pegasus settings (mode 600), read by deploy, monitor

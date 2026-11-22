@@ -24,21 +24,25 @@ def save(run, s):
     (run / "state.json").write_text(json.dumps(s))
 
 
-# ── the option label names the target ──
+# ── the options name the target and the image ──
 
-def test_option_label_names_this_machine_or_the_host(source_run, capsys, monkeypatch):
+DEFAULT_IMG = "docker:///python:3.12-slim"
+DIFFERENT = "Approve & run on Pegasus with a different image…"
+
+
+def test_options_name_target_and_image(source_run, capsys, monkeypatch):
     at_gate4(source_run)
     out = ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)
-    assert out["options"] == ["Approve & deploy to FaaSr (cloud)", "Approve & run on Pegasus (this machine)",
-                              "Approve, no deploy", "Stop here"]
-    assert out["question"].startswith("Approve this bundle, and run it on FaaSr or Pegasus?")
+    assert out["options"] == ["Approve & deploy to FaaSr (cloud)", f"Approve & run on Pegasus (this machine · {DEFAULT_IMG})",
+                              DIFFERENT, "Approve, no deploy"]  # Stop is typed, as the question says
+    assert out["question"].startswith('Approve this workflow, and where should it run? (type "stop" to stop here)')
     monkeypatch.setenv("CURATE_PEGASUS_HOST", "local")
     assert ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)["options"][1] == \
-        "Approve & run on Pegasus (this machine)"
+        f"Approve & run on Pegasus (this machine · {DEFAULT_IMG})"
     monkeypatch.setenv("CURATE_PEGASUS_HOST", "maxwell")
+    monkeypatch.setenv("CURATE_PEGASUS_IMAGE", "docker:///me/img:2")
     out = ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)
-    assert out["options"][1] == "Approve & run on Pegasus (maxwell)"
-    assert "If you choose **Approve & run on Pegasus (maxwell)**" in out["markdown"]
+    assert out["options"][1] == "Approve & run on Pegasus (maxwell · docker:///me/img:2)"
 
 
 def test_option_label_from_the_settings_file(source_run, capsys, monkeypatch, tmp_path):
@@ -47,40 +51,42 @@ def test_option_label_from_the_settings_file(source_run, capsys, monkeypatch, tm
     monkeypatch.setattr(envfile, "default_path", lambda: f)
     at_gate4(source_run)
     assert ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)["options"][1] == \
-        "Approve & run on Pegasus (lab-server)"
+        f"Approve & run on Pegasus (lab-server · {DEFAULT_IMG})"
     import os
     assert "CURATE_PEGASUS_HOST" not in os.environ  # read, never exported
 
 
-# ── the preview ──
+# ── the Gate 4 display: a short summary per target, no file lists ──
 
-def test_gate4_preview_local(source_run, capsys):
+def where_section(md):
+    return md.split("### Where it can run")[1].split("\n\n— end of Gate 4")[0]
+
+
+def test_gate4_summary_local(source_run, capsys):
     at_gate4(source_run)
     s = state(source_run)
     md = ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)["markdown"]
-    sec = md.split("### Pegasus run would write")[1].split("Files in the bundle:")[0]
+    sec = where_section(md)
     rid = s["run_id"]
-    local = f"{s['run_dir']}/pegasus"
-    assert "If you choose **Approve & run on Pegasus (this machine)** (nothing is written now" in sec
-    assert f"- Runs on: this machine (Pegasus + HTCondor), in `{local}/`" in sec
-    assert f"- Workflow: `mapreduce-word-count-{rid[4:8]}-{rid[9:13]}`, 11 jobs, image " \
-           "`docker:///python:3.12-slim`, runtime docker" in sec
-    assert f"- Writes: `{local}/ir.yaml`, `{local}/functions/` (5 files), `{local}/inputs/`" in sec
-    assert "- Input files you must provide: none" in sec
-    assert "- Delivered: `results/word_count_{rank5}.json`" in sec
-    # the FaaSr section is still there, before it
-    assert md.index("### Deploy would write") < md.index("### Pegasus run would write")
+    assert sec.index("**FaaSr (cloud)**") < sec.index("**Pegasus**")
+    assert (f"**Pegasus** on this machine: `mapreduce-word-count-{rid[4:8]}-{rid[9:13]}`, 11 jobs, image "
+            f"`{DEFAULT_IMG}` (the built-in default), runtime docker, 5 deliverables") in sec
+    assert "- input files you must provide: none" in sec
+    # no file lists at the gate, for either target
+    for listing in ("### Deploy would write", "### Pegasus run would write", "Files in the bundle:", "- Writes:",
+                    "ir.yaml", "functions/", "word_count_{rank5}"):
+        assert listing not in md, listing
+    full = (source_run / "review" / "gate4.md").read_text()  # the review file keeps them
+    assert "### Pegasus run would write" in full and "ir.yaml" in full and "### Deploy would write" in full
 
 
-def test_gate4_preview_remote(source_run, capsys, monkeypatch):
+def test_gate4_summary_remote_and_setting_image(source_run, capsys, monkeypatch):
     monkeypatch.setenv("CURATE_PEGASUS_HOST", "maxwell")
     monkeypatch.setenv("CURATE_PEGASUS_IMAGE", "docker:///me/img:2")
     at_gate4(source_run)
-    s = state(source_run)
     md = ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)["markdown"]
-    assert f"- Runs on: `maxwell` over ssh; `{s['run_dir']}/pegasus/` is copied to " \
-           f"`maxwell:~/curate-runs/{s['run_id']}/` and run there" in md
-    assert "image `docker:///me/img:2`" in md
+    assert "**Pegasus** on `maxwell` (over ssh): " in md
+    assert "image `docker:///me/img:2` (CURATE_PEGASUS_IMAGE)" in md
 
 
 def with_conditional_edge(run):
@@ -92,12 +98,15 @@ def with_conditional_edge(run):
     return s["spec"]["edges"][0]
 
 
-def test_gate4_preview_says_why_it_cannot_run(source_run, capsys):
+def test_gate4_says_why_it_cannot_run_and_drops_the_image_option(source_run, capsys):
     e = with_conditional_edge(source_run)
-    md = ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)["markdown"]
-    sec = md.split("### Pegasus run would write")[1]
-    assert "- **Cannot run on Pegasus:**" in sec
-    assert f"  - conditional edge {e['from_node']} → {e['to_node']} (taken only when {e['from_node']} returns True)" in sec
+    out = ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)
+    sec = where_section(out["markdown"])
+    assert "**Pegasus** on this machine: **cannot run on Pegasus:**" in sec
+    assert f"- conditional edge {e['from_node']} → {e['to_node']} (taken only when {e['from_node']} returns True)" in sec
+    # not available: no "different image" option; Stop is a button again
+    assert out["options"] == ["Approve & deploy to FaaSr (cloud)", f"Approve & run on Pegasus (this machine · {DEFAULT_IMG})",
+                              "Approve, no deploy", "Stop here"]
 
 
 # ── approval and the stage checks ──
@@ -242,7 +251,8 @@ def test_start_at_deploy_offers_both_targets_and_runs_on_pegasus(source_run, cap
     monkeypatch.setenv("CURATE_PEGASUS_HOST", "maxwell")
     code, out = start(capsys, source_run, "deploy", "--from-run", state(source_run)["run_id"])
     assert code == 0, out
-    assert out["start_options"] == ["Yes, deploy to FaaSr (cloud)", "Yes, run on Pegasus (maxwell)", "Stop"]
+    assert out["start_options"] == ["Yes, deploy to FaaSr (cloud)", f"Yes, run on Pegasus (maxwell · {DEFAULT_IMG})",
+                                    "Yes, run on Pegasus with a different image…", "Stop"]
     new = Path(out["run"])
     res = ok(S, ["confirm-start", "--run", str(new), "--deploy", "pegasus"], capsys)
     assert res["recorded"] == "deploy_choice" and res["deploy_choice"] == "pegasus"

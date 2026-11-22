@@ -21,7 +21,8 @@ asked to see something, and after the user answered in chat:
 
 1. `spec.py show --run <run> --gate N` (N = 1–5). **Print its `markdown` exactly as a message,
    then its `review_line`** (`Full review: <path>`, the same content saved in the run's
-   `review/gate<N>.md`) on its own line. **Print the content first, then ask — never ask before
+   `review/gate<N>.md`; for Gate 4 the review file is the detailed version, with every file each
+   target would write) on its own line. **Print the content first, then ask — never ask before
    printing it**, and never leave it only in a tool result: the user does not see tool results
    (they are collapsed), so the content must be in your own message. Copy it verbatim: never
    re-format, re-order, summarize or rebuild it (e.g. as one field per line), and add nothing
@@ -55,7 +56,7 @@ approve; `stop` stops; anything else is a change request. Never approve on the u
 | 1 | `spec.py approve --gate 1` → `reuse` | `spec.py directive --gate 1 --text "<verbatim>"`, then redo the skeleton in this same stage (a refinement; not counted toward the cap) |
 | 2 | `spec.py approve --gate 2` → `generate` | classify (`prompts/classify.md`), `spec.py directive --gate 2 --text "<verbatim>" --structural true\|false` → `skeleton` or `reuse` |
 | 3 | `spec.py approve --gate 3` → `emit` | as Gate 2 with `--gate 3`; functions that still fit come back `[cached]` |
-| 4 | `spec.py approve --gate 4 --deploy yes` (FaaSr) or `--deploy pegasus` → `deploy`; `--deploy no` → `finalize` | as Gate 2 with `--gate 4` |
+| 4 | `spec.py approve --gate 4 --deploy yes` (FaaSr) or `--deploy pegasus [--image <address>]` → `deploy`; `--deploy no` → `finalize`. "stop" typed in "Other" is Stop (`stages/emit.md`) | as Gate 2 with `--gate 4` |
 
 - **Cap.** If `directive` returns `"cap_reached": true`, nothing was changed. Ask: approve the
   current version as-is (`approve`), stop, or raise the cap (`spec.py set-cap --max N`, then repeat

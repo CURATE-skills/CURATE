@@ -41,6 +41,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import hostcmd  # noqa: E402
+import images  # noqa: E402
 import leakcheck  # noqa: E402
 import pegasus_ir as P  # noqa: E402
 import spec as S  # noqa: E402
@@ -117,11 +118,21 @@ def steps_for(host) -> tuple[str, ...]:
 
 
 def _settings(s: dict) -> dict:
-    """Pinned by prepare; before that, the current settings."""
+    """Pinned by prepare; before that, the current settings with the run's own image (chosen at
+    Gate 4 or "Start this run?") if it has one. Includes `image_source`."""
+    return P.effective(s)
+
+
+def _changed(s: dict) -> dict | None:
+    """After prepare: the settings that differ from what prepare pinned ({name: [pinned, now]}).
+    CURATE_PEGASUS_IMAGE does not count when the run has its own image."""
     rec = s.get("pegasus") or {}
-    if rec.get("runtime"):
-        return {"host": rec.get("host"), "runtime": rec["runtime"], "image": rec["image"]}
-    return P.settings()
+    if not rec.get("runtime"):
+        return None
+    cur = P.settings()
+    keys = ["host", "runtime"] + ([] if rec.get("image_choice") else ["image"])
+    diff = {k: [rec.get(k), cur[k]] for k in keys if rec.get(k) != cur[k]}
+    return diff or None
 
 
 def _layout(run: Path, s: dict, st: dict) -> dict:
@@ -180,17 +191,22 @@ def preflight(run: str, inputs_dir=None) -> dict:
     if problems:
         return {"ok": False, "problems": problems}
     st = _settings(s)
-    cur = P.settings()
-    if (s.get("pegasus") or {}).get("runtime") and cur != st:
-        problems.append(f"the Pegasus settings changed since prepare (pinned: {st}; now: {cur}); "
-                        "set them back, or start a new run")
+    changed = _changed(s)
+    if changed:
+        problems.append("the Pegasus settings changed since prepare ("
+                        + "; ".join(f"{k}: pinned {a!r}, now {b!r}" for k, (a, b) in changed.items())
+                        + "); set them back, or start a new run")
     lay = _layout(run_p, s, st)
     plan = P.plan(s, st)
     if not plan["ok"]:
         return {"ok": False, "problems": [f"cannot run on Pegasus: {p}" for p in plan["problems"]]}
     done, nxt = _done(s), _next(s, st)
     lines = [f"Pegasus run `{plan['name']}` on " + (f"`{st['host']}` (over ssh)" if st["host"] else "this machine")
-             + f": {plan['jobs']} jobs, image `{st['image']}`, runtime {st['runtime']}"]
+             + f": {plan['jobs']} jobs, image `{st['image']}` ({st['image_source']}), runtime {st['runtime']}"]
+    if "prepare" not in done:
+        img = images.check_image(st["image"], st["runtime"], st["host"], runner=RUN)
+        if not img["ok"]:
+            problems.append(img["error"])
 
     code, out, err = _on(st["host"], "pegasus-version", timeout=60)
     if code != 0:
@@ -250,7 +266,7 @@ def step(run: str, name: str, confirmed=False, overwrite_own=False, inputs_dir=N
     if problems:
         return {**base, "ok": False, "problems": problems}
     st = _settings(s)
-    if (s.get("pegasus") or {}).get("runtime") and P.settings() != st:
+    if _changed(s):
         return {**base, "ok": False, "problems": ["the Pegasus settings changed since prepare; set them back"]}
     if name not in steps_for(st["host"]):
         return {**base, "ok": False, "problems": [f"{name} is not a step on {st['host'] or 'this machine'}"]}
@@ -308,6 +324,7 @@ def _prepare(run_p, s, st, lay, overwrite_own, inputs_dir) -> dict:
     if v["errors"]:
         raise StepError("the IR did not validate: " + " | ".join(v["errors"]))
     return {"record": {"name": name, "host": st["host"], "runtime": st["runtime"], "image": st["image"],
+                       "image_source": st["image_source"],
                        "ir_dir": str(ir_dir), "inputs_from": str(Path(inputs_dir).resolve()) if inputs_dir else None,
                        "jobs": v["jobs"]},
             "message": f"wrote {ir_dir} ({v['jobs']} jobs); validated"}

@@ -20,7 +20,9 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import shlex
+import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -138,17 +140,22 @@ def _failed_steps(jobs: dict) -> list[str]:
     return [k for k, v in groups(jobs).items() if "failed" in v]
 
 
-def summary_md(rec: dict, result: str, st: dict, report: dict | None, deliver: str | None) -> str:
+def summary_md(rec: dict, result: str, st: dict, report: dict | None, deliver: str | None,
+               out_dir: str | None = None) -> str:
     where = f"`{rec['host']}`" if rec.get("host") else "this machine"
     counts = st.get("counts") or {}
     n = sum(counts.values())
     text = {"success": "success", "failure": "failure", "timeout": "not finished yet", "pending": "running"}[result]
     out = [f"**Pegasus run** `{rec.get('name')}` on {where}: {text} — {counts.get('done', 0)}/{n} jobs done"
            + (f", DAGMan exit {st['dagman_exit']}" if st.get("dagman_exit") is not None else ""),
+           f"- Image: `{rec.get('image')}`" + (f" ({rec['image_source']})" if rec.get("image_source") else ""),
            f"- Pegasus run folder: `{rec['run_dir']}`"]
     if report:
         files = [f"`{d}`" for d in report.get("delivered") or []]
-        out.append(f"- Delivered to `{deliver}/`: " + (", ".join(files) or "nothing"))
+        out.append(f"- Results in `{out_dir or deliver}/`: " + (", ".join(files) or "nothing")
+                   + (" (partial; marked FAILED)" if out_dir and result == "failure" else ""))
+        if out_dir:
+            out.append(f"- Full Pegasus work folder: `{rec.get('work_dir')}/`" + (f" on {rec['host']}" if rec.get("host") else ""))
         if report.get("missing"):
             out.append("- Missing outputs: " + ", ".join(f"`{m}`" for m in report["missing"]))
     failed = _failed_steps(st.get("jobs") or {})
@@ -160,8 +167,10 @@ def summary_md(rec: dict, result: str, st: dict, report: dict | None, deliver: s
     return "\n".join(out)
 
 
-def report_md(rec: dict, result: str, st: dict, report: dict | None, deliver: str | None, minutes_used: float) -> str:
-    out = [f"# Pegasus monitor report — {rec.get('name')}", "", summary_md(rec, result, st, report, deliver), "",
+def report_md(rec: dict, result: str, st: dict, report: dict | None, deliver: str | None, minutes_used: float,
+              out_dir: str | None = None) -> str:
+    out = [f"# Pegasus monitor report — {rec.get('name')}", "",
+           summary_md(rec, result, st, report, deliver, out_dir), "",
            f"- Submitted: {rec.get('submitted_at')}; DAGMan cluster {rec.get('dagman_cluster')}",
            f"- Monitor time used: {minutes_used:.1f} min", "", "| Job | State |", "|---|---|"]
     out += [f"| `{j}` | {s} |" for j, s in (st.get("jobs") or {}).items()]
@@ -169,6 +178,41 @@ def report_md(rec: dict, result: str, st: dict, report: dict | None, deliver: st
         out += ["", f"Job logs are in `{rec['run_dir']}/00/00/` (`<step>_<job>.out.000`, `.err.000`); "
                     f"`pegasus-analyzer {rec['run_dir']}` summarises the failures."]
     return "\n".join(out)
+
+
+# ── the visible output folder ────────────────────────────────────────────────
+
+def _unique(base: Path) -> Path:
+    """`base` if it is free (missing or empty), else `base-2`, `base-3`, … (as emit's bundle folder)."""
+    candidate, n = base, 2
+    while candidate.is_dir() and any(candidate.iterdir()):
+        candidate, n = Path(f"{base}-{n}"), n + 1
+    return candidate
+
+
+def output_folder(run_p: Path, s: dict, mon: dict, deliver: str, report_file: str, result: str, why: str) -> str:
+    """<project>/pegasus_output/<workflow>-<run_id>/: the delivered files (results/ ...) and
+    run-report.json, next to faasr_output/; a FAILED.txt marker when the run failed (its outputs
+    are partial). Copied once per launch: the folder recorded for this launch is reused; a new
+    launch gets a new folder (-2, -3 ...). Never overwrites anything."""
+    prev = mon.get("output_dir")
+    if prev and Path(prev).is_dir():
+        return prev
+    project = Path(s.get("project_dir") or run_p.parents[2])
+    name = re.sub(r"[^a-zA-Z0-9_-]", "_", (s.get("spec") or {}).get("name") or "workflow")
+    dest = _unique(project / "pegasus_output" / f"{name}-{re.sub(r'[^a-zA-Z0-9_-]', '_', s['run_id'])}")
+    if deliver and Path(deliver).is_dir():
+        shutil.copytree(deliver, dest, dirs_exist_ok=True)  # dest is new or empty
+    else:
+        dest.mkdir(parents=True, exist_ok=True)
+    if report_file and Path(report_file).is_file():
+        shutil.copy2(report_file, dest / "run-report.json")
+    if result != "success":
+        (dest / "FAILED.txt").write_text(
+            f"This Pegasus run FAILED: {why or 'see run-report.json'}.\n"
+            "The files here are the outputs it delivered before failing (partial).\n"
+            f"Details: {run_p / 'pegasus' / 'monitor-report.md'}\n")
+    return str(dest)
 
 
 # ── poll ─────────────────────────────────────────────────────────────────────
@@ -236,16 +280,20 @@ def poll(run: str, chunk=None, report_only=False, minutes=None, interval=None, c
             report_file = f"{w['work']}/run-report.json"
         ok = st["state"] == "success" and report.get("status") == "success" and not report.get("missing")
         result = "success" if ok else "failure"
+    why = ([f"step {', '.join(_failed_steps(st['jobs']))} failed"] if _failed_steps(st["jobs"]) else []) \
+        + ([f"DAGMan exit {st['dagman_exit']}"] if st.get("dagman_exit") not in (None, 0) else []) \
+        + ([f"missing outputs: {', '.join((report or {}).get('missing') or [])}"] if (report or {}).get("missing") else [])
+    out_dir = None
+    if report is not None:  # once per launch: a re-check of a copied launch reuses its folder
+        out_dir = output_folder(run_p, s, mon, deliver, report_file, result, "; ".join(why))
     if result == "success":
-        lines.append(f"✓ workflow succeeded ({st['counts'].get('done', 0)} jobs; results in {deliver})")
+        lines.append(f"✓ workflow succeeded ({st['counts'].get('done', 0)} jobs; results in {out_dir})")
     elif result == "failure":
-        why = ([f"step {', '.join(_failed_steps(st['jobs']))} failed"] if _failed_steps(st["jobs"]) else []) \
-            + ([f"DAGMan exit {st['dagman_exit']}"] if st.get("dagman_exit") not in (None, 0) else []) \
-            + ([f"missing outputs: {', '.join((report or {}).get('missing') or [])}"] if (report or {}).get("missing") else [])
-        lines.append("✗ workflow failed: " + ("; ".join(why) or "see the details"))
+        lines.append("✗ workflow failed: " + ("; ".join(why) or "see the details")
+                     + (f"; partial outputs in {out_dir}" if out_dir else ""))
     elif result == "timeout":
         lines.append(f"… not finished after {settings['minutes']:g} min (still running under DAGMan)")
-    summary = summary_md(rec, result, st, report, deliver)
+    summary = summary_md(rec, result, st, report, deliver, out_dir)
     out = {"ok": result not in ("failure", "timeout"), "result": result, "lines": lines,
            "mode": "recording" if record else "report only", "polls": polls, "minutes_used": round(used / 60, 2),
            "settings": settings, "summary": summary, "plot_note": NOTE, "jobs": st["jobs"],
@@ -255,12 +303,12 @@ def poll(run: str, chunk=None, report_only=False, minutes=None, interval=None, c
         out.update(resume_command=f"/curate-skills:curate --resume {s['run_id']}",
                    recheck_command=f"/curate-skills:curate-monitor --run {s['run_id']}")
     if not record:
-        out["report"] = report_md(rec, result, st, report, deliver, used / 60)
+        out["report"] = report_md(rec, result, st, report, deliver, used / 60, out_dir)
         return out
 
     details = run_p / "pegasus" / "monitor-report.md"
     details.parent.mkdir(parents=True, exist_ok=True)
-    details.write_text(report_md(rec, result, st, report, deliver, used / 60) + "\n")
+    details.write_text(report_md(rec, result, st, report, deliver, used / 60, out_dir) + "\n")
     out["details"] = str(details)
 
     def change(x):
@@ -272,7 +320,7 @@ def poll(run: str, chunk=None, report_only=False, minutes=None, interval=None, c
             "accepted": None, "failed": _failed_steps(st["jobs"]), "jobs": st["jobs"], "dagman_exit": st["dagman_exit"],
             "summary": summary, "shown": shown, "report": str(details),
             **({"deliver_dir": deliver, "run_report": report_file, "delivered": report.get("delivered"),
-                "missing": report.get("missing")} if report else {}),
+                "missing": report.get("missing"), "output_dir": out_dir} if report else {}),
             "ts": _now()}
         if result == "pending":
             return

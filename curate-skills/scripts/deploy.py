@@ -933,10 +933,8 @@ def diff_md(p: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def plan_lines(run: str) -> list[str]:
-    """What Approve & deploy would write, for Gate 4: the deploy name, the repo files and the S3
-    folders — the preflight's list without its checks. Local only: reads the run, its bundle and
-    the deploy settings (~/.config/curate/.env); no GitHub or S3 call."""
+def _gate4_target(run: str) -> dict:
+    """The deploy copy, its targets and settings, as Gate 4 shows them. Local only."""
     envfile.load()
     name = resolve_suffix(run, os.environ.get("CURATE_DEPLOY_NAME_SUFFIX") or None, None)
     s, bundle = load_run(run)
@@ -945,6 +943,24 @@ def plan_lines(run: str) -> list[str]:
     repo = os.environ.get("FAASR_ACTION_REPO", "").strip() or "<FAASR_ACTION_REPO>"
     branch = os.environ.get("FAASR_ACTION_BRANCH", "").strip() or "main"
     copy_wf, targets, s3_targets = deploy_copy(filled_wf, name["suffix"], user, repo, branch)
+    return {"copy_wf": copy_wf, "targets": targets, "s3_targets": s3_targets, "name": name, "unset": unset,
+            "user": user, "repo": repo, "branch": branch}
+
+
+def gate4_summary(run: str) -> dict:
+    """Gate 4's short FaaSr line: repo, branch, deploy name and unset settings (no file list)."""
+    g = _gate4_target(run)
+    return {"user": g["user"], "repo": g["repo"], "branch": g["branch"], "name": g["copy_wf"]["WorkflowName"],
+            "unset": g["unset"]}
+
+
+def plan_lines(run: str) -> list[str]:
+    """What Approve & deploy would write, for Gate 4: the deploy name, the repo files and the S3
+    folders — the preflight's list without its checks. Local only: reads the run, its bundle and
+    the deploy settings (~/.config/curate/.env); no GitHub or S3 call."""
+    g = _gate4_target(run)
+    copy_wf, targets, s3_targets, name, unset = g["copy_wf"], g["targets"], g["s3_targets"], g["name"], g["unset"]
+    user, repo, branch = g["user"], g["repo"], g["branch"]
     lines = [f"Deploys as: `{copy_wf['WorkflowName']}` (name from: {name['source']})", "",
              f"GitHub (`{user}/{repo}`, branch `{branch}`):"] + [f"- `{t['path']}`" for t in targets]
     by_bucket: dict[str, list[dict]] = {}

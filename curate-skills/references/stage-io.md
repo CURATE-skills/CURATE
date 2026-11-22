@@ -23,8 +23,8 @@ produces it.
 `spec.py start --at <stage>` creates a **new** run from exactly one source; the source is never
 written (it is read without the run lock). `/curate` then shows the returned `summary` and asks
 "Start this run? Yes / Stop" (for `--start-at deploy`: "Yes, deploy to FaaSr (cloud)" / "Yes, run
-on Pegasus (…)" / "Stop", the returned `start_options`); Stop marks the new run stopped and deletes
-nothing.
+on Pegasus (<where> · <image>)" / "Yes, run on Pegasus with a different image…" / "Stop", the
+returned `start_options`); Stop marks the new run stopped and deletes nothing.
 
 | Source | Allowed stages | What is used |
 |---|---|---|

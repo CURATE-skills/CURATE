@@ -46,6 +46,11 @@ Arguments: `$ARGUMENTS`
      - **Yes, run on Pegasus (…)** → `spec.py confirm-start --run <new run> --deploy pegasus`, then
        the loop. If it is refused, show the `error` exactly (why the workflow cannot run on
        Pegasus) and ask again.
+     - **Yes, run on Pegasus with a different image…** → the same image steps as at Gate 4
+       (`${CLAUDE_PLUGIN_ROOT}/references/stages/emit.md`, step 3: ask for the address,
+       `spec.py pegasus-image --run <new run> --image '<address>'`, print its `summary`, ask its
+       question); on **Yes**, `spec.py confirm-start --run <new run> --deploy pegasus --image
+       '<the returned image>'`, then the loop; **Back** asks "Start this run?" again.
      - **Stop** → `spec.py set-stage --run <new run> --stage stopped`. Nothing is deleted: the
        source was never touched, and the new run stays, marked stopped and unchanged otherwise.
        Tell the user the `resume_command` it returns.

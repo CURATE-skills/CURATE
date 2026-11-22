@@ -47,7 +47,8 @@ def test_settings_defaults_and_local():
     ({"CURATE_PEGASUS_HOST": "-oProxyCommand=evil"}, "not an ssh host name"),
     ({"CURATE_PEGASUS_HOST": "a host"}, "not an ssh host name"),
     ({"CURATE_PEGASUS_RUNTIME": "podman"}, "use docker or singularity"),
-    ({"CURATE_PEGASUS_IMAGE": "python:3.12"}, "needs a scheme"),
+    ({"CURATE_PEGASUS_IMAGE": "python:3.12"}, "has no accepted scheme"),
+    ({"CURATE_PEGASUS_IMAGE": "library://x/y:1"}, "needs runtime singularity"),
 ])
 def test_bad_settings_fail_and_skip_host_checks(monkeypatch, env, needle):
     fake = FakeHost()

@@ -46,7 +46,9 @@ and `result` values (no unconfirmed match). It reads, here or over ssh, the Pega
 `state.pegasus.run_dir` records (so it works after a logout or reboot): DAGMan's exit status and
 each job's state. It never submits, removes or changes the workflow. When DAGMan has finished, it
 copies the declared outputs into the run's Pegasus work folder (`deliver/`, plus `run-report.json`)
-and, for an ssh host, fetches both into `<run>/pegasus/result/`. Success needs DAGMan exit 0 and
+and, for an ssh host, fetches both into `<run>/pegasus/result/`; then into the visible folder
+`<project>/pegasus_output/<workflow>-<run_id>/` (with `FAILED.txt` when the run failed: partial
+outputs), which the last line names. Success needs DAGMan exit 0 and
 every declared output delivered. A `timeout` means DAGMan is still running the workflow; the
 re-check continues watching it. Its details file is `<run>/pegasus/monitor-report.md`.
 

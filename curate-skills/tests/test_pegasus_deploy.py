@@ -110,7 +110,8 @@ def test_preflight_local(peg_run, fake):
     assert out["steps"] == ["prepare", "launch"] and out["next_step"] == "prepare"
     s = state(peg_run)
     assert out["summary"].startswith(f"Pegasus run `mapreduce-word-count-{s['run_id'][4:8]}-{s['run_id'][9:13]}` "
-                                     "on this machine: 11 jobs, image `docker:///python:3.12-slim`, runtime docker")
+                                     "on this machine: 11 jobs, image `docker:///python:3.12-slim` (the built-in default), "
+                                     "runtime docker")
     assert f"- writes `{peg_run.resolve()}/pegasus/ir/` (ir.yaml, functions/ 5 files, inputs/): new" in out["summary"]
     assert "- input files: none" in out["summary"]
     assert not (peg_run / "pegasus").exists()  # read-only

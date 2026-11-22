@@ -34,7 +34,9 @@ Never edit a settings file yourself.
 ## 1. Preflight (read-only)
 
 `pegasus_deploy.py preflight --run <run>`, plus `--inputs <folder>` if the user named a folder for
-the workflow's input files. **Print its `summary` exactly as a message.** If `ok` is false, list
+the workflow's input files. **Print its `summary` exactly as a message** (it names the image and
+where it came from: chosen for this run at Gate 4 or "Start this run?", `CURATE_PEGASUS_IMAGE`, or
+the built-in default; the image is checked here too). If `ok` is false, list
 the `problems` exactly. If one says the workflow needs input files, ask the user for the folder
 that holds them (only a path; never read the files), then run the preflight again with `--inputs`.
 Otherwise stop (step 4).

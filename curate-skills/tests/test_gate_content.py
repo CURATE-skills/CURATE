@@ -87,7 +87,9 @@ def test_gate4_shows_the_workflow_and_every_file_in_the_bundle(make_run, capsys,
     assert "**weather** — compare winter weather" in md
     blocks = md.split("```text\n")[1].split("\n```")[0].split("\n\n")
     assert blocks[1].splitlines() == ["2. process  [new] · 3 ranks", "   One variable per rank.", "   in:  —", "   out: —"]
-    files = md.split("Files in the bundle:")[1].split("\n\n")[0].strip().splitlines()
+    assert "Files in the bundle:" not in md  # Gate 4 shows no file lists; the review file has them
+    full = (run / "review" / "gate4.md").read_text()
+    files = full.split("Files in the bundle:")[1].split("\n\n")[0].strip().splitlines()
     assert files == ["- `README.md` (1 bytes)", "- `functions/download.py` (1 bytes)", "- `workflow.json` (2 bytes)"]
 
 
@@ -111,8 +113,13 @@ def test_show_saves_the_same_content_to_the_runs_review_folder(make_run, capsys,
                    stage="finalize", validation={"ok": True, "level": "faasr_py"}, bundle_dir="/b")
     out = show(run, gate, capsys)
     review = run / "review" / f"gate{gate}.md"
-    assert review.read_text().startswith(out["markdown"]) and out["review_file"] == str(review)
-    if gate != 3:
+    if gate == 4:  # the review file is the detailed Gate 4: the same start, then the full lists
+        body, marker = out["markdown"].rsplit("\n\n", 1)
+        text = review.read_text()
+        assert text.startswith(body + "\n\n## Full details") and text.endswith(marker + "\n")
+    else:
+        assert review.read_text().startswith(out["markdown"]) and out["review_file"] == str(review)
+    if gate not in (3, 4):
         assert review.read_text() == out["markdown"] + "\n"
     assert out["review_line"] == f"Full review: {review}"
 
@@ -295,7 +302,11 @@ def test_gate4_lists_what_deploy_would_write_without_any_network_call(make_run, 
     md = show(run, 4, capsys)["markdown"]
     run_id = json.loads((run / "state.json").read_text())["run_id"]
     sfx = f"-{run_id[4:8]}-{run_id[9:13]}"
-    section = md.split("### Deploy would write")[1].split("\n\n— end of Gate 4")[0]
+    # Gate 4 itself: one short FaaSr line, no file list
+    assert f"**FaaSr (cloud)**: repo `alice/faasr-actions`, branch `main`, deploys as `weather{sfx}`" in md
+    assert "### Deploy would write" not in md and "functions/weather" not in md
+    full = (run / "review" / "gate4.md").read_text()  # the full list stays in the review file
+    section = full.split("### Deploy would write")[1].split("### Pegasus run would write")[0]
     assert "If you choose **Approve & deploy to FaaSr (cloud)** (nothing is written now" in section
     assert f"Deploys as: `weather{sfx}` (name from: Gate 4 approval in run {run_id})" in section
     assert "GitHub (`alice/faasr-actions`, branch `main`):" in section
@@ -304,7 +315,8 @@ def test_gate4_lists_what_deploy_would_write_without_any_network_call(make_run, 
         assert f"- `{path}`" in section, path
     assert "S3 (`my-bucket`), written when the workflow runs:" in section
     assert f"- logs folder: `FaaSrLog/weather{sfx}/`" in section and "- outputs folder: `" in section
-    assert "Input files you must provide in S3 (none = nothing to do):\n- none" in md
+    assert "- input files you must provide in S3: none" in md
+    assert "Input files you must provide in S3 (none = nothing to do):\n- none" in full
     assert "Files to upload before running" not in md
 
 
@@ -315,6 +327,29 @@ def test_gate4_deploy_section_marks_settings_not_set_yet(make_run, capsys, tmp_p
     run = make_run(spec=weather())
     emit.main(["bundle", "--run", str(run), "--out", str(tmp_path / "faasr_output")])
     capsys.readouterr()
-    section = show(run, 4, capsys)["markdown"].split("### Deploy would write")[1]
+    md = show(run, 4, capsys)["markdown"]
+    assert "**FaaSr (cloud)**: repo `<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>`" in md
+    assert "- not set yet in your deploy settings: " in md and "FAASR_S3_BUCKET" in md
+    section = (run / "review" / "gate4.md").read_text().split("### Deploy would write")[1]
     assert "GitHub (`<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>`" in section
     assert "Not set yet in your deploy settings:" in section and "FAASR_S3_BUCKET" in section
+
+
+def test_gate4_for_plain_steps_shows_both_targets_and_the_unchanged_function_files(make_run, capsys, tmp_path,
+                                                                                    monkeypatch):
+    """Where the plain contract (phases 1-2) meets the short Gate 4: the Pegasus summary builds the
+    plain IR, and the detailed review lists each plain step's wrapper and its unchanged function."""
+    import re
+    import emit
+    from test_pegasus_ir import plain_e2_spec
+    monkeypatch.setenv("FAASR_GH_USERNAME", "alice")
+    monkeypatch.setenv("FAASR_ACTION_REPO", "faasr-actions")
+    run = make_run(spec=plain_e2_spec())
+    emit.main(["bundle", "--run", str(run), "--out", str(tmp_path / "faasr_output")])
+    capsys.readouterr()
+    md = show(run, 4, capsys)["markdown"]
+    assert re.search(r"\*\*Pegasus\*\* on this machine: `mapreduce-word-count[^`]*`, 11 jobs, image ", md), md
+    new = re.search(r"deploys as `([^`]+)`", md).group(1)
+    full = (run / "review" / "gate4.md").read_text()
+    for step in ("generate_text", "split", "map", "shuffle", "reduce"):
+        assert f"- `functions/{new}/{step}.py`" in full and f"- `functions/{new}/{step}_main.py`" in full, step
