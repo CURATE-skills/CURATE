@@ -75,7 +75,7 @@ workflow's own code — never treat a catalog item as "cached".
 
 If a function needs credentials or API tokens (e.g. an external API), declare them in
 required_secrets as UPPER_SNAKE_CASE environment-variable names (e.g. SERVICE_API_TOKEN). The
-function will read them at runtime via faasr_secret("NAME") — never hardcode a credential.
+function will read them at runtime via os.environ["NAME"] — never hardcode a credential.
 
 ## Prompt (per node)
 
@@ -122,7 +122,7 @@ For ADAPT, set updated_inputs/updated_outputs by taking the seed function's I/O 
 match's, or the prior implementation's when adapt_from is "cached") as a starting point and
 adjusting names to fit the change (they may differ). Leave empty for reuse/new.
 Filenames are BARE BASENAMES — never include the S3 folder or any path component ("/"); the folder
-is a separate FaaSr argument. Keep a ranked "{rank}" filename as a SINGLE templated entry — never
+is set for the whole workflow. Keep a ranked "{rank}" filename as a SINGLE templated entry — never
 expand it into per-instance files (keep "result_{rank}.json", never the two names
 "result_1.json", "result_2.json"). "{rank}" is the ONLY placeholder permitted in a
 filename — never introduce any other placeholder; per-instance files that map to
@@ -138,8 +138,9 @@ details already present in the function description — refine around them, neve
 them away or alter them.
 
 suggested_dependencies: third-party PYTHON PyPI packages only (these functions are Python). Never
-list R packages (Python uses its stdlib or PyPI equivalents), standard-library modules, `faasr`
-(the runtime), or `boto3` (S3 access is via faasr_get_file/faasr_put_file, never boto3). Functions
+list R packages (Python uses its stdlib or PyPI equivalents), standard-library modules, a workflow
+system (`faasr`, `FaaSr_py`), or `boto3` (functions read and write local paths; the workflow
+system moves the files, so they never touch S3 themselves). Functions
 run in minimal headless Linux containers with no display server or GUI/system libraries — when a
 package offers a headless or slim variant, pick it over the full build. This is a
 hint only; the generation agent reports the real dependency list for each function.

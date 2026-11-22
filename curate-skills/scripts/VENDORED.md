@@ -131,7 +131,7 @@ PreToolUse write-scope guard for `curate-mga` subagents; from D1 it also denies 
 | `references/prompts/mca-user-model.md` | `prompts/fca_prompts.py` 111-147 (`FCA_USER_MODEL_PROMPT`) |
 | `references/prompts/mga-spawn.md` | `agents/fga.py` 700-763 (`_turn_prompt`) |
 | `agents/curate-mga.md` | `agents/fga.py` 71-157 (`_SHARED_RULES`) |
-| `skills/faasr-reference/SKILL.md` | `faasr/context_dir.py` 251-357 (`_shared_context_md`), 403-436 (rank rules) |
+| `skills/function-reference/SKILL.md` (was `faasr-reference`; rewritten for the plain contract) | `faasr/context_dir.py` 251-357 (`_shared_context_md`), 403-436 (rank rules) |
 | `scratch.py` templates (`CONTEXT.md`, `spec.md`) | `faasr/context_dir.py` 251-569 |
 
 ## Deliberate behaviour changes

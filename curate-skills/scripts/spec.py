@@ -402,7 +402,7 @@ def user_models_section(models: list[dict]) -> str:
     lines = [f"  - {m['name']}: {(m.get('description') or '(user-provided script/function)').strip()[:120]}"
              for m in models]
     return ("User-provided functions (guaranteed steps — each MUST be a node with this EXACT "
-            "snake_case name; the MGA will turn the attached code into a FaaSr function):\n"
+            "snake_case name; the MGA will turn the attached code into a plain function):\n"
             + "\n".join(lines) + "\n")
 
 
@@ -521,6 +521,17 @@ def split_assumptions(raw) -> tuple[list[str], list[str]]:
     return [a for a in lines if a not in pres], pres
 
 
+def _iospec(node: str, item) -> IOSpec:
+    if not isinstance(item, dict):
+        return IOSpec(name=str(item))
+    try:
+        return IOSpec(**item)
+    except ValidationError as e:
+        bad = "; ".join(f"{'.'.join(map(str, x['loc']))}: {x['msg']}" for x in e.errors())
+        raise InputError(f"step {node}, file {item.get('name')!r}: {bad} "
+                         "(kind is file or folder; read is own or all)") from None
+
+
 def parse_workflow_spec(data: dict, skeleton: bool = False) -> WorkflowSpec:
     if not isinstance(data, dict):
         raise InputError("expected a JSON object")
@@ -531,8 +542,8 @@ def parse_workflow_spec(data: dict, skeleton: bool = False) -> WorkflowSpec:
         if skeleton:
             inputs, outputs, deps, secrets = [], [], [], []
         else:
-            inputs = [IOSpec(**i) if isinstance(i, dict) else IOSpec(name=str(i)) for i in n.get("inputs", [])]
-            outputs = [IOSpec(**o) if isinstance(o, dict) else IOSpec(name=str(o)) for o in n.get("outputs", [])]
+            inputs = [_iospec(n["name"], i) for i in n.get("inputs", [])]
+            outputs = [_iospec(n["name"], o) for o in n.get("outputs", [])]
             deps = n.get("dependencies", [])
             secrets = n.get("secrets", [])
         nodes.append(FunctionSpec(
@@ -744,8 +755,9 @@ def _coerce_iospecs(raw) -> Optional[list[IOSpec]]:
     out = []
     for item in raw:
         if isinstance(item, dict) and item.get("name"):
+            extra = {k: item[k] for k in ("kind", "read") if item.get(k) is not None}
             out.append(IOSpec(name=item["name"], type=item.get("type", "any"),
-                              description=item.get("description", "")))
+                              description=item.get("description", ""), **extra))
         elif isinstance(item, str) and item.strip():
             out.append(IOSpec(name=item.strip()))
     return out or None
@@ -2273,6 +2285,8 @@ def show_gate(s: dict, gate: int, detailed: bool = False) -> str:
                     f"  code: {len((n.code or '').splitlines())} lines · {_code_path(s, n.name)}"]
             if m.get("status") in ("reused", "reused_failed"):
                 out.append("  kept (not regenerated)")
+            for f in m.get("empty_external_inputs") or []:
+                out.append(f"  ! ran on an EMPTY stand-in for external input {f}; provide a real file")
             if m.get("status") in ("failed", "reused_failed", "external_only") and m.get("last_output_tail"):
                 out += ["  last test lines:"] + [f"    {l}" for l in _last_lines(m["last_output_tail"], 3)]
             coded = (m.get("assumptions") or [])
@@ -2452,7 +2466,12 @@ def _rank_tag(n: FunctionSpec, gap: str = " ") -> str:
 
 
 def _plain_names(items) -> str:
-    return ", ".join(i.name for i in items) or "—"
+    """File names, with how a step reads them when it is not one file: (folder), (all copies)."""
+    def one(i) -> str:
+        tag = " (folder)" if getattr(i, "kind", "file") == "folder" else \
+            " (all copies)" if getattr(i, "read", None) == "all" else ""
+        return i.name + tag
+    return ", ".join(one(i) for i in items) or "—"
 
 
 def _first_sentence(text: str) -> str:

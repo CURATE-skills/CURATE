@@ -60,18 +60,19 @@ Fill every `<…>` placeholder; `<plugin>` is the plugin folder (absolute, as th
 written without quotes so the command matches `uv run --quiet <plugin>/scripts/*`.
 
 ```
-Implement the FaaSr function `<N>` for CURATE run <run_id>.
+Implement the function `<N>` for CURATE run <run_id>.
 
 Run directory: <run>
 Your folder (the only place you may write): <run>/functions/<N>
 Read <run>/CONTEXT.md first, then <run>/functions/<N>/spec.md.
 
-- Signature must be exactly: `<signature from spec.md>`
+- Signature must be exactly: `<signature from spec.md>` (a plain function: it works only on the
+  local paths in inputs/outputs; no faasr_* calls, no S3, no hard-coded file names)
 <rank rule>
 - Write the implementation to <run>/functions/<N>/<N>.py and the PyPI packages it imports to
   <run>/functions/<N>/<N>.deps.txt (empty file if none) before testing.
 - Plugin folder (`<plugin>` in spec.md): <plugin>
-- Validate it through the stubs with exactly:
+- Validate it through the stub test with exactly:
     uv run --quiet <plugin>/scripts/stubtest.py run --run "<run>" --node <N>
 - When that test passes, stop immediately and end with the MGA_RESULT block.
 <user-model block, if any>
@@ -79,19 +80,19 @@ Read <run>/CONTEXT.md first, then <run>/functions/<N>/spec.md.
 ```
 
 **Rank rule** — pick by the node's rank:
-- rank N > 1: `- THIS FUNCTION IS RANKED: it runs as N ranks. Call r = faasr_rank()
-  (it reports THIS rank's own index) and use r['rank'] (1..N) to process ONLY this
-  rank's shard. The input/output names in the spec contain a {rank} placeholder — substitute
-  r['rank'] (e.g. input1.format(rank=r['rank'])). Implement ONE function, never one function per rank.`
-- rank 1: `- faasr_rank() reports THIS function's OWN rank and is only valid when this function
-  is itself ranked — which it is NOT. Do NOT call faasr_rank(). If you feed a ranked successor,
-  follow the spec's fan-out section exactly (do not derive counts from faasr_rank()).`
+- rank N > 1: `- THIS FUNCTION IS RANKED: it runs as N ranks. params["rank"] is THIS rank's
+  index (1..N) and params["max_rank"] is N; use them to process ONLY this rank's shard. The
+  paths in inputs/outputs are already this rank's copies — never substitute {rank} yourself.
+  Implement ONE main, never one function per rank.`
+- rank 1: `- This function is NOT ranked: params is {} (there is no rank). If you feed a ranked
+  successor, the fan-out output is a LIST of paths: write every one, taking the count from the
+  list (spec.md → "Fan-out").`
 
 **User-model block** (source `user_provided`):
 - verbatim: `[USER PROVIDED MODEL — VERBATIM] original_<N>.py in your folder is the user's
   ORIGINAL Python script/function and its code must NOT change. Copy it UNCHANGED into <N>.py,
-  add a FaaSr-compliant entry function <N> that produces its results ONLY by CALLING the
-  preserved model, prove the entry function invokes the model, verify output parity, and write
+  add a plain main(inputs, outputs, params) that produces its results ONLY by CALLING the
+  preserved model, prove main invokes the model, verify output parity, and write
   parity_report.txt in your folder. Full steps: spec.md → "[User Provided Model] — Wrap Verbatim".`
 - adapt: `[USER PROVIDED MODEL] original_<N>.py in your folder is the user's ORIGINAL Python
   script/function. Do NOT write <N> from scratch — REFACTOR the original's logic into <N>.py,

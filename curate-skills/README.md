@@ -25,7 +25,8 @@ before you see them. Verified functions go into a catalog that later runs reuse.
 | `/curate-skills:curate-doctor` | Checks your setup (deploy settings with `--deploy`, the Pegasus target with `--pegasus`) |
 
 Internal, not run directly: the `curate-mga` subagent writes each function, with the
-`faasr-reference` skill preloaded.
+`function-reference` skill preloaded. Every function is a plain `main(inputs, outputs, params)`
+on local paths, so the same code runs on FaaSr and on Pegasus.
 
 ## Requirements
 

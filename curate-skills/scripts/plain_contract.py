@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import re
+from types import SimpleNamespace
 
 RANK = "{rank}"
 ARGS = ["inputs", "outputs", "params"]
@@ -217,6 +218,32 @@ def io_layout(spec) -> tuple[dict[str, dict], list[str]]:
             outs.append(slot)
         layout[n.name] = {"rank": r, "inputs": ins, "outputs": outs}
     return layout, problems
+
+
+def as_spec(data):
+    """A spec as this module reads it, from a WorkflowSpec or from its JSON dict (state.json's
+    "spec"), for callers without pydantic (stubtest.py). Only the fields used here."""
+    if not isinstance(data, dict):
+        return data
+
+    def io(x):
+        x = x if isinstance(x, dict) else {"name": str(x)}
+        return SimpleNamespace(name=x["name"], kind=x.get("kind") or "file", read=x.get("read"))
+
+    nodes = [SimpleNamespace(name=n["name"], rank=n.get("rank") or 1, code=n.get("code"),
+                             inputs=[io(i) for i in n.get("inputs") or []],
+                             outputs=[io(o) for o in n.get("outputs") or []])
+             for n in data.get("nodes") or []]
+    return SimpleNamespace(nodes=nodes, edges=data.get("edges") or [])
+
+
+def producers(spec) -> dict[str, str]:
+    """{file name as the spec writes it: the step that writes it}."""
+    out = {}
+    for n in spec.nodes:
+        for o in n.outputs:
+            out.setdefault(o.name, n.name)
+    return out
 
 
 def resolve(name: str, rank: int | None) -> str:

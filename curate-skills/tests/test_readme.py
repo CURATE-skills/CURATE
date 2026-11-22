@@ -18,7 +18,7 @@ def test_every_skill_named_exists_and_every_user_skill_is_named():
         p.name for p in (PLUGIN / "skills").iterdir()}
     have = {p.name for p in (PLUGIN / "skills").iterdir() if (p / "SKILL.md").exists()}
     assert named <= have, named - have
-    assert have - {"faasr-reference"} <= named, have - named  # faasr-reference is the subagent's
+    assert have - {"function-reference"} <= named, have - named  # function-reference is the subagent's
 
 
 def test_no_removed_setup_skill_or_old_claims():

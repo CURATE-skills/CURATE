@@ -14,7 +14,7 @@ Decide whether the model can be used VERBATIM or must be ADAPTED.
 
 Definitions:
 - verbatim: the model's own code does not change. The generation agent copies it unchanged and
-  wraps it with FaaSr I/O and a compliant entry function that calls the model.
+  adds a plain `main(inputs, outputs, params)` entry point that calls the model.
 - adapt: the model's own computation must change (different algorithm, formula, parameters,
   units, or output semantics) to satisfy what the user asked for.
 
@@ -22,8 +22,8 @@ Rules, in priority order:
 1. If the user explicitly asked that their model be used verbatim / unchanged / as-is (in the
    original request or ANY revision below), answer verbatim. This is mandatory and overrides
    every other consideration.
-2. FaaSr-compatibility issues NEVER justify adapt: wrong signature, script form (argparse,
-   __main__, hardcoded paths), local file I/O instead of S3, missing faasr_* calls, input/output
+2. Compatibility issues NEVER justify adapt: wrong signature, script form (argparse,
+   __main__, hardcoded paths), no `main(inputs, outputs, params)` entry point, input/output
    format conversion — the wrapper absorbs all of that.
 3. Answer adapt ONLY when the request or feedback explicitly indicates the model's own
    computation must change.

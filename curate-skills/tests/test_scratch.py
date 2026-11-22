@@ -161,9 +161,79 @@ def test_fan_out_text_depends_on_rank_placeholder(make_run, capsys):
 
     shared = spec_md("numbers.txt")
     assert "reads one shared file" in shared and "Write it exactly once" in shared
-    assert "MUST write exactly 3 output shards" not in shared
+    assert "Fan-out to ranked successor" not in shared
     sharded = spec_md("chunk_{rank}.txt")
-    assert "MUST write exactly 3 output shards" in sharded and "reads one shared file" not in sharded
+    assert "Fan-out to ranked successor `par` (×3)" in sharded and "reads one shared file" not in sharded
+    assert '`outputs["output1"]` is a LIST of 3 paths' in sharded
+    assert "a LIST of 3 paths in rank order: write EVERY one (path i is read by rank i of par)" in sharded
+
+
+def plain_mapreduce_md(make_run, capsys):
+    from test_pegasus_ir import plain_e2_spec
+    wf = plain_e2_spec()
+    for n in wf.nodes:  # all to generate, so each gets a spec.md
+        n.source, n.code = "new", None
+    wf.nodes[2].secrets = ["API_KEY"]
+    run = make_run(spec=wf)
+    ok(scratch, ["build", "--run", str(run)], capsys)
+    md = {n.name: (run / "functions" / n.name / "spec.md").read_text() for n in wf.nodes}
+    return run, md
+
+
+def test_spec_md_describes_the_plain_slots(make_run, capsys):
+    run, md = plain_mapreduce_md(make_run, capsys)
+    assert "def main(inputs: dict, outputs: dict, params: dict) -> None" in md["map"]
+    assert 'inputs["input1"]   text_batch_{rank}.txt' in md["map"]
+    assert "a path: THIS rank's copy (text_batch_2.txt for rank 2)" in md["map"]
+    assert 'params["rank"]` is THIS instance\'s rank (1..3)' in md["map"]
+    assert 'main({"input1": "stub_in/r1/text_batch_1.txt"}, {"output1": "test_output/map_counts_1.json"}, ' \
+           '{"rank": 1, "max_rank": 3})' in md["map"]
+    assert 'read with os.environ["API_KEY"]' in md["map"]
+    assert ('a FOLDER: a directory holding every file whose name starts with "map_counts_"; list it with '
+            "os.listdir") in md["shuffle"]
+    assert "Fan-in from ranked predecessor `map` (×3)" in md["shuffle"]
+    assert "a LIST of 5 paths in rank order: write EVERY one (path i is read by rank i of reduce)" in md["shuffle"]
+    assert "a LIST of 3 paths in rank order" in md["split"]
+    ctx = (run / "CONTEXT.md").read_text()
+    api = ("faasr_get_file", "faasr_put_file", "faasr_rank", "faasr_log", "faasr_secret",
+           "faasr_get_folder_list", "remote_file", "remote_folder", "faasr-reference")
+    for text in [ctx, *md.values()]:  # nothing tells the MGA to use the FaaSr API any more
+        assert not [a for a in api if a in text], [a for a in api if a in text]
+    assert "no faasr_* calls or imports" in ctx and "function-reference" in ctx
+
+
+def test_spec_md_list_input_and_conditional_return(make_run, capsys):
+    wf = WorkflowSpec(
+        name="w", entry="a",
+        nodes=[FunctionSpec(name="a", rank=2, outputs=[IOSpec(name="p_{rank}.txt")]),
+               FunctionSpec(name="g", inputs=[IOSpec(name="p_{rank}.txt")], outputs=[IOSpec(name="s.txt")]),
+               FunctionSpec(name="yes"), FunctionSpec(name="no")],
+        edges=[{"from_node": "a", "to_node": "g"}, {"from_node": "g", "to_node": "yes", "condition": "True"},
+               {"from_node": "g", "to_node": "no", "condition": "False"}])
+    run = make_run(spec=wf)
+    ok(scratch, ["build", "--run", str(run)], capsys)
+    g = (run / "functions" / "g" / "spec.md").read_text()
+    assert "a LIST of 2 paths, every copy in rank order 1..2" in g
+    assert "-> bool" in g and "`False` runs no; `True` runs yes" in g
+
+
+def test_seed_in_the_older_faasr_style_is_converted(built):
+    run, _ = built
+    tweak = (run / "functions" / "tweak" / "spec.md").read_text()
+    assert "OLDER FaaSr style" in tweak and "Convert it to `main(inputs, outputs, params)`" in tweak
+
+
+def test_extract_secrets_plain_and_legacy():
+    code = 'import os\nk = os.environ["API_KEY"]\nh = os.environ["HOME"]\nt = faasr_secret("OLD_TOKEN")\n'
+    assert scratch.extract_secrets(code) == ["API_KEY", "OLD_TOKEN"]
+
+
+def test_record_keeps_empty_external_inputs(built, capsys):
+    run, _ = built
+    d = run / "functions" / "work"
+    (d / "stubtest.log").write_text(json.dumps({"ok": True, "empty_external_inputs": ["raw.csv"]}) + "\n\nlines")
+    ok(scratch, ["record", "--run", str(run), "--node", "work", "--status", "passed"], capsys)
+    assert state(run)["mga"]["work"]["empty_external_inputs"] == ["raw.csv"]
 
 
 def test_build_resume_keeps_finished_nodes(built, capsys):

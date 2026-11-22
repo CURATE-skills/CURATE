@@ -345,6 +345,39 @@ def test_gate3_after_a_kept_import_says_kept_and_passed(tmp_path, capsys, monkey
         assert "\n  kept (not regenerated)" in block
 
 
+@pytest.mark.parametrize("mix", ["plain", "mixed"])
+def test_generate_stage_stub_tests_plain_and_mixed_runs(tmp_path, capsys, monkeypatch, mix):
+    """The plain e2 fixture through the generate stage's stub tests; "mixed": one step is kept
+    FaaSr-style code (a reused, not yet migrated function) between plain ones."""
+    import stubtest
+    spec = json.loads((FIX.parent / "e2-stages-plain" / "spec-with-code.json").read_text())
+    if mix == "mixed":
+        old = {n["name"]: n["code"] for n in json.loads((FIX / "spec-with-code.json").read_text())["nodes"]}
+        next(n for n in spec["nodes"] if n["name"] == "map")["code"] = old["map"]
+    src = tmp_path / "spec.json"
+    src.write_text(json.dumps(spec))
+    code, out = call(S, ["import", "--stage", "generate", "--from", str(src), "--existing-code", "keep",
+                         "--project-dir", str(tmp_path / "p"), "--catalog-dir", str(tmp_path / "c")], capsys)
+    assert code == 0, out
+    run = out["run"]
+    ok(S, ["begin", "--run", run, "--stage", "generate"], capsys)
+    built = ok(scratch, ["build", "--run", run], capsys)
+    harness = {}
+    for n in built["order"]:
+        res = stubtest.run_stubtest(Path(run), n)
+        assert res["ok"], (n, res["tail"])
+        harness[n] = res["harness"]
+    want = {n: "plain" for n in built["order"]}
+    if mix == "mixed":
+        want["map"] = "faasr"
+    assert harness == want
+    out_dir = Path(run) / "functions" / "reduce" / "test_output"
+    totals = {}
+    for i in range(1, 6):
+        totals.update(json.loads((out_dir / f"word_count_{i}.json").read_text()))
+    assert totals == {w: 1000 for w in ("cat", "dog", "bird", "horse", "pig")}
+
+
 # ── from the user's weather run (results log #25) ──
 
 WEATHER = {"name": "weather", "description": "compare winter weather",
@@ -502,6 +535,6 @@ def test_stub_test_command_matches_the_allow_rule_and_stores_no_plugin_path(make
     assert filled.startswith(rule_prefix) and filled[len(rule_prefix):].startswith("stubtest.py run ")
     spawn = (Path(plugin) / "references" / "prompts" / "mga-spawn.md").read_text()
     assert 'uv run --quiet <plugin>/scripts/stubtest.py run --run "<run>" --node <N>' in spawn
-    ref = (Path(plugin) / "skills" / "faasr-reference" / "SKILL.md").read_text()
+    ref = (Path(plugin) / "skills" / "function-reference" / "SKILL.md").read_text()
     assert 'uv run --quiet <plugin>/scripts/stubtest.py run --run "<run dir>" --node <name>' in ref
     assert 'uv run "' not in spawn + ref

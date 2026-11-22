@@ -11,11 +11,15 @@
 
 Layout built under <run>/:
   CONTEXT.md                 shared workflow context for every MGA subagent
-  stubs/faasr_stubs.py       local FaaSr API stubs
+  stubs/faasr_stubs.py       FaaSr API stubs, only for reused catalog code not yet migrated
+                             to the plain contract (stubtest.py)
   context/                   copies of user reference files
   functions/<node>/          one folder per node — the only place its MGA may write
       spec.md  <node>.py  <node>.deps.txt  original_<node>.py
-      test_data/  test_output/  parity_report.txt  stubtest.log
+      test_data/  test_output/  stub_in/  parity_report.txt  stubtest.log
+
+Every generated function follows the plain contract (plain_contract.py):
+def main(inputs, outputs, params), on local paths.
 
   scratch.py build         --run R [--resume]
   scratch.py lock          --run R --node N [--force]
@@ -40,6 +44,7 @@ import shutil
 import sys
 from pathlib import Path
 
+import plain_contract as PC
 from curate_models import FunctionSpec, WorkflowSpec, clean_dependencies
 from runstate import node_basis, run_lock
 from spec import InputError, load_state, save_state, spec_of, dump, topo_order
@@ -106,12 +111,77 @@ def seed_test_data(test_data: Path, node: FunctionSpec, context_files: list[dict
 
 # ── CONTEXT.md / spec.md (adapted from context_dir.py 251-569) ───────────────
 
-def signature_and_test_call(spec: FunctionSpec) -> tuple[str, str]:
-    sig = (["folder: str"] + [f"input{i + 1}: str" for i in range(len(spec.inputs))]
-           + [f"output{i + 1}: str" for i in range(len(spec.outputs))])
-    args = (["'test_folder'"] + [f"'{i.name}'" for i in spec.inputs]
-            + [f"'{o.name}'" for o in spec.outputs])
-    return f"def {spec.name}({', '.join(sig)}) -> None", f"{spec.name}({', '.join(args)})"
+def conditional_edges(spec: FunctionSpec, wf: WorkflowSpec) -> dict[str, list[str]]:
+    """{"True": [successors], "False": [...]} for this step's conditional out-edges."""
+    out: dict[str, list[str]] = {}
+    for e in wf.edges:
+        if e.from_node == spec.name and e.condition is not None:
+            out.setdefault(e.condition, []).append(e.to_node)
+    return out
+
+
+def signature_and_test_call(spec: FunctionSpec, wf: WorkflowSpec) -> tuple[str, str]:
+    """The plain signature, and the call the stub test makes for rank 1 (stubtest.plain_call:
+    inputs are copied to stub_in/r1/, outputs go to test_output/)."""
+    ret = "bool" if conditional_edges(spec, wf) else "None"
+    layout, _ = PC.io_layout(wf)
+    lay = layout[spec.name]
+    r = 1 if lay["rank"] > 1 else None
+    ins, outs = {}, {}
+    for s in lay["inputs"]:
+        if s["kind"] == "list":
+            ins[s["slot"]] = [f"stub_in/r1/{PC.resolve(s['file'], i)}" for i in range(1, (s["copies"] or 0) + 1)]
+        elif s["kind"] == "folder":
+            ins[s["slot"]] = f"stub_in/r1/dir_{s['slot']}"
+        else:
+            ins[s["slot"]] = f"stub_in/r1/{PC.resolve(s['file'], r)}"
+    for s in lay["outputs"]:
+        if s["kind"] == "list":
+            outs[s["slot"]] = [f"test_output/{PC.resolve(s['file'], i)}" for i in range(1, (s["copies"] or 0) + 1)]
+        else:
+            outs[s["slot"]] = f"test_output/{PC.resolve(s['file'], r)}"
+    params = {"rank": 1, "max_rank": lay["rank"]} if r else {}
+    return (f"def main(inputs: dict, outputs: dict, params: dict) -> {ret}",
+            f"main({json.dumps(ins)}, {json.dumps(outs)}, {json.dumps(params)})")
+
+
+def slot_lines(spec: FunctionSpec, wf: WorkflowSpec) -> tuple[str, str]:
+    """spec.md's Inputs / Outputs: what each slot holds, from plain_contract.io_layout."""
+    layout, _ = PC.io_layout(wf)
+    lay = layout[spec.name]
+    ranked = lay["rank"] > 1
+    readers: dict[str, list[str]] = {}
+    for n in wf.nodes:
+        for i in n.inputs:
+            readers.setdefault(i.name, []).append(n.name)
+
+    def tail(io) -> str:
+        return f"  ({io.type or 'any'})" + (f" — {io.description}" if io.description else "")
+
+    ins = []
+    for s, io in zip(lay["inputs"], spec.inputs):
+        if s["kind"] == "folder":
+            what = (f'a FOLDER: a directory holding every file whose name starts with "{s["prefix"]}"; '
+                    "list it with os.listdir (never assume how many there are)")
+        elif s["kind"] == "list":
+            what = f"a LIST of {s['copies']} paths, every copy in rank order 1..{s['copies']}"
+        elif ranked and PC.RANK in s["file"]:
+            what = f"a path: THIS rank's copy ({PC.resolve(s['file'], 2)} for rank 2)"
+        else:
+            what = "a path" + (" (the same file for every rank)" if ranked else "")
+        ins.append(f'  inputs["{s["slot"]}"]   {s["file"]}{tail(io)}\n      → {what}')
+    outs = []
+    for s, io in zip(lay["outputs"], spec.outputs):
+        if s["kind"] == "list":
+            who = ", ".join(r for r in readers.get(s["file"], []) if r != spec.name) or "the next step"
+            what = (f"a LIST of {s['copies']} paths in rank order: write EVERY one (path i is read by "
+                    f"rank i of {who})")
+        elif ranked and PC.RANK in s["file"]:
+            what = "a path: write THIS rank's copy"
+        else:
+            what = "a path: write it"
+        outs.append(f'  outputs["{s["slot"]}"]  {s["file"]}{tail(io)}\n      → {what}')
+    return "\n".join(ins) or "  (none)", "\n".join(outs) or "  (none)"
 
 
 def shared_context_md(run: Path, wf: WorkflowSpec, state: dict) -> str:
@@ -138,7 +208,7 @@ def shared_context_md(run: Path, wf: WorkflowSpec, state: dict) -> str:
             "function's test_data/ as the REAL local test inputs. Stub runs MUST use them and pass.\n")
     mode = state.get("stubtest_mode", "strict")
     mode_note = ("Every rank 1..N is run, your <node>.deps.txt is installed into an isolated env, "
-                 "test_output/ is cleared first, and every declared output must be uploaded."
+                 "test_output/ is cleared first, and every declared output must be written."
                  if mode == "strict" else
                  "Only rank 1 is run and dependencies are NOT installed (parity with the original "
                  "CURATE); a ModuleNotFoundError for a package listed in <node>.deps.txt is tolerated.")
@@ -162,27 +232,32 @@ are blocked and fail the attempt.
 ## Data Integrity (non-negotiable)
 This is a REAL scientific workflow. Use the real data source / API named in each spec.
 NEVER fabricate, mock, randomize, hardcode, or fall back to synthetic data when a
-source is unavailable — if it cannot be reached, faasr_log the error and raise.
+source is unavailable — if it cannot be reached, print the error and raise.
+
+## Function contract
+Every function is ONE file defining `def main(inputs, outputs, params)` that works only on the
+local paths it is given (see the function-reference skill). `inputs` / `outputs` map the slots
+`input1`…, `output1`… (your spec.md lists what each one holds) to local paths; `params` is
+{{"rank": r, "max_rank": N}} for a ranked function and {{}} otherwise. The SAME file runs
+unchanged on every target: FaaSr, Pegasus, and the local stub test each hand it paths. So it
+never names a workflow system: no faasr_* calls or imports, no boto3/S3, no folder or bucket.
 
 ## Neighbor Code (`{run}/functions/*/`)
 Every function that already exists (catalog/cached reuse, seeds, user-provided originals
 `original_<name>.py`, and functions implemented earlier in this run) lives in its own folder.
-MATCH filenames against it: a function's input filenames MUST equal the exact remote_file each
-producer passes to faasr_put_file, and its output filenames MUST equal what each consumer
-passes to faasr_get_file. The Inputs/Outputs in each spec are starting names — reconcile to the
-real code when they differ. CATALOG functions are FIXED (their filenames cannot change), so
-conform to a catalog neighbor's names exactly.
-
-## FaaSr API
-See the faasr-reference skill. The final file must contain NO faasr import of any kind and
-must call faasr_get_file, faasr_put_file, faasr_log, faasr_secret, faasr_rank and
-faasr_get_folder_list as bare names.
+Steps are linked by the FILE NAMES in the spec, which the runtime turns into the paths each
+function receives; your code never writes a file name. Read neighbors to match DATA FORMATS
+(columns, JSON keys, units) exactly. A reused catalog neighbor may still be in the older FaaSr
+style (faasr_* calls); never copy that style. Its file names are the ones in its own spec.
 
 ## Testing with Stubs
-Run your function through the local stubs with the exact command in your spec.md
+Run your function through the local stub test with the exact command in your spec.md
 ("Local Stub Test"). {mode_note}
-The stub faasr_get_file reads your test_output/, then your test_data/, then the test_output/
-of every upstream function — so you are tested on the REAL outputs upstream functions produced.
+It calls `main` with copies of the real files: each input is looked up in your test_output/,
+then your test_data/, then the test_output/ of every upstream function (nearest first) — so
+you are tested on the REAL outputs upstream functions produced. In strict mode a file an
+upstream function should have written but didn't is an error; an external input found nowhere
+is replaced by an EMPTY file, with a warning that is shown to the user at Gate 3.
 
 YOU ARE NOT DONE UNTIL THIS RUNS CLEANLY on representative inputs:
 - A PURE-LOCAL function (parse / validate / transform / simulate on the given inputs / plot) has
@@ -201,16 +276,14 @@ YOU ARE NOT DONE UNTIL THIS RUNS CLEANLY on representative inputs:
 
 def node_spec_md(run: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: str,
                  seeded: list[str]) -> str:
-    signature, test_call = signature_and_test_call(spec)
+    signature, test_call = signature_and_test_call(spec, wf)
     me = node_dir(run, spec.name)
-    inputs_lines = "\n".join(
-        f'  input{i + 1} = "{inp.name}"  # type: {inp.type or "any"}'
-        + (f" — {inp.description}" if inp.description else "")
-        for i, inp in enumerate(spec.inputs)) or "  (none)"
-    outputs_lines = "\n".join(
-        f'  output{i + 1} = "{out.name}"  # type: {out.type or "any"}'
-        + (f" — {out.description}" if out.description else "")
-        for i, out in enumerate(spec.outputs)) or "  (none)"
+    inputs_lines, outputs_lines = slot_lines(spec, wf)
+    cond = conditional_edges(spec, wf)
+    return_line = ("Return `True` or `False`: "
+                   + "; ".join(f"`{v}` runs {', '.join(ts)}" for v, ts in sorted(cond.items()))
+                   + ". Every declared output must still be written." if cond else
+                   "Return `None` (nothing). Every declared output must exist when `main` returns.")
     incoming = "\n".join(f"  '{d.file}' ({d.format or 'any'}) ← from {d.from_node} "
                          f"(code: {node_dir(run, d.from_node)}/{d.from_node}.py)"
                          for d in wf.data_flow if d.to_node == spec.name) \
@@ -219,19 +292,20 @@ def node_spec_md(run: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: str,
                          for d in wf.data_flow if d.from_node == spec.name) \
         or "  (none — this is a sink node, write final outputs)"
     deps = ", ".join(spec.dependencies) if spec.dependencies else "none"
-    secrets_block = "\n".join(f'  - {s}   →   read with faasr_secret("{s}")'
+    secrets_block = "\n".join(f'  - {s}   →   read with os.environ["{s}"]'
                               for s in spec.secrets) or "  (none)"
 
+    layout, _ = PC.io_layout(wf)
+    lay = layout[spec.name]
     rank_by_name = {n.name: n.rank or 1 for n in wf.nodes}
     rank_block = ""
     if spec.rank > 1:
         rank_block += (
             f"\n## Parallel Execution (RANK = {spec.rank})\n"
-            f"This function runs as {spec.rank} parallel instances. Call `r = faasr_rank()` "
-            f"(returns {{'rank': i, 'max_rank': N}}) and use r['rank'] (1..{spec.rank}) to process "
-            "ONLY this instance's shard. The input/output names above contain a {rank} placeholder "
-            "— substitute r['rank'] before calling faasr_get_file / faasr_put_file "
-            "(e.g. input1.format(rank=r['rank'])).\n")
+            f"This function runs as {spec.rank} parallel instances. `params[\"rank\"]` is THIS "
+            f"instance's rank (1..{spec.rank}) and `params[\"max_rank\"]` is {spec.rank}; use them to "
+            "process ONLY this instance's shard (e.g. pick the rank-th category). The paths you are "
+            "given are already this rank's copies: never substitute {rank} into anything yourself.\n")
     for s in (e.to_node for e in wf.edges if e.from_node == spec.name):
         n = rank_by_name.get(s, 1)
         if n <= 1:
@@ -242,28 +316,24 @@ def node_spec_md(run: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: str,
             rank_block += (
                 f"\n## Ranked successor `{s}` (×{n}) reads one shared file\n"
                 f"`{s}` runs as {n} parallel instances, and ALL of them read the same "
-                f"{', '.join(repr(f) for f in handed)}. Write it exactly once — do not shard it. "
-                "THIS function is NOT ranked: do NOT call faasr_rank().\n")
+                f"{', '.join(repr(f) for f in handed)}. Write it exactly once — do not shard it.\n")
             continue
-        rank_block += (
-            f"\n## Fan-out to ranked successor `{s}` (×{n})\n"
-            f"`{s}` runs as {n} parallel instances, so you MUST write exactly {n} output shards — "
-            "one per instance. THIS function is NOT ranked: do NOT call faasr_rank() to get this "
-            "count (it reports YOUR own rank, which is 1 here). "
-            f"Hardcode the count as {n} and substitute {{rank}} with 1..{n}, e.g.\n"
-            f"    for i in range(1, {n + 1}):\n"
-            f"        faasr_put_file(local_file=..., remote_folder=folder, "
-            f"remote_file=output1.replace(\"{{rank}}\", str(i)))\n")
+        lists = [o["slot"] for o in lay["outputs"] if o["kind"] == "list"]
+        if lists and spec.rank <= 1:
+            rank_block += (
+                f"\n## Fan-out to ranked successor `{s}` (×{n})\n"
+                f"`{s}` runs as {n} parallel instances, so "
+                + " and ".join(f'`outputs["{x}"]`' for x in lists)
+                + f" is a LIST of {n} paths: write one shard to EACH path, in order (path i is read by "
+                f"rank i). Take the count from the list, `len(outputs[...])`; don't hard-code it.\n")
     for p in (e.from_node for e in wf.edges if e.to_node == spec.name):
         n = rank_by_name.get(p, 1)
-        if n > 1:
+        if n > 1 and spec.rank <= 1:
             rank_block += (
                 f"\n## Fan-in from ranked predecessor `{p}` (×{n})\n"
-                f"You run ONCE after all {n} instances of `{p}` finish. Read ALL of its per-rank "
-                "outputs: discover them with faasr_get_folder_list(prefix=...) and faasr_get_file each "
-                "one (do not assume a fixed count or use boto3). faasr_get_folder_list returns FULL "
-                "object keys including the folder prefix; pass only the basename to faasr_get_file: "
-                "remote_file=name.rsplit(\"/\", 1)[-1].\n")
+                f"You run ONCE after all {n} instances of `{p}` finish. Read ALL of their outputs "
+                "through the input that holds them (a LIST of paths, or a FOLDER you list with "
+                "os.listdir, as Inputs above says). Never assume a fixed count.\n")
 
     feedback_block = (f"\n## Feedback from Code Review\n{feedback}\n"
                       "\nAddress all points above in your implementation.\n") if feedback else ""
@@ -273,7 +343,11 @@ def node_spec_md(run: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: str,
         prior_block = (f"\n## Previous Implementation\nSee `{me}/{spec.name}.py` (seeded from "
                        f"{spec.origin_kind or 'a previous round'}"
                        f"{' `' + spec.origin_name + '`' if spec.origin_name else ''}) — make the "
-                       "smallest change that addresses the requirements while preserving everything else.\n")
+                       "smallest change that addresses the requirements while preserving everything else.\n"
+                       + ("" if PC.is_plain(spec.code) else
+                          "That code is in the OLDER FaaSr style (faasr_* calls, a `def "
+                          f"{spec.name}(folder, …)` entry point). Convert it to `main(inputs, outputs, params)` "
+                          "on the paths above, keeping its computation exactly; drop every faasr_* call.\n"))
     run_original = (f'uv run --no-project --python 3.13 --with-requirements {spec.name}.deps.txt '
                     f'python original_{spec.name}.py')
     parity_block = ""
@@ -281,16 +355,17 @@ def node_spec_md(run: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: str,
         parity_block = (
             "\n## [User Provided Model] — Wrap Verbatim (REQUIRED)\n"
             f"`{me}/original_{spec.name}.py` is a user-provided Python **script or function**. The "
-            "user's model code itself must NOT change — your job is only to wrap it for FaaSr.\n"
+            "user's model code itself must NOT change — your job is only to give it the plain entry "
+            "point `main`.\n"
             "1. Read it and work out WHAT it computes — its real inputs (files it reads, CLI/argparse "
             "args, hardcoded paths, stdin) and outputs (files written, stdout, return value).\n"
             f"2. Copy the model's code into `{spec.name}.py` UNCHANGED — no renaming, no "
             "algorithm/constant/output-format changes. (If it is a plain script, you may enclose its "
             "top-level logic in a function so it is callable, but every statement's logic must be "
-            f"preserved.) Then add the FaaSr entry function `{spec.name}` with the signature above: "
-            "download inputs via faasr_get_file, convert formats as needed, CALL the model, and upload "
-            "its results via faasr_put_file, matching the declared I/O filenames.\n"
-            "3. The entry function must produce its results ONLY by calling the preserved model "
+            "preserved.) Then add `main(inputs, outputs, params)` with the signature above: read the "
+            "input paths, convert formats as needed, CALL the model, and write its results to the "
+            "output paths.\n"
+            "3. `main` must produce its results ONLY by calling the preserved model "
             "function(s) — never by reimplementing or duplicating any model logic in the wrapper body.\n"
             f"4. List the original's third-party imports in `{spec.name}.deps.txt` so it is runnable "
             f"(run the original with `{run_original}` from your folder).\n"
@@ -301,7 +376,7 @@ def node_spec_md(run: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: str,
             "instrument the model function (e.g. a call counter or sentinel), assert it fired when the "
             "entry function ran, then REMOVE the instrumentation so the shipped code is untouched.\n"
             f"6. Record both checks in `{me}/parity_report.txt`. If the outputs cannot be made to "
-            "match without changing the model, faasr_log the discrepancy and FAIL — never fabricate "
+            "match without changing the model, print the discrepancy and FAIL — never fabricate "
             "data and never modify the model to force a pass.\n")
     elif user:
         parity_block = (
@@ -310,18 +385,18 @@ def node_spec_md(run: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: str,
             "be a plain script: top-level statements, argparse, hardcoded paths, an "
             "`if __name__ == \"__main__\"` block).\n"
             "1. Read it and work out WHAT it computes — its real inputs and outputs.\n"
-            f"2. Refactor that logic into the FaaSr function `{spec.name}.py` with the signature above, "
-            "reading inputs via faasr_get_file and writing outputs via faasr_put_file, matching the "
-            "declared I/O filenames. Apply EXACTLY the changes the workflow requirements and feedback "
+            f"2. Refactor that logic into `{spec.name}.py` as `main(inputs, outputs, params)` with the "
+            "signature above, reading the input paths and writing the output paths it is given. "
+            "Apply EXACTLY the changes the workflow requirements and feedback "
             "call for — everything else must preserve the original computation.\n"
             f"3. List the original's third-party imports in `{spec.name}.deps.txt` "
             f"(run the original with `{run_original}`).\n"
             "4. VERIFY PARITY: construct representative synthetic inputs; RUN the original to capture "
-            "its baseline outputs; run your FaaSr translation on the equivalent inputs via the stub "
+            "its baseline outputs; run your translation on the equivalent inputs via the stub "
             "test; compare the outputs.\n"
             f"5. Iterate until they match apart from the required changes, then write `{me}/"
             "parity_report.txt` noting what you compared, that they agree, and which deviations are "
-            "intentional. If they cannot be made to match, faasr_log the discrepancy and FAIL — never "
+            "intentional. If they cannot be made to match, print the discrepancy and FAIL — never "
             "fabricate data to force a pass.\n")
     seeded_note = ""
     if seeded:
@@ -334,29 +409,32 @@ def node_spec_md(run: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: str,
 
 Your folder (the only place you may write): `{me}`
 
-## Function Signature
+## Function Signature  (write it in `{me}/{spec.name}.py`)
 ```python
 {signature}
 ```
+{return_line}
+`inputs` / `outputs` map the slots below to LOCAL paths; read and write only those paths.
+`params` is {{"rank": r, "max_rank": N}} for a ranked function, else {{}}.
 
-## Inputs  (S3 filenames — pass as `remote_file` to faasr_get_file)
+## Inputs
 {inputs_lines}
 
-## Outputs  (S3 filenames — pass as `remote_file` to faasr_put_file)
+## Outputs
 {outputs_lines}
 {rank_block}
-## PyPI Dependencies (third-party packages only — NOT faasr, NOT stdlib)
+## PyPI Dependencies (third-party packages only — NOT stdlib, NOT any workflow system)
 {deps}
 Write the packages your code imports, one per line, to `{me}/{spec.name}.deps.txt`
 (empty file if none; prefer headless variants such as opencv-python-headless).
 
 ## Required Secrets (credentials / API tokens)
-Read each one with faasr_secret("NAME") — never hardcode, and raise if missing.
-If you discover this function needs a credential not listed here, call
-faasr_secret("NEW_NAME") with an UPPER_SNAKE name — it is detected automatically.
+Read each one with os.environ["NAME"] — never hardcode; a missing one raises KeyError, let it.
+If you discover this function needs a credential not listed here, read it with
+os.environ["NEW_NAME"] using an UPPER_SNAKE name — it is detected automatically.
 {secrets_block}
 
-## Data Flow  (MATCH these filenames to the real code of neighbors)
+## Data Flow  (for orientation: the runtime turns these file names into your paths)
 ### Incoming files (produced by upstream functions):
 {incoming}
 
@@ -364,7 +442,7 @@ faasr_secret("NEW_NAME") with an UPPER_SNAKE name — it is detected automatical
 {outgoing}
 
 ## Local Stub Test
-Test call: `{test_call}`
+Test call (rank 1): `{test_call}`
 Run it with exactly this, where `<plugin>` is the plugin folder given in your spawn prompt
 (your spawn prompt repeats the command with it filled in):
 ```bash
@@ -564,7 +642,9 @@ def cmd_verify_writes(args) -> dict:
 # ── harvest / record (fga.py 927-981) ────────────────────────────────────────
 
 def extract_secrets(code: str) -> list[str]:
-    found: list[str] = []
+    """Credentials the code reads: os.environ / os.getenv names (plain contract), and
+    faasr_secret("X") in reused code that is still FaaSr-style."""
+    found: list[str] = list(PC.secret_names(code))
     for raw in re.findall(r"faasr_secret\(\s*['\"]([^'\"]+)['\"]", code):
         if raw not in found:
             found.append(raw)
@@ -618,6 +698,14 @@ def read_assumptions(path: Path) -> list[str]:
     return [l for l in lines if l and l.lower() not in ("none", "none.")][:20]
 
 
+def stub_result(log: Path) -> dict:
+    """The result JSON at the top of stubtest.log (before its first blank line); {} if none."""
+    try:
+        return json.loads(log.read_text().split("\n\n", 1)[0])
+    except (OSError, ValueError):
+        return {}
+
+
 def cmd_record(args) -> dict:
     run = Path(args.run).resolve()
     s = load_state(run)
@@ -629,6 +717,7 @@ def cmd_record(args) -> dict:
         entry["attempts"] = args.attempts
     log = node_dir(run, args.node) / "stubtest.log"
     entry["last_output_tail"] = log.read_text()[-6000:] if log.exists() else ""
+    entry["empty_external_inputs"] = stub_result(log).get("empty_external_inputs") or []
     entry["assumptions"] = read_assumptions(node_dir(run, args.node) / "assumptions.txt")
     if args.note:
         entry["note"] = args.note

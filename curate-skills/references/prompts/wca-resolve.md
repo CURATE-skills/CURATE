@@ -67,7 +67,7 @@ list what the request states plainly. `[]` only if the request leaves nothing to
 field itself is required.
 
 Rules:
-- Every node MUST have concrete inputs and outputs (S3 file names + formats) — no empty I/O.
+- Every node MUST have concrete inputs and outputs (file names + formats) — no empty I/O.
 - REUSE/catalog candidates run verbatim catalog code: keep their input/output COUNT and
   FORMATS, and keep their existing file names UNLESS an edge to/from an ADAPT node forces a
   rename for consistency (see below).
@@ -84,7 +84,7 @@ Rules:
   the new/adapt neighbor on the other end use that exact name. Catalog I/O names are authoritative;
   the generation agent reconciles neighbors against the real catalog code.
 - User-provided nodes (shown in the "User-provided functions" block) keep their EXACT name and
-  stay in the workflow — the MGA turns the attached code into a FaaSr function. Give them
+  stay in the workflow — the MGA turns the attached code into a plain function. Give them
   concrete inputs/outputs like any node so data flows correctly.
 - A node's NAME must describe what it does NOW. Verbatim-reuse (catalog) nodes keep their exact
   name. *(curate-skills: `merge-resolved` requires the node names to match the candidates
@@ -93,21 +93,33 @@ Rules:
   default folder, use X"), SET the top-level "folder" field to that name AND use it for every
   data_flow entry's "folder" — this is the actual S3 prefix for external inputs and all data. Do NOT
   merely mention the folder in descriptions while leaving "folder" unchanged.
-- dependencies lists ONLY third-party PyPI packages each function needs. NEVER list `faasr` (it is
-  the runtime, always available) or standard-library modules (re, json, os, sys, collections, …).
+- dependencies lists ONLY third-party PyPI packages each function needs. NEVER list a workflow
+  system (`faasr`, `FaaSr_py`, Pegasus — functions never import one) or standard-library modules
+  (re, json, os, sys, collections, …).
   Functions run in minimal headless Linux containers with no display server or GUI/system
   libraries — when a package offers a headless or slim variant, pick it over the full build.
 - PARALLELISM (rank): keep parallel steps as ONE node with "rank": N — never duplicate nodes, and
   do NOT add a separate fan-in node (the successor runs once automatically after all N instances).
   For a ranked node, its per-instance input/output filenames MUST contain a "{rank}" placeholder
-  (e.g. "ranked_func{rank}.json") — each instance fills in its own rank at runtime via
-  faasr_rank(). The single producer feeding a ranked node writes the whole family
+  (e.g. "ranked_func{rank}.json") — at run time each instance is given its own copy, and its
+  rank as params["rank"]. The single producer feeding a ranked node writes the whole family
   (base_1 … base_N), and the single successor after it reads all N. Edges stay simple:
   producer → ranked → successor (one edge each), never producer → ranked_1, producer → ranked_2.
   "{rank}" is the ONLY placeholder ever allowed in a filename — NEVER invent any other
   placeholder. When each instance of a ranked node handles a distinct category (e.g. one
   category per instance), number the files by rank ("result_{rank}.json", rank 1 = first
   category, …) and map rank → category inside the function code.
+- HOW AN INPUT IS READ (optional fields on an input; omit them for the usual case):
+  - `"kind": "folder"` — the step reads WHATEVER files exist whose names start with this name's
+    prefix (the text before "{rank}"), as one directory it lists, instead of a fixed set of
+    files. Use it when the request says to combine "all the …", "whatever … exist", or the
+    number of files is not fixed by the design. Keep the producer's family name, e.g.
+    `{"name": "counts_{rank}.json", "type": "json", "kind": "folder"}`. Without it, a step that is
+    not ranked and reads a "{rank}" file gets the fixed LIST of every copy, which is right when
+    the count is known.
+  - `"read": "all"` — only for a RANKED step that needs EVERY copy of a "{rank}" file (not just
+    its own), e.g. each instance compares its share with all the others. Without it, a ranked
+    step reads only its own copy.
 - EXACTLY ONE entry node: `entry` names the single node with no incoming edge. Every OTHER node
   MUST be reachable from `entry` via `edges`. A source/entry node MAY have inputs that no upstream
   node produces — these are EXTERNAL inputs the user places in S3 before the run; they need no

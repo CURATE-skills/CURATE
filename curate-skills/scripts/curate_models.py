@@ -52,8 +52,8 @@ class IOSpec(BaseModel):
     @field_validator("name")
     @classmethod
     def _flatten_name(cls, v: str) -> str:
-        """Filenames on the data store are flat — the S3 folder is a separate
-        FaaSr argument"""
+        """File names are flat: the workflow's folder (an S3 prefix on FaaSr) is set once for
+        the whole workflow, never in a file name."""
         return v.rsplit("/", 1)[-1].strip()
 
 
@@ -63,14 +63,14 @@ class FunctionSpec(BaseModel):
     inputs: list[IOSpec] = Field(default_factory=list)
     outputs: list[IOSpec] = Field(default_factory=list)
     dependencies: list[str] = Field(default_factory=list)  # PyPI package names
-    secrets: list[str] = Field(default_factory=list)  # uppercase env-var names, read via faasr_secret()
-    rank: int = 1  # >1 → ranked/parallel: invoked as Name(N), each instance gets faasr_rank()
+    secrets: list[str] = Field(default_factory=list)  # uppercase env-var names, read via os.environ
+    rank: int = 1  # >1 → ranked/parallel: N instances, each gets params["rank"] (plain_contract.py)
     # "user_provided": seeded from a user-attached script/function; the MCA decides
     # user_model_mode (verbatim wrap vs adapt), the MGA executes it and verifies parity.
     source: Literal["catalog", "adapt", "new", "cached", "user_provided"] = "new"
     # Only for source == "user_provided". "verbatim": the model's code must not change —
-    # it is copied unchanged and wrapped with FaaSr I/O + an entry function that CALLS
-    # the model. "adapt": the model's own computation must change per the user's request.
+    # it is copied unchanged, with a plain main(inputs, outputs, params) that CALLS the
+    # model. "adapt": the model's own computation must change per the user's request.
     user_model_mode: Optional[Literal["verbatim", "adapt"]] = None
     catalog_id: Optional[str] = None
     code: Optional[str] = None  # Python function source

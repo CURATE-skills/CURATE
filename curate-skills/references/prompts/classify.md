@@ -6,7 +6,7 @@ Adapted from CURATE-prototype `prompts/wca_prompts.py` `WCA_CHANGE_CLASSIFY_PROM
 Decide, yourself, whether a change request alters the workflow's STRUCTURE or only the
 FUNCTIONS. Use the current DAG (nodes with ranks, and edges) from the gate display.
 
-A user is revising an existing FaaSr workflow. Decide whether their change request alters
+A user is revising an existing workflow. Decide whether their change request alters
 the workflow's STRUCTURE or only the FUNCTIONS themselves.
 
 STRUCTURE (the DAG/topology) — answer STRUCTURE if the request would:

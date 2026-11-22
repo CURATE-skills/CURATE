@@ -353,3 +353,30 @@ def test_gate4_for_plain_steps_shows_both_targets_and_the_unchanged_function_fil
     full = (run / "review" / "gate4.md").read_text()
     for step in ("generate_text", "split", "map", "shuffle", "reduce"):
         assert f"- `functions/{new}/{step}.py`" in full and f"- `functions/{new}/{step}_main.py`" in full, step
+
+
+def test_kind_and_read_survive_parsing_and_show_at_the_gates(make_run, capsys):
+    raw = {"name": "w", "entry": "a", "nodes": [
+        {"name": "a", "rank": 2, "outputs": [{"name": "p_{rank}.txt"}]},
+        {"name": "b", "rank": 2, "inputs": [{"name": "p_{rank}.txt", "read": "all"}], "outputs": [{"name": "q_{rank}"}]},
+        {"name": "c", "inputs": [{"name": "q_{rank}", "kind": "folder"}], "outputs": [{"name": "s.txt"}]}],
+        "edges": [{"from_node": "a", "to_node": "b"}, {"from_node": "b", "to_node": "c"}]}
+    spec = S.parse_workflow_spec(raw)
+    assert spec.nodes[1].inputs[0].read == "all" and spec.nodes[2].inputs[0].kind == "folder"
+    coerced = S._coerce_iospecs([{"name": "x_{rank}", "kind": "folder", "read": "all"}, "y.txt"])
+    assert (coerced[0].kind, coerced[0].read, coerced[1].kind) == ("folder", "all", "file")
+    run = make_run(spec=spec)
+    md = show(run, 2, capsys)["markdown"]
+    assert "in:  p_{rank}.txt (all copies)" in md and "in:  q_{rank} (folder)" in md
+    bad = {**raw, "nodes": [raw["nodes"][0], {**raw["nodes"][2], "inputs": [{"name": "q", "kind": "dir"}]}]}
+    with pytest.raises(S.InputError, match=r"step c, file 'q': kind: .*\(kind is file or folder; read is own or all\)"):
+        S.parse_workflow_spec(bad)
+
+
+def test_gate3_shows_empty_external_inputs(make_run, capsys):
+    run = make_run(spec=weather(), mga={"download": {"status": "passed", "attempts": 1,
+                                                     "empty_external_inputs": ["station.csv"]},
+                                        "process": {"status": "passed"}, "plot": {"status": "reused"}})
+    md = show(run, 3, capsys)["markdown"]
+    block = md.split("\ndownload  ", 1)[1].split("\n\n", 1)[0]
+    assert "! ran on an EMPTY stand-in for external input station.csv; provide a real file" in block
