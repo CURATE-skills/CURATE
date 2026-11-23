@@ -136,8 +136,9 @@ def raw_errors(doc) -> list[str]:
         if not isinstance(step, dict):
             errors.append(f"{where}: not a mapping")
             continue
-        if not STEP_ID.match(str(sid)):
-            errors.append(f"{where}: step ids must match [a-z0-9_]+ (they become job and action names)")
+        if not STEP_ID.match(str(sid)) or "__" in str(sid):
+            errors.append(f"{where}: step ids must match [a-z0-9_]+ without '__' (they become job and action "
+                          "names, and '__' separates a copy's values)")
         run = step.get("run")
         if isinstance(run, str):
             errors.append(f"{where}: run: {run} refers to another file; steps are inline Operations "
@@ -353,6 +354,9 @@ def check(wf: Workflow) -> tuple[list[str], list[str]]:
                     errors.append(f"{where}: curate:folder input {name} cannot be scattered over")
         for name, p in s.op_outputs.items():
             type_ok(p.type, f"{where} output {name}", False)
+            if "__" in name:
+                errors.append(f"{where}: output id {name} may not contain '__' (generated file names use it to "
+                              "keep each output's files under their own prefix)")
             if _depth(p.type) and not p.axis:
                 errors.append(f"{where}: output {name} is {p.type}: name its axis with curate:axis: <axis input> "
                               "(one file per value)")

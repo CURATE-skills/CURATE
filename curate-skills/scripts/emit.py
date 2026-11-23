@@ -165,9 +165,6 @@ def emit_faasr_json(spec: WorkflowSpec) -> dict:
     ActionList keys are kebab-case (FaaSr schema constraint); FunctionName
     values are the original snake_case Python function names.
     """
-    action_list = {}
-    function_git_repo = {}
-
     action_name = {node.name: _to_action_name(node.name) for node in spec.nodes}
     node_rank = {node.name: max(1, int(node.rank or 1)) for node in spec.nodes}
 
@@ -189,34 +186,49 @@ def emit_faasr_json(spec: WorkflowSpec) -> dict:
                 existing.append(cond_entry)
             cond_entry.setdefault(edge.condition, []).append(_invoke_target(edge.to_node))
 
-    gh_user = _env("FAASR_GH_USERNAME")
-    gh_repo = _env("FAASR_ACTION_REPO")
-    default_container = os.environ.get("FAASR_DEFAULT_CONTAINER", "").strip() or DEFAULT_CONTAINER
-
+    action_list, function_git_repo = {}, {}
     for node in spec.nodes:
         aname = action_name[node.name]
-        args = faasr_arguments(spec, node)
-
         # Always emit InvokeNext (empty list for terminal nodes): FaaSr_py's
         # check_dag reads it unconditionally.
-        action_list[aname] = {
-            "FaaSServer": spec.compute_target,
-            "Type": "Python",
-            "FunctionName": node.name,
-            "Arguments": args,
-            "InvokeNext": invoke_next.get(node.name, []),
-        }
-        # FaaSr resolves .py paths as "owner/repo/branch/path/to/file.py". Every step ships its
-        # FaaSr wrapper and its unchanged function (faasr_wrapper.py); FaaSr fetches both.
-        repo_path = f"{gh_user}/{gh_repo}/main/functions/"
-        function_git_repo[node.name] = [repo_path + f"{node.name}.py",
-                                        repo_path + faasr_wrapper.main_file(node.name)]
+        action_list[aname] = faasr_action(spec.compute_target, node.name, faasr_arguments(spec, node),
+                                          invoke_next.get(node.name, []))
+        function_git_repo[node.name] = function_repo_paths(node.name)
 
     entry_python = spec.entry or (spec.nodes[0].name if spec.nodes else "")
     entry_action = action_name.get(entry_python, _to_action_name(entry_python))
+    pypi_packages = {}
+    for node in spec.nodes:
+        deps = clean_dependencies(node.dependencies)
+        if deps:
+            pypi_packages[node.name] = deps
+    # Workflow-wide secret names = union of per-function secrets.
+    secrets = sorted({s for node in spec.nodes for s in node.secrets})
+    return faasr_document(spec.name, spec.compute_target, spec.data_store, action_list, function_git_repo,
+                          entry_action, pypi_packages, secrets)
 
+
+def faasr_action(compute_target: str, function_name: str, arguments: dict, invoke_next: list) -> dict:
+    return {"FaaSServer": compute_target, "Type": "Python", "FunctionName": function_name,
+            "Arguments": arguments, "InvokeNext": invoke_next}
+
+
+def function_repo_paths(fn: str) -> list[str]:
+    """FaaSr resolves .py paths as "owner/repo/branch/path/to/file.py". Every step ships its
+    FaaSr wrapper and its unchanged function (faasr_wrapper.py); FaaSr fetches both."""
+    repo_path = f"{_env('FAASR_GH_USERNAME')}/{_env('FAASR_ACTION_REPO')}/main/functions/"
+    return [repo_path + f"{fn}.py", repo_path + faasr_wrapper.main_file(fn)]
+
+
+def faasr_document(name: str, compute_target: str, data_store: str, action_list: dict,
+                   function_git_repo: dict, entry_action: str, pypi_packages: dict, secrets: list) -> dict:
+    """The FaaSr workflow JSON around an ActionList: servers, data store, containers (shared by
+    emit_faasr_json and the CWL FaaSr builder, scripts/cwl_faasr.py)."""
+    gh_user = _env("FAASR_GH_USERNAME")
+    gh_repo = _env("FAASR_ACTION_REPO")
+    default_container = os.environ.get("FAASR_DEFAULT_CONTAINER", "").strip() or DEFAULT_CONTAINER
     compute_servers = {
-        spec.compute_target: {
+        compute_target: {
             "FaaSType": "GitHubActions",
             "UserName": gh_user,
             "ActionRepoName": gh_repo,
@@ -225,47 +237,35 @@ def emit_faasr_json(spec: WorkflowSpec) -> dict:
         }
     }
     data_stores = {
-        spec.data_store: {
+        data_store: {
             "Endpoint": _env("FAASR_S3_ENDPOINT"),
             "Bucket": _env("FAASR_S3_BUCKET"),
             "Region": _env("FAASR_S3_REGION"),
             # NEVER embed real credentials: FaaSr's convention is to store the
             # secret *names* here; values are injected at runtime from the
             # GitHub Actions secret store.
-            "AccessKey": f"{spec.data_store}_AccessKey",
-            "SecretKey": f"{spec.data_store}_SecretKey",
+            "AccessKey": f"{data_store}_AccessKey",
+            "SecretKey": f"{data_store}_SecretKey",
             "Writable": "TRUE",
         }
     }
-
-    action_containers = {aname: default_container for aname in action_list}
-
-    pypi_packages = {}
-    for node in spec.nodes:
-        deps = clean_dependencies(node.dependencies)
-        if deps:
-            pypi_packages[node.name] = deps
-
     result: dict = {
         "FunctionInvoke": entry_action,
-        "WorkflowName": _sanitize_workflow_name(spec.name),
-        "DefaultDataStore": spec.data_store,
-        "LoggingDataStore": spec.data_store,
+        "WorkflowName": _sanitize_workflow_name(name),
+        "DefaultDataStore": data_store,
+        "LoggingDataStore": data_store,
         "FaaSrLog": "FaaSrLog",
         "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
         "ActionList": action_list,
-        "ActionContainers": action_containers,
+        "ActionContainers": {aname: default_container for aname in action_list},
         "ComputeServers": compute_servers,
         "DataStores": data_stores,
         "FunctionGitRepo": function_git_repo,
     }
     if pypi_packages:
         result["PyPIPackageDownloads"] = pypi_packages
-
-    # Workflow-wide secret names = union of per-function secrets.
-    secrets = sorted({s for node in spec.nodes for s in node.secrets})
     if secrets:
-        result["Secrets"] = secrets
+        result["Secrets"] = list(secrets)
     return result
 
 

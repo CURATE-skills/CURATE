@@ -34,7 +34,7 @@ from validate import files_of, load, prepare  # noqa: E402
 
 try:  # needed by emit/submit only; status and collect just read files
     from Pegasus.api import (  # noqa: E402
-        Arch, Container, Directory, File, FileServer, Job, Operation, OS,
+        Arch, Container, Directory, File, FileServer, Job, Namespace, Operation, OS,
         Properties, ReplicaCatalog, Site, SiteCatalog, Transformation,
         TransformationCatalog, Workflow,
     )
@@ -118,7 +118,7 @@ def emit(ir, work, runtime):
 
     deliverables = {o["file"] for o in ir.get("outputs", [])}
     wf = Workflow(ir["name"])
-    done_origins = set()
+    done_origins, jobs = set(), {}
     for n in ir["nodes"]:
         origin = n.get("_origin", n["id"])      # fan-out copies share one transformation
         code_lfn = f"code__{origin}__{Path(n['code']).name}"
@@ -147,7 +147,13 @@ def emit(ir, work, runtime):
             for f in files_of(v):
                 job.add_outputs(File(f), stage_out=f in deliverables)
         job.add_args("--params-json", "'" + json.dumps(n.get("params", {})) + "'")
+        if n.get("secrets"):  # by name only: HTCondor copies these variables from the submit environment
+            job.add_profiles(Namespace.CONDOR, key="getenv", value=",".join(n["secrets"]))
         wf.add_jobs(job)
+        jobs[n["id"]] = job
+    for n in ir["nodes"]:  # control-only edges (curate:after): no file passes between the jobs
+        if n.get("after"):
+            wf.add_dependency(jobs[n["id"]], parents=[jobs[a] for a in n["after"]])
 
     tc.add_containers(*containers.values())
     wf.add_site_catalog(sc)

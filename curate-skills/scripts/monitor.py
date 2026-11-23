@@ -145,6 +145,27 @@ def declared_outputs(wf: dict) -> list[dict]:
     return out
 
 
+def built_outputs(wf: dict, manifest: dict) -> list[dict]:
+    """The objects a bundle's builder says the run writes (outputs.json, from cwl_faasr.py): each
+    file under its action's folder as the deploy copy names it (the folder carries the deploy
+    suffix). Nothing is worked out from file names."""
+    out = []
+    for f in manifest.get("files") or []:
+        folder = ((wf.get("ActionList") or {}).get(f["action"], {}).get("Arguments") or {}).get("folder")
+        out.append({"action": f["action"], "key": f"{folder}/{f['file']}" if folder else f["file"]})
+    return out
+
+
+def run_outputs(run_p: Path, s: dict, wf: dict) -> list[dict]:
+    """The run's declared outputs: from the bundle's outputs.json when its builder wrote one, else
+    from workflow.json's Arguments (bundles from emit.write_bundle)."""
+    bundle = s.get("bundle_dir")
+    manifest = Path(bundle) / "outputs.json" if bundle else None
+    if manifest and manifest.is_file():
+        return built_outputs(wf, json.loads(manifest.read_text()))
+    return declared_outputs(wf)
+
+
 def invocation_folder(wf: dict, invocation_id: str, invocation_timestamp: str) -> str:
     """FaaSr_py helpers.s3_helper_functions.get_invocation_folder."""
     return f"{wf.get('FaaSrLog') or 'FaaSrLog'}/{wf['WorkflowName']}/{invocation_timestamp}/{invocation_id}"
@@ -324,7 +345,7 @@ def poll_once(ctx: dict, matches: dict) -> dict:
 
     dispatched = _iso(dep["dispatched_at"])
     outputs_now = []
-    for o in declared_outputs(wf):
+    for o in ctx.get("outputs") or declared_outputs(wf):
         h = s3.head(o["key"])
         state = ("missing" if h is None else
                  "stale" if h.get("last_modified") and _iso(h["last_modified"]) < dispatched else "present")
@@ -507,7 +528,8 @@ def _context(run: str, opener, s3_factory) -> tuple[dict, dict, dict]:
         raise InputError("no GitHub token: set GH_PAT (as for CURATE) or log in with `gh auth login`")
     opener = opener or default_opener()
     ctx = {"wf": wf, "deploy": dep, "gh": D.GitHub(token, opener), "opener": opener,
-           "extra": {"gh_token": token}, "s3": (s3_factory or s3_reader)(wf)}
+           "extra": {"gh_token": token}, "s3": (s3_factory or s3_reader)(wf),
+           "outputs": run_outputs(Path(run).resolve(), s, wf)}
     return s, ctx, ctx["extra"]
 
 
@@ -671,7 +693,7 @@ def download_outputs(run: str, to: str, s3_factory=None) -> dict:
     wf = json.loads((run_p / "deploy" / "workflow.json").read_text())
     s3 = (s3_factory or s3_reader)(wf)
     files, skipped = [], []
-    for o in declared_outputs(wf):
+    for o in run_outputs(run_p, s, wf):
         h = s3.head(o["key"])
         if h is None:
             skipped.append({"key": o["key"], "reason": "missing"})

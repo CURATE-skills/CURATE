@@ -188,6 +188,30 @@ notes: {class: File, location: inputs/notes.txt}
 Run IDs are `YYYYMMDD-HHMMSS-<4 hex>`; a run's full reference is `<workflow-id>/<run-id>`.
 Generation sessions keep their own folders, `.curate/runs/<run-id>/`.
 
+## Builders
+
+After Gate 4 picks a target, its builder reads `workflow.yml` (and the run's `inputs.yml`):
+
+- **Pegasus** (`curate-skills/scripts/cwl_pegasus.py`) expands the scatter locally
+  (`curate_ir/cwl/expand_cwl.py`) and writes an already-expanded IR (`ir.yaml` with
+  `expanded: true`, whose nodes are the jobs), `functions/` and `inputs/`. The Pegasus host
+  plans that folder with `curate_ir/backends/pegasus_backend.py` and never reads CWL.
+  `curate:after` becomes a job dependency, `curate:secrets` an HTCondor `getenv` of the names,
+  and `curate:run_if` is refused.
+- **FaaSr** (`curate-skills/scripts/cwl_faasr.py`) reads `scatter` directly: one ranked action
+  per step (`InvokeNext: step(N)`), at most one axis per step. Each step ships as its generated
+  wrapper and its unchanged function. `curate:after` becomes `InvokeNext`, `curate:run_if` a
+  conditional `InvokeNext`, `curate:secrets` the workflow's `Secrets`. The bundle's
+  `outputs.json` lists every object the run writes and the deliverables; `monitor.py
+  download-outputs` reads it instead of working names out.
+
+Generated file names: a step output is `<step>__<output>`, then `__<rank>` (FaaSr) or
+`__<values>` (Pegasus) per copy, then `__<value>` per file of a `curate:axis` list. A workflow
+input file keeps its location's name (FaaSr names a workflow input list
+`<input>__<rank><ext>`). Because the output comes before the values, each output's files share
+their own prefix (`map__output1__`), which a FaaSr folder input lists; any other name starting
+with that prefix is refused. Step and output ids may not contain `__`.
+
 ## Mapping from IR v0.2
 
 | IR v0.2 | CWL IR |

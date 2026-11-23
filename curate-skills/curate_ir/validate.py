@@ -59,7 +59,13 @@ def files_of(value):
 
 
 def prepare(ir):
-    """Expand fan-out and run all checks. Returns (expanded_ir, errors, warnings, deps)."""
+    """Expand fan-out and run all checks. Returns (expanded_ir, errors, warnings, deps).
+
+    An IR written already expanded (`expanded: true`, by the CWL Pegasus builder,
+    scripts/cwl_pegasus.py) is checked as it is: its nodes are the jobs."""
+    if ir.get("expanded") is True:
+        errors, warnings, deps = check(ir)
+        return ir, errors, warnings, deps
     version = ir.get("ir_version")
     if version not in ("0.1", "0.2"):
         return ir, [f"ir_version must be '0.1' or '0.2', got {version!r}"], [], {}
@@ -157,9 +163,21 @@ def check(ir):
                             f"{', …' if len(files) > 3 else ''}) that no node reads and no output delivers; "
                             "is the file name misspelled?")
 
+    # control-only edges (an expanded CWL workflow's curate:after): the ids of the jobs to wait for
+    for n in ir.get("nodes", []):
+        for a in n.get("after", []) or []:
+            if a not in ids:
+                errors.append(f"{n.get('id')}: waits for {a}, which is not a job")
+        if n.get("run_if"):
+            errors.append(f"{n.get('id')}: runs only on another step's result (curate:run_if); Pegasus runs every "
+                          "job of a fixed DAG, so it cannot honour the condition")
+        bad = [x for x in n.get("secrets", []) or [] if not re.match(r"^[A-Z][A-Z0-9_]*$", str(x))]
+        if bad:
+            errors.append(f"{n.get('id')}: secrets are names only (UPPER_SNAKE), not {bad}")
+
     # cycle check (Kahn)
     deps = {n["id"]: {producers[f] for v in n.get("inputs", {}).values()
-                      for f in files_of(v) if f in producers}
+                      for f in files_of(v) if f in producers} | {a for a in n.get("after", []) or [] if a in ids}
             for n in ir.get("nodes", []) if "id" in n}
     order, ready = [], [k for k, v in deps.items() if not v]
     remaining = {k: set(v) for k, v in deps.items()}

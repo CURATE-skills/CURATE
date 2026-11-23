@@ -19,7 +19,8 @@ ids of every copy it waits for); `run_if` and `secrets` are carried for the buil
 
 File names are made here, deterministically: a workflow input file keeps the name of its
 location (prefixed with the input id if two would clash); a step output is
-`<step>[__<values>]__<output>`, with `__<axis value>` added per file of a curate:axis list.
+`<step>__<output>[__<values>]`, with `__<axis value>` added per file of a curate:axis list
+(the output before the values, so every output's files share their own prefix).
 """
 from __future__ import annotations
 
@@ -161,7 +162,7 @@ def expand_cwl(wf: Workflow) -> dict:
         for suffix, assign, picked in copies:
             nid = sid + "".join("__" + _safe(v) for v in suffix)
             ids.append(nid)
-            tag = sid + "".join("__" + _safe(v) for v in suffix)
+            vals = "".join("__" + _safe(v) for v in suffix)
             ins, params, outs, out_vals = {}, {}, {}, {}
             for name, port in s.op_inputs.items():
                 v = picked[name] if name in picked else given.get(name, NO_VALUE)
@@ -174,12 +175,12 @@ def expand_cwl(wf: Workflow) -> dict:
                     params[name] = v
             for name, port in s.op_outputs.items():
                 if port.axis:
-                    vals = wf.inputs[port.axis].value
-                    leaves = [Leaf(f"{tag}__{name}__{_safe(x)}", assign + ((port.axis, str(x)),)) for x in vals]
+                    leaves = [Leaf(f"{sid}__{name}{vals}__{_safe(x)}", assign + ((port.axis, str(x)),))
+                              for x in wf.inputs[port.axis].value]
                     out_vals[name] = leaves
                     outs[name] = [x.name for x in leaves]
                 else:
-                    leaf = Leaf(f"{tag}__{name}", assign)
+                    leaf = Leaf(f"{sid}__{name}{vals}", assign)
                     out_vals[name] = leaf
                     outs[name] = leaf.name
             per_copy_out.append(out_vals)

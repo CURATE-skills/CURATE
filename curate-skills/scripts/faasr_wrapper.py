@@ -49,19 +49,7 @@ def bundle_problems(spec) -> list[str]:
                             "FaaSr style): regenerate it, or migrate the catalog it came from "
                             "(scripts/migrate_catalog.py)")
     for n in plain:
-        clash = [m for m in names if f"{m}{MAIN_SUFFIX}" == n.name]
-        if clash:
-            problems.append(f"step {n.name}: its name is step {clash[0]}'s function file "
-                            f"({main_file(clash[0])}); rename one of them")
-        tree = ast.parse(n.code)
-        top = {t.name for t in tree.body if isinstance(t, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
-        top |= {x.id for t in tree.body if isinstance(t, (ast.Assign, ast.AnnAssign))
-                for x in ast.walk(t) if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Store)}
-        top |= {(a.asname or a.name).split(".")[0] for t in tree.body if isinstance(t, (ast.Import, ast.ImportFrom))
-                for a in t.names}
-        if n.name in top:
-            problems.append(f"step {n.name}: its function file defines a top-level {n.name!r}; FaaSr looks the "
-                            f"step up by that name in every file, so rename it (the entry point is main)")
+        problems += code_problems(n.name, n.code, names)
     if plain:
         layout, counted = PC.io_layout(spec)
         problems += counted
@@ -70,6 +58,25 @@ def bundle_problems(spec) -> list[str]:
             for s in layout[n.name]["inputs"] + layout[n.name]["outputs"]:
                 if s["kind"] == "list" and not s.get("copies"):
                     problems.append(f"step {n.name}: {s['slot']} ({s['file']}) has no known number of copies")
+    return problems
+
+
+def code_problems(name: str, code: str, names) -> list[str]:
+    """Why one plain step cannot ship as <name>.py (wrapper) + <name>_main.py (its function)."""
+    problems = []
+    clash = [m for m in names if f"{m}{MAIN_SUFFIX}" == name]
+    if clash:
+        problems.append(f"step {name}: its name is step {clash[0]}'s function file "
+                        f"({main_file(clash[0])}); rename one of them")
+    tree = ast.parse(code)
+    top = {t.name for t in tree.body if isinstance(t, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+    top |= {x.id for t in tree.body if isinstance(t, (ast.Assign, ast.AnnAssign))
+            for x in ast.walk(t) if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Store)}
+    top |= {(a.asname or a.name).split(".")[0] for t in tree.body if isinstance(t, (ast.Import, ast.ImportFrom))
+            for a in t.names}
+    if name in top:
+        problems.append(f"step {name}: its function file defines a top-level {name!r}; FaaSr looks the "
+                        f"step up by that name in every file, so rename it (the entry point is main)")
     return problems
 
 
@@ -91,6 +98,7 @@ _MAIN_SHA256 = {sha!r}
 _RANKED = {ranked!r}
 _INPUTS = {inputs!r}  # (slot, kind, copies): kind one | list | folder
 _OUTPUTS = {outputs!r}  # (slot, kind, copies): kind one | list
+_PARAMS = {params!r}  # (name, constant, per-rank values or None), in order
 
 
 def {name}({signature}):
@@ -186,7 +194,8 @@ def _curate_run(folder, args):
         paths = [os.path.join(work, "out", n) for n in names]
         uploads += zip(names, paths)
         outputs[slot] = paths if kind == "list" else paths[0]
-    params = {{"rank": rank, "max_rank": max_rank}} if _RANKED else {{}}
+    params = {{pname: (per_rank[rank - 1] if per_rank is not None else const)
+              for pname, const, per_rank in _PARAMS}}
 
     faasr_log(f"{{_STEP}}: main(inputs, outputs, params) from {{_MAIN_FILE}} (sha256 {{_MAIN_SHA256[:12]}})"
               + (f", rank {{rank}}/{{max_rank}}" if _RANKED else ""))
@@ -214,12 +223,20 @@ def render(spec, node) -> str:
     """The wrapper file for one plain step of `spec`."""
     layout, _ = PC.io_layout(spec)
     lay = layout[node.name]
-    slots = [f"input{i}" for i in range(1, len(node.inputs) + 1)] + \
-            [f"output{i}" for i in range(1, len(node.outputs) + 1)]
+    n = lay["rank"]
+    params = [("rank", None, list(range(1, n + 1))), ("max_rank", n, None)] if n > 1 else []
+    return render_step(node.name, node.code, n > 1,
+                       [(s["slot"], s["kind"], s.get("copies")) for s in lay["inputs"]],
+                       [(s["slot"], s["kind"], s.get("copies")) for s in lay["outputs"]], params)
+
+
+def render_step(name: str, code: str, ranked: bool, inputs: list, outputs: list, params: list) -> str:
+    """The wrapper for one step, from its tables: inputs/outputs as (slot, kind, copies), params as
+    (name, constant, per-rank values or None). Shared by the spec bundle (render) and the CWL
+    FaaSr builder (scripts/cwl_faasr.py)."""
+    slots = [s for s, _, _ in inputs] + [s for s, _, _ in outputs]
     return TEMPLATE.format(
-        name=node.name, main_file=main_file(node.name), sha=sha256(node.code),
-        ranked=lay["rank"] > 1,
-        inputs=[(s["slot"], s["kind"], s.get("copies")) for s in lay["inputs"]],
-        outputs=[(s["slot"], s["kind"], s.get("copies")) for s in lay["outputs"]],
+        name=name, main_file=main_file(name), sha=sha256(code), ranked=ranked,
+        inputs=list(inputs), outputs=list(outputs), params=list(params),
         signature=", ".join(["folder"] + slots),
         args="{" + ", ".join(f"{s!r}: {s}" for s in slots) + "}")
