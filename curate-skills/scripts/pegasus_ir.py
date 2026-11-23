@@ -1,6 +1,6 @@
 # /// script
 # requires-python = "==3.13.*"
-# dependencies = ["pydantic==2.11.7", "pyyaml==6.0.2"]
+# dependencies = ["pydantic==2.11.7", "pyyaml==6.0.2", "cwl-utils==0.47"]
 # ///
 """A CURATE WorkflowSpec as a CURATE IR folder for the Pegasus target (ir.yaml + functions/).
 

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = "==3.13.*"
-# dependencies = ["pydantic==2.11.7", "rank-bm25==0.2.2"]
+# dependencies = ["pydantic==2.11.7", "rank-bm25==0.2.2", "cwl-utils==0.47", "pyyaml==6.0.2"]
 # ///
 # Copyright (c) 2026 Nolan Cutler. MIT License; see NOTICE.
 # Derived from CURATE-prototype src/faasr_agents/catalog/store.py,

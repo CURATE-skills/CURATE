@@ -119,7 +119,8 @@ def check_uv_envs(r: Report, uv: str | None):
     if not uv:
         r.add("core", "Python 3.13 + packages", "fail", "not checked: uv is missing (see above).")
         return
-    # The stage scripts (pydantic, rank-bm25) and the FaaSr_py validator, each in its own uv env,
+    # The stage scripts (spec.py's header: pydantic, rank-bm25, cwl-utils, pyyaml, boto3) and the FaaSr_py
+    # validator, each in its own uv env,
     # exactly as the skills run them. Both are read-only; the validator gets an empty workflow.
     code, out, err = _run([uv, "run", "--quiet", str(SCRIPT_DIR / "spec.py"), "--help"], timeout=UV_TIMEOUT)
     stage_ok = code == 0
@@ -131,8 +132,8 @@ def check_uv_envs(r: Report, uv: str | None):
     except (IndexError, ValueError, AttributeError):
         res, val_ok = {}, False
     if stage_ok and val_ok:
-        r.add("core", "Python 3.13 + packages", "ok", "uv provides Python 3.13 with pydantic, rank-bm25 "
-              f"and {FAASR_PY} (cached for later runs)")
+        r.add("core", "Python 3.13 + packages", "ok", "uv provides Python 3.13 with the stage packages "
+              f"(pydantic, rank-bm25, cwl-utils, pyyaml, boto3) and {FAASR_PY} (cached for later runs)")
         return
     what = ([] if stage_ok else [f"stage scripts: {_tail(err)}"]) + \
            ([] if val_ok else [f"FaaSr_py: {res.get('error') or _tail(err2)}"])

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = "==3.13.*"
-# dependencies = ["pydantic==2.11.7", "rank-bm25==0.2.2"]
+# dependencies = ["pydantic==2.11.7", "rank-bm25==0.2.2", "cwl-utils==0.47", "pyyaml==6.0.2"]
 # ///
 """Migrate a CURATE catalog's FaaSr-style functions to the plain contract.
 

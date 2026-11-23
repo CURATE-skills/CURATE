@@ -1,6 +1,6 @@
 # /// script
 # requires-python = "==3.13.*"
-# dependencies = ["pydantic==2.11.7", "rank-bm25==0.2.2", "pyyaml==6.0.2"]
+# dependencies = ["pydantic==2.11.7", "rank-bm25==0.2.2", "pyyaml==6.0.2", "boto3==1.37.11", "cwl-utils==0.47"]
 # ///
 """The Pegasus target's deploy steps, for a run whose Gate 4 chose "Approve & run on Pegasus".
 
