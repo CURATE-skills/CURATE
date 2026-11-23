@@ -6,7 +6,7 @@ Branch: create `cwl-ir` from `decouple-faasr` (currently at `14bfad1` or later).
 
 - CURATE's workflow IR becomes **CWL v1.2**, stored as `workflow.yml` (YAML, CWL syntax).
 - The IR describes only the workflow: steps, data, dependencies, software, resources. Everything about running it (Pegasus catalogs and properties; FaaSr servers, S3 stores, credentials) is produced by the target's builder after the user picks Pegasus or FaaSr at Gate 4.
-- Nothing runs `workflow.yml` directly. Only CURATE's builders read it, with `cwl-utils`. So steps are CWL `Operation`s (inputs/outputs, no implementation), not `CommandLineTool`s. No `curate_run.py` wrapper.
+- Nothing runs `workflow.yml` directly. Only CURATE's builders read it, with `cwl-utils`. So steps are CWL `Operation`s (inputs/outputs, no implementation), not `CommandLineTool`s. The CWL never references `curate_run.py`; the Pegasus builder still uses it as each job's executable.
 - Do **not** use `pegasus-cwl-converter`: it rejects CWL v1.2, ignores `scatter`, and fails on `File[]`. Write our own builders.
 - Builders wrap the tested `main(inputs, outputs, params)` and never rewrite it (existing design rule).
 - Run values go in a per-run inputs file (`inputs.yml`); the values the workflow was tested with also go in the workflow as `default`s.
@@ -14,11 +14,11 @@ Branch: create `cwl-ir` from `decouple-faasr` (currently at `14bfad1` or later).
 
 ## IR spec (write this up in phase 1)
 
-CWL v1.2 restricted to a CURATE profile, plus three `curate:` extensions in a `$namespaces` block. Pick one namespace URI, define it as a single constant, and use it everywhere.
+CWL v1.2 restricted to a CURATE profile, plus six `curate:` extensions in a `$namespaces` block. Pick one namespace URI, define it as a single constant, and use it everywhere.
 
-**Allowed:** `Workflow` with inline `Operation` steps; `File`, `File[]`, `Directory` (workflow inputs only), `string`, `int`, `float`, `boolean`, arrays of these; `scatter` with `dotproduct` / `nested_crossproduct` / `flat_crossproduct`; `ScatterFeatureRequirement`; `DockerRequirement` (`dockerPull`) on workflow or step; `SoftwareRequirement`; `ResourceRequirement` (`coresMin`, `ramMin`); `default` on workflow inputs; `label`, `doc`.
+**Allowed:** `Workflow` with inline `Operation` steps; `File`, `File[]`, `Directory` (workflow inputs only), `string`, `int`, `float`, `boolean`, arrays of these; `scatter` with `dotproduct` / `nested_crossproduct` / `flat_crossproduct`; `ScatterFeatureRequirement`; `DockerRequirement` (`dockerPull`) on workflow or step; `SoftwareRequirement`; `ResourceRequirement` (`coresMin`, `ramMin`); `default` on workflow inputs; `label`, `doc`. `MultipleInputFeatureRequirement` with `linkMerge: merge_flattened`, **only** on step inputs marked `curate:folder` (a folder gathering files from several sources).
 
-**Refused with a clear message:** `when`, `pickValue`, `InlineJavascriptRequirement` and any `$(...)`/`${...}`, `ExpressionTool`, `CommandLineTool`, sub-workflows, `valueFrom`, `secondaryFiles`, `linkMerge` other than the default, loops.
+**Refused with a clear message:** `when`, `pickValue`, `InlineJavascriptRequirement` and any `$(...)`/`${...}`, `ExpressionTool`, `CommandLineTool`, sub-workflows, `valueFrom`, `secondaryFiles`, `linkMerge` other than the default (except `merge_flattened` on a `curate:folder` input), several sources on any other input, loops.
 
 **Extensions:**
 
@@ -27,6 +27,9 @@ CWL v1.2 restricted to a CURATE profile, plus three `curate:` extensions in a `$
 | `curate:function: {code, entrypoint}` | step `hints` | The tested Python function the step runs. Required on every step. |
 | `curate:deliver_as: "<path>"` | workflow output | Where the final file goes under `deliver/`. May contain `{axis}` placeholders for `File[]` outputs, filled in axis order. |
 | `curate:folder: true` | step input (`in:` entry) | The `File[]` arriving here is handed to the function as one local directory (today's `{folder: ...}` input). |
+| `curate:after: [step, ...]` | step `hints` | Control-only dependency: this step runs after those steps (every copy of a scattered one) although no file passes between them. No marker files; the Pegasus builder adds a job dependency, the FaaSr builder an `InvokeNext`. |
+| `curate:run_if: {step, result}` | step `hints` | Run this step only if `step`'s `main` returned `result` (`true`/`false`); implies `after: [step]`. Matches FaaSr's conditional `InvokeNext`, which the FaaSr builder emits. The Pegasus builder refuses it with a clear message, and Gate 4 hides Pegasus for such workflows (as today). |
+| `curate:secrets: [NAME, ...]` | step `hints` | Names of the secrets the step reads from its environment. Never values. Each builder maps names to its own mechanism (FaaSr secrets, a Pegasus env profile). |
 
 **Mapping from IR v0.2:**
 
@@ -49,7 +52,11 @@ CWL v1.2 restricted to a CURATE profile, plus three `curate:` extensions in a `$
 | axis value injected into `params`; renamed via `rank: "{rank3}"` | step input sourced from the axis input under the param's name |
 | `{folder: "part_{r}.csv"}` input | `File[]` input + `curate:folder: true` |
 | `{axis}` in intermediate file names | dropped; the builder names intermediate files (deterministically, e.g. `<step>__<values>__<output>`) |
-| conditions, expressions | still refused |
+| external `{axis}` file family (workflow input `x_{r}.csv`) | workflow input `File[]`; a scattered consumer takes it with `scatter: [axis, input]`, `scatterMethod: dotproduct` |
+| `curate_done*` marker files (edge with no file) | `curate:after` |
+| spec conditional edge | `curate:run_if` on the target step |
+| spec `secrets` | `curate:secrets` |
+| expressions | still refused |
 
 Partial-gather pattern (validated with `cwltool --validate`):
 
@@ -76,6 +83,11 @@ steps:
 - **Workflow ID** = `<name>-v<N>`, e.g. `corvallis-winter-v3`. Name: slug of the workflow title (`[a-z0-9-]`), unique in the catalog; if taken, ask the user for another (no automatic suffix). Parse with `^(.+)-v(\d+)$`.
 - **New version** whenever `workflow.yml` or any function it uses changes. Store a content hash (`sha256` over the normalized `workflow.yml` + the function files). An identical regeneration keeps the existing version. A version folder is never edited once created.
 - **Run ID** = `YYYYMMDD-HHMMSS-<4 hex>`, e.g. `20261118-012903-a3f9`. Full reference: `<workflow-id>/<run-id>`. This replaces today's IDs like `20261118-012903-corvallis-winter`.
+- **Two kinds of run, both with this run-ID format.** A *generation session* stays at `.curate/runs/<run-id>/` (unchanged, so `--from-run`, rewinds and snapshots keep working). An *execution run* (after Gate 4) goes under `.curate/workflows/<workflow-id>/runs/<run-id>/`. Paths on the Pegasus host use the execution run's full reference.
+- **New version vs. name clash: lineage decides.** If the session reused a catalog workflow, or came from `--from-run` of a session of that workflow, the result is a new version of it (or the same version when the content hash matches). Only when the name is taken with no lineage, ask the user: a new name, or a new version of the existing workflow.
+- **Uniqueness** is checked against the global catalog (`~/.curate/catalog`). Project `.curate/workflows/` folders only use the IDs.
+- **The catalog moves to workflow ID + version keys in this task.** Saving a workflow with an existing name creates a new version instead of updating the entry in place (replaces today's `catalog.py` upsert by name). The old uuid is kept as a stored alias.
+- **Content hash** = sha256 over the normalized `workflow.yml` with `label`, `doc`, every `s:` field, `curate:content_hash` and all input `default`s removed, plus the function files.
 - **Imported workflows** = `<source prefix>-<source id>-v<source version>`, e.g. `wfh-1063-v2` for WorkflowHub. Store the source DOI/URL and title with it. (Import itself is to-do step 11, not this task.)
 - **In `workflow.yml`:**
 
@@ -104,13 +116,13 @@ steps:
 
 ### 1. Spec doc
 
-- Write `docs/CWL_IR.md`: the profile, the three extensions, the mapping table above, and one full example (weather, 4 steps, fan-out + gather + `deliver_as` + per-step image).
+- Write `docs/CWL_IR.md`: the profile, the six extensions, the mapping table above, and one full example (weather, 4 steps, fan-out + gather + `deliver_as` + per-step image).
 - **Done when:** the doc exists and the example passes `cwltool --validate` (an "unknown hint" for `curate:function` is expected).
 
 ### 2. Loader and validator
 
 - `curate_ir/cwl/load.py`: load `workflow.yml` (+ optional `inputs.yml`) with `cwl-utils` into one plain internal structure. Accept any file extension.
-- `curate_ir/cwl/validate.py`: the profile checks; every step has `curate:function` and its file exists; types match between sources and sinks; fan-out sizes come only from workflow inputs/defaults; partial-gather order; no conflicting groupings; axis values file-name safe; `deliver_as` placeholders match the output's axes. Clear one-line errors, like the existing validator.
+- `curate_ir/cwl/validate.py`: the profile checks; every step has `curate:function` and its file exists; types match between sources and sinks; fan-out sizes come only from workflow inputs/defaults; partial-gather order; no conflicting groupings; axis values file-name safe; `deliver_as` placeholders match the output's axes; `curate:after`/`curate:run_if` name existing steps and make no cycle; `merge_flattened` only on `curate:folder` inputs; secret names only (UPPER_SNAKE). Clear one-line errors, like the existing validator.
 - **Done when:** unit tests cover each refusal and each allowed pattern.
 
 ### 3. IR v0.2 → CWL converter
@@ -126,17 +138,17 @@ steps:
 
 ### 5. Builders
 
-- Pegasus builder: `workflow.yml` → `expand_cwl` → existing Pegasus path (`pegasus_backend.py` prepare/submit).
-- FaaSr builder: `workflow.yml` → `expand_cwl` → FaaSr `workflow.json` + generated wrappers (download → `main()` → upload); fan-out → ranks.
-- Both honor `curate:deliver_as`, per-step images and packages.
+- Pegasus builder: `workflow.yml` → `expand_cwl` → existing Pegasus path (`pegasus_backend.py` prepare/submit). Expansion happens locally; the expanded form is what gets shipped, so the Pegasus host never needs `cwl-utils`. `curate:after` becomes a job dependency; `curate:run_if` is refused with a clear message.
+- FaaSr builder: `workflow.yml` → FaaSr `workflow.json` + generated wrappers (download → `main()` → upload). It reads `scatter` directly (one ranked action per step, not `expand_cwl`'s job list) and refuses a step with more than one scatter axis, with a clear message. `curate:after` and `curate:run_if` become `InvokeNext` (conditional for `run_if`).
+- Both honor `curate:deliver_as`, `curate:secrets`, per-step images and packages.
 - This is also to-do step 3: emit no longer writes a FaaSr bundle; the builder runs only after Gate 4 picks a target.
 - **Done when:** both builders produce bundles for every converted test workflow; the existing tests pass.
 
 ### 6. Emit writes CWL
 
-- Emit writes `workflow.yml` + `inputs.yml` instead of IR v0.2. Use deterministic code; the agent should never hand-write CWL (follow what phase 0 found).
+- Emit writes `workflow.yml` + `inputs.yml` instead of IR v0.2. Use deterministic code; the agent should never hand-write CWL. Phase 0 found that no agent writes the IR today: `pegasus_ir.build_ir(spec)` builds it from the approved WorkflowSpec. So for now `workflow.yml = from_ir(build_ir(spec))`, reusing today's mapping and tests (`build_ir` must then carry secrets, conditions and control-only edges instead of refusing them or inventing markers; the Pegasus builder does the refusing).
 - Update skill/gate text that mentions the IR format.
-- Assign workflow and run IDs as in "Workflow and run IDs" above: name check against the catalog, content hash, version bump or reuse, write to the new layout.
+- Assign workflow and run IDs as in "Workflow and run IDs" above: name check against the global catalog, lineage, content hash, version bump or reuse, write to the new layout. The catalog saves by workflow ID + version (a new version, never an in-place update).
 - **Done when:** a fresh `/curate` run produces a valid `workflow.yml` with `s:identifier`/`s:version`/`curate:content_hash`, in `.curate/workflows/<workflow-id>/`, and reaches Gate 4. Regenerating the same workflow keeps its version; changing one function bumps it.
 
 ### 7. End-to-end check
@@ -146,7 +158,7 @@ steps:
 
 ### 8. Migrate and clean up (only after phase 7 passes)
 
-- Convert the catalog's stored workflows with `from_ir.py` (dry run first, same style as the phase 4 catalog migration in step 1).
+- Migrate the catalog from uuid keys to workflow ID + version (dry run first, same style as the phase 4 catalog migration in step 1; the uuid stays as an alias). The catalog stores WorkflowSpecs, not IR v0.2, so there is no IR to convert.
 - Remove the IR v0.2 reader, `expand.py`, and old-format emit. Keep `from_ir.py` for one release to convert old runs.
 - Update `docs/IR_FAASR_GAPS.md` and the README.
 
