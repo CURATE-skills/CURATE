@@ -65,7 +65,9 @@ def test_diamond(tmp_path):
 
 def test_fanout_pairs_and_gathers(tmp_path):
     wf, _ = to_cwl(EXAMPLES / "fanout" / "ir.yaml", tmp_path / "out")
-    assert wf.inputs["winter"].type == "int[]" and wf.inputs["winter"].value == [2019, 2020, 2021, 2022]
+    # winter reaches the functions under its own name, so IR v0.2 gives a string ("2019")
+    assert wf.inputs["winter"].type == "string[]" and wf.inputs["winter"].value == ["2019", "2020", "2021", "2022"]
+    assert wf.steps["detect_ice"].op_inputs["winter"].type == "string"
     det, add, asm = wf.steps["detect_ice"], wf.steps["add_duration"], wf.steps["assemble"]
     assert det.scatter == ["winter"] and det.ins["daily"].sources == ["load_data/daily"]
     assert add.scatter == ["winter", "ice"] and add.scatter_method == "dotproduct"
@@ -219,3 +221,49 @@ def test_a_file_less_edge_from_build_ir_becomes_curate_after(tmp_path):
     wf, _ = to_cwl(tmp_path / "ir" / "ir.yaml", tmp_path / "out")
     assert wf.steps["b"].after == ["a"]
     assert not any(k.startswith("curate_done") for s in wf.steps.values() for k in list(s.op_outputs) + list(s.ins))
+
+
+def test_weather_catalog_spec_through_build_ir(tmp_path):
+    spec = json.loads((FIXTURES / "weather-spec.json").read_text())
+    wf, warnings = to_cwl(spec_ir(spec, tmp_path), tmp_path / "out")
+    assert warnings == []
+    dl, proc, plot = (wf.steps[k] for k in ("download_ghcn_station", "process_weather_variable",
+                                              "plot_weather_comparison"))
+    assert wf.inputs["rank3"].type == "int[]" and proc.op_inputs["rank"].type == "int"
+    assert proc.scatter == ["rank"] and proc.ins["input1"].sources == ["download_ghcn_station/output1"]
+    assert plot.ins["input1"].folder and plot.ins["input1"].sources == ["process_weather_variable/output1"]
+    assert dl.packages == ["requests"] and plot.packages == ["pandas", "matplotlib"]
+    (out,) = wf.outputs.values()
+    assert out.deliver_as == "results/corvallis_winter_comparison.png"
+
+
+def test_axis_types_follow_ir_v0_2(tmp_path):
+    nodes = [{"id": "a", "for_each": ["r"], "outputs": {"o": "a_{r}"}, "params": {"rank": "{r}"}},
+             {"id": "b", "for_each": ["w"], "outputs": {"o": "b_{w}"}}]
+    path = ir_file(tmp_path, nodes, axes={"r": ["1", "2"], "w": ["2019", "2020"]})
+    wf, _ = to_cwl(path, tmp_path / "out")
+    assert wf.inputs["r"].type == "int[]" and wf.inputs["r"].value == [1, 2]
+    assert wf.inputs["w"].type == "string[]" and wf.inputs["w"].value == ["2019", "2020"]
+    assert wf.steps["a"].op_inputs["rank"].type == "int" and wf.steps["b"].op_inputs["w"].type == "string"
+
+
+def test_refuses_an_all_digit_axis_used_both_ways(tmp_path):
+    refused(tmp_path, [{"id": "a", "for_each": ["r"], "outputs": {"o": "a_{r}"}, "params": {"rank": "{r}"}},
+                       {"id": "b", "for_each": ["r"], "outputs": {"o": "b_{r}"}}],
+            "axis r reaches a as an int", "b as a string", "one CWL input cannot be both", axes={"r": ["1", "2"]})
+
+
+# the two hand-written IRs in test_curate_ir that plain CWL cannot express
+
+def test_refuses_test_curate_ir_partial_placeholder_param(tmp_path):
+    refused(tmp_path, [{"id": "m", "for_each": ["r", "w"], "outputs": {"o": "o_{r}_{w}"},
+                        "params": {"rank": "{r}", "label": "copy {r}", "name": "{w}"}}],
+            "m: param label='copy {r}' only partly holds an axis value", axes={"r": ["1", "2"], "w": ["a", "b"]})
+
+
+def test_refuses_test_curate_ir_folder_with_a_literal_family_member(tmp_path):
+    refused(tmp_path, [{"id": "m", "for_each": ["r"], "outputs": {"o": "part_{r}.csv"}},
+                       {"id": "two", "inputs": {"parts": {"folder": ["part_1.csv", "part_{r}.csv"]}},
+                        "outputs": {"o": "y"}}],
+            "two folder input parts: part_1.csv matches no file family",
+            axes={"r": ["1", "2", "3"]}, outputs=[{"file": "y"}])

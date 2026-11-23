@@ -15,6 +15,10 @@ by file-name template (the literal parts and the axes in between, with equal axi
 pegasus_ir's alias axes (`f_{rank3_all}` read as `f_{rank3}`) resolve to the same output.
 File names themselves are dropped; marker files (`curate_done*`) become curate:after.
 
+Axis inputs reproduce IR v0.2's param types exactly: int[] for an axis used only through
+whole-value renamed params with all-digit values, string[] for one injected under its own name,
+and a refusal for an all-digit axis used both ways.
+
 What plain CWL cannot express without expressions is refused, one message each (ConvertError):
 a step over several axes that reads a per-copy file, pairing over two axes, a file read by a
 literal member of a family, a param that only partly holds a placeholder, a param that is not
@@ -189,6 +193,25 @@ def convert(ir: dict) -> dict:
     def dims(s: _Source) -> list[str]:
         return (order[s.node] if s.node else []) + s.E
 
+    # The type of each axis input reproduces what IR v0.2 hands the function: a whole-value
+    # renamed param ("rank": "{rank3}") gets an int when the values are all digits; a value
+    # injected under the axis's own name is always a string ("2019").
+    renamed_use, own_use = {}, {}
+    for n in nodes:
+        F = fe[n["id"]]
+        whole = {m.group(1) for v in (n.get("params") or {}).values() if isinstance(v, str)
+                 for m in [PLACEHOLDER.fullmatch(v)] if m and m.group(1) in F}
+        for a in F:
+            (renamed_use if a in whole else own_use).setdefault(a, []).append(n["id"])
+    axis_type = {}
+    for a, vals in axes.items():
+        digits = all(v.isdigit() for v in vals)
+        if digits and a in renamed_use and a in own_use:
+            problems.append(f"axis {a} reaches {', '.join(renamed_use[a])} as an int (a renamed param) and "
+                            f"{', '.join(own_use[a])} as a string (under its own name); one CWL input cannot be "
+                            "both: rename it the same way in every step")
+        axis_type[a] = "int" if digits and a not in own_use else "string"
+
     steps, used_axes, scatter_used, merge_used = {}, set(), False, False
     for n in nodes:
         nid, F = n["id"], fe[n["id"]]
@@ -204,7 +227,7 @@ def convert(ir: dict) -> dict:
             if name in (n.get("inputs") or {}):
                 problems.append(f"{nid}: param {name} has the name of an input")
             ins[name] = a
-            op_in[name] = "int" if all(x.isdigit() for x in axes[a]) else "string"
+            op_in[name] = axis_type[a]
             scatter.append(name)
             used_axes.add(a)
         for k, v in params.items():
@@ -301,7 +324,7 @@ def convert(ir: dict) -> dict:
     # workflow inputs: axes, then files
     wf_inputs, values = {}, {}
     for a in [a for a in axes if a in used_axes]:
-        ints = all(v.isdigit() for v in axes[a])
+        ints = axis_type[a] == "int"
         vals = [int(v) for v in axes[a]] if ints else list(axes[a])
         wf_inputs[a] = {"type": "int[]" if ints else "string[]", "default": vals}
         values[a] = vals

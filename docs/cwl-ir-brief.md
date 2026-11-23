@@ -44,7 +44,7 @@ CWL v1.2 restricted to a CURATE profile, plus seven `curate:` extensions in a `$
 | `defaults.image`, node `image` | `DockerRequirement` (workflow-level hint, step-level override) |
 | `packages` | `SoftwareRequirement.packages` |
 | `defaults.resources` | `ResourceRequirement` |
-| `axes: {a: [...]}` | one workflow input per axis: `string[]`, or `int[]` when all values are digits; values as `default` |
+| `axes: {a: [...]}` | one workflow input per axis, values as `default`, typed as IR v0.2 hands the value to the function: `int[]` when every step takes it through a whole-value renamed param (`rank: "{rank3}"`) and the values are all digits; `string[]` when a step takes it under its own name (v0.2 injects `"2019"`). An all-digit axis used both ways is refused. |
 | `for_each: [a]` | `scatter: [a]` |
 | `for_each: [a, b]` | `scatter: [a, b]`, `scatterMethod: nested_crossproduct` |
 | full gather (placeholder axis not in consumer's `for_each`) | consumer input takes the scattered output as `File[]` |

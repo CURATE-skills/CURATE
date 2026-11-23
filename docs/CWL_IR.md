@@ -79,7 +79,8 @@ function only ever sees the paths it is given.
 ## Fan-out
 
 An **axis** is a workflow input of type `int[]` (all values digits) or `string[]`, whose
-values are its `default`. Its values must be file-name safe (letters, digits, `.`, `_`, `-`).
+values are its `default`. The type is what the function receives in `params` (an int or a
+string); a workflow converted from IR v0.2 keeps v0.2's types (see the mapping table). Its values must be file-name safe (letters, digits, `.`, `_`, `-`).
 Fan-out sizes come only from axes; nothing is counted at run time.
 
 - **One copy per value:** the step scatters over an `in:` entry sourced from the axis
@@ -199,7 +200,7 @@ Generation sessions keep their own folders, `.curate/runs/<run-id>/`.
 | `defaults.image`, node `image` | `DockerRequirement` (workflow-level hint, step-level override) |
 | `packages` | `SoftwareRequirement.packages` |
 | `defaults.resources` | `ResourceRequirement` |
-| `axes: {a: [...]}` | one workflow input per axis: `string[]`, or `int[]` when all values are digits; values as `default` |
+| `axes: {a: [...]}` | one workflow input per axis, values as `default`, typed as IR v0.2 hands the value to the function: `int[]` when every step takes it through a whole-value renamed param (`rank: "{rank3}"`) and the values are all digits; `string[]` when a step takes it under its own name (v0.2 injects `"2019"`). An all-digit axis used both ways is refused. |
 | `for_each: [a]` | `scatter: [a]` |
 | `for_each: [a, b]` | `scatter: [a, b]`, `scatterMethod: nested_crossproduct` |
 | full gather (placeholder axis not in consumer's `for_each`) | consumer input takes the scattered output as `File[]` |
