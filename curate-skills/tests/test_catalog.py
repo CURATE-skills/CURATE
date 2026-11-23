@@ -135,15 +135,34 @@ def test_only_verified_requires_run(tmp_path, capsys):
                          "--catalog-dir", str(tmp_path / "c")]) == 2
 
 
-def test_save_workflow_upserts_by_name(tmp_path):
+def test_save_workflow_creates_a_new_version_never_an_update(tmp_path):
+    """Saving a name again makes the next version; the earlier entry is untouched. An identical
+    workflow (same content hash) is a duplicate: ask, keep both, or drop the new one."""
+    import json as _json
+    from curate_models import WorkflowSpec
+    e2 = WorkflowSpec.model_validate(_json.loads(
+        (Path(__file__).parent / "fixtures" / "e2-stages" / "spec-with-code.json").read_text()))
     cat = catalog.Catalog(tmp_path)
-    first = catalog.save_workflow(cat, _spec())
+    first = catalog.save_workflow(cat, e2)
+    assert first["ok"] and first["workflow_id"] == "mapreduce-word-count-v1" and first["stored"]
+    assert (tmp_path / "workflows" / "mapreduce-word-count-v1.json").is_file()
     wf = cat.workflows[first["id"]]
     wf.usage_count = 4
     cat.save_workflow(wf)
-    second = catalog.save_workflow(catalog.Catalog(tmp_path), _spec())
-    assert second == {"ok": True, "id": first["id"], "updated": True}
-    assert catalog.Catalog(tmp_path).workflows[first["id"]].usage_count == 4
+    again = catalog.save_workflow(catalog.Catalog(tmp_path), e2)
+    assert again["ok"] is False and again["needs_choice"] and again["duplicates"] == ["mapreduce-word-count-v1"]
+    assert catalog.save_workflow(catalog.Catalog(tmp_path), e2, on_duplicate="drop")["stored"] is False
+    kept = catalog.save_workflow(catalog.Catalog(tmp_path), e2, on_duplicate="keep")
+    assert kept["workflow_id"] == "mapreduce-word-count-v2" and kept["id"] != first["id"]
+    reloaded = catalog.Catalog(tmp_path)
+    assert reloaded.workflows[first["id"]].usage_count == 4 and reloaded.workflows[first["id"]].version == 1
+    assert reloaded.workflow_by_name(e2.name).workflow_id == "mapreduce-word-count-v2"
+    changed = e2.model_copy(deep=True)
+    changed.nodes[2].code += "\n# changed\n"
+    third = catalog.save_workflow(reloaded, changed)
+    assert third["stored"] and third["workflow_id"] == "mapreduce-word-count-v3" and third["duplicates"] == []
+    pinned = catalog.save_workflow(catalog.Catalog(tmp_path), changed, workflow_id="mapreduce-word-count-v3")
+    assert pinned["ok"] is False and "never updated in place" in pinned["error"]
 
 
 def test_increment_usage_cli(tmp_path, capsys):
@@ -227,7 +246,7 @@ def test_dry_run_writes_nothing(tmp_path):
     assert res["dry_run"] and [s["name"] for s in res["stored"]] == ["split_words", "map_words"]
     assert all(s["id"] is None for s in res["stored"]) and not (tmp_path / "c").exists()
     wf = catalog.save_workflow(cat, _spec(), dry_run=True)
-    assert wf == {"ok": True, "dry_run": True, "id": None, "updated": False}
+    assert wf["ok"] and wf["dry_run"] and wf["workflow_id"].endswith("-v1") and wf["duplicates"] == []
     assert not (tmp_path / "c").exists()
 
 

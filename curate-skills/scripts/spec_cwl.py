@@ -70,7 +70,9 @@ def build(spec: WorkflowSpec, image: str = P.DEFAULT_IMAGE) -> dict:
             continue
         if e.to_node in conditional:
             problems.append(f"step {e.to_node} runs on the result of both {conditional[e.to_node][0]} and "
-                            f"{e.from_node}; a step can depend on one step's result (curate:run_if)")
+                            f"{e.from_node}; a step can depend on one step's result (curate:run_if). This is a "
+                            "deliberate change: the FaaSr bundle used to allow it, but how FaaSr behaves when "
+                            "one branch is taken and the other is not was never tested")
             continue
         conditional[e.to_node] = (e.from_node, e.condition == "True")
     if problems:

@@ -48,7 +48,7 @@ from curate_models import WorkflowSpec, clean_dependencies  # noqa: E402
 
 IR_DIR = SCRIPT_DIR.parent / "curate_ir"
 DEFAULT_IMAGE = envfile.DEFAULT_PEGASUS_IMAGE
-RUN_TS_RX = re.compile(r"^\d{4}(\d{2})(\d{2})-(\d{2})(\d{2})")  # run ids: YYYYMMDD-HHMMSS-<name>
+RUN_TS_RX = re.compile(r"^\d{4}(\d{2})(\d{2})-(\d{2})(\d{2})")  # run ids: YYYYMMDD-HHMMSS-<4 hex> (older: -<name>)
 DEFAULT_RESOURCES = {"cpus": 1, "memory_mb": 2048}
 RANK = "{rank}"
 MARKER_KEY = "curate_done"  # runner/curate_run.py writes outputs whose key starts with this

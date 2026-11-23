@@ -250,11 +250,10 @@ def _new_run(args, request: str, run_id_hint: str = "") -> tuple[Path, dict, dic
         args.stubtest_mode, "CURATE_STUBTEST_MODE", args.config_stubtest_mode,
         DEFAULT_STUBTEST_MODE, _mode)
 
-    words = re.findall(r"[a-zA-Z0-9]+", (run_id_hint or request).lower())[:4]
-    run_id = _dt.datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + ("-".join(words) or "run")
-    base_id, n = run_id, 2
+    import ids  # run IDs are YYYYMMDD-HHMMSS-<4 hex> (CWL IR brief, "Workflow and run IDs")
+    run_id = ids.new_run_id()
     while (project / ".curate" / "runs" / run_id).exists():
-        run_id, n = f"{base_id}-{n}", n + 1
+        run_id = ids.new_run_id()
     run = project / ".curate" / "runs" / run_id
     (run / "work").mkdir(parents=True)
 
@@ -2561,8 +2560,9 @@ def save_preview(s: dict) -> list[str]:
     out += ["", "Functions (only verified ones are saved):"]
     out += [f"- `{x['name']}` — would be stored (keywords: {', '.join(x['keywords'])})" for x in fns["stored"]]
     out += [f"- `{x['name']}` — skipped: {x['reason']}" for x in fns["skipped"]]
-    out += ["", f"Workflow `{spec.name}`: " + ("would update the entry with the same name" if wf.get("updated")
-                                             else "would be a new entry")]
+    out += ["", f"Workflow `{spec.name}`: would be stored as a new version, `{wf.get('workflow_id')}`"
+            + (f" (identical to {', '.join(wf['duplicates'])}: you will be asked to keep both or drop it)"
+               if wf.get("duplicates") else "")]
     if blocked:
         out += ["", f"**Saving is refused for now:** {blocked}"]
     return out

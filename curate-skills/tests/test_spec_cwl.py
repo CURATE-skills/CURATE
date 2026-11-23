@@ -81,6 +81,7 @@ def test_a_step_on_two_results_is_refused():
     with pytest.raises(SC.BuildError) as e:
         SC.build(spec)
     assert "step report runs on the result of both check and make" in e.value.problems[0]
+    assert "deliberate change" in e.value.problems[0] and "never tested" in e.value.problems[0]
 
 
 def test_content_hash_ignores_labels_identity_and_defaults_only():

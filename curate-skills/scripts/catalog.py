@@ -20,7 +20,8 @@ Usage (prints JSON {"ok": ...}; exit 0 ok, 1 check failed, 2 bad input):
   catalog.py get --id ID [--workflow]
   catalog.py increment-usage --id ID [--workflow]
   catalog.py save-functions (--run DIR [--only-verified] | --spec FILE) [--dry-run]
-  catalog.py save-workflow  (--run DIR | --spec FILE) [--dry-run]
+  catalog.py save-workflow  (--run DIR | --spec FILE) [--dry-run] [--workflow-id ID]
+                            [--on-duplicate ask|keep|drop]
   catalog.py import PATH... [--dedupe-code] [--overwrite]
   catalog.py export --out DIR [--ids ID...]
 """
@@ -141,11 +142,13 @@ class Catalog:
 
     def save_workflow(self, entry: WorkflowEntry) -> None:
         self.workflows[entry.id] = entry
-        self._write(self.wf_dir / f"{entry.id}.json", entry.model_dump_json(
+        self._write(self.wf_dir / f"{entry.workflow_id or entry.id}.json", entry.model_dump_json(
             indent=2, exclude={"workflow_spec": {"nodes": {"__all__": CATALOG_EXCLUDED_SPEC_FIELDS}}}))
 
     def workflow_by_name(self, name: str) -> Optional[WorkflowEntry]:
-        return next((e for e in self.workflows.values() if e.workflow_spec.name == name), None)
+        """The latest version of the workflow with this spec name (an older entry without an ID last)."""
+        hits = [e for e in self.workflows.values() if e.workflow_spec.name == name]
+        return max(hits, key=lambda e: e.version or 0, default=None)
 
     # ── search (from catalog/store.py) ──
     def search(self, query: str, k: int = 5) -> list[tuple[float, CatalogEntry]]:
@@ -252,24 +255,51 @@ def save_functions(cat: Catalog, spec: WorkflowSpec, state: dict, only_verified:
     return {"ok": True, "dry_run": dry_run, "stored": stored, "skipped": skipped}
 
 
-def save_workflow(cat: Catalog, spec: WorkflowSpec, dry_run: bool = False) -> dict:
+def _content_hash(spec: WorkflowSpec) -> Optional[str]:
+    try:
+        import spec_cwl
+        built = spec_cwl.build(spec)
+        return spec_cwl.content_hash(built["workflow"], built["functions"])
+    except Exception:  # noqa: BLE001 — a spec CWL cannot express is still stored, without a hash
+        return None
+
+
+def save_workflow(cat: Catalog, spec: WorkflowSpec, dry_run: bool = False, workflow_id: Optional[str] = None,
+                  on_duplicate: str = "ask") -> dict:
+    """Store the workflow as a NEW version (never an update in place). `workflow_id` is the version
+    Gate 4 published (<name>-v<N>); without it the next version of slug(spec name) is used. An
+    existing version with the same content hash is a duplicate: on_duplicate "ask" writes nothing
+    and returns needs_choice, "keep" stores it anyway, "drop" stores nothing."""
+    import ids
     old_style = [n.name for n in spec.nodes if n.code and not is_plain(n.code)]
     if old_style:
         return {"ok": False, "error": f"not saved: step(s) {', '.join(old_style)} are not plain functions "
                                       "(older FaaSr style); only plain workflows are stored"}
-    existing = cat.workflow_by_name(spec.name)
+    if workflow_id:
+        name, version = ids.parse_workflow_id(workflow_id)
+    else:
+        name = ids.slug(spec.name)
+        version = max(ids.versions(name, catalog=cat), default=0) + 1
+    wid = ids.workflow_id(name, version)
+    if any(e.workflow_id == wid for e in cat.workflows.values()):
+        return {"ok": False, "error": f"{wid} is already in the catalog; a version is never updated in place"}
+    ch = _content_hash(spec)
+    dups = sorted(e.workflow_id or e.id for e in cat.workflows.values() if ch and e.content_hash == ch)
+    result = {"workflow_id": wid, "version": version, "content_hash": ch, "duplicates": dups}
     if dry_run:
-        return {"ok": True, "dry_run": True, "id": existing.id if existing else None,
-                "updated": existing is not None}
+        return {"ok": True, "dry_run": True, **result}
+    if dups and on_duplicate == "ask":
+        return {"ok": False, "needs_choice": True, **result,
+                "error": f"identical to {', '.join(dups)}: keep both (--on-duplicate keep) or drop the new one "
+                         "(--on-duplicate drop)"}
+    if dups and on_duplicate == "drop":
+        return {"ok": True, "stored": False, **result}
     entry = WorkflowEntry(
-        id=existing.id if existing else str(uuid.uuid4()),
-        workflow_spec=spec,
+        id=str(uuid.uuid4()), workflow_spec=spec, workflow_id=wid, version=version, content_hash=ch,
         keywords=spec.name.replace("-", " ").split() + spec.description.lower().split()[:5],
-        provenance="user request",
-        usage_count=existing.usage_count if existing else 0,
-    )
+        provenance="user request", usage_count=0)
     cat.save_workflow(entry)
-    return {"ok": True, "id": entry.id, "updated": existing is not None}
+    return {"ok": True, "stored": True, "id": entry.id, **result}
 
 
 # ── import / export ──────────────────────────────────────────────────────────
@@ -377,6 +407,8 @@ def main(argv=None) -> int:
     sp = sub.add_parser("save-workflow", parents=[common])
     sp.add_argument("--spec")
     sp.add_argument("--dry-run", action="store_true")
+    sp.add_argument("--workflow-id", help="the version Gate 4 published (<name>-v<N>)")
+    sp.add_argument("--on-duplicate", choices=["ask", "keep", "drop"], default="ask")
     sp = sub.add_parser("import", parents=[common])
     sp.add_argument("paths", nargs="+")
     sp.add_argument("--dedupe-code", action="store_true")
@@ -445,7 +477,7 @@ def run_command(args, root: Path) -> dict:
         return save_functions(cat, spec, state, args.only_verified, args.dry_run)
     if cmd == "save-workflow":
         spec, _ = load_run(args.run, args.spec)
-        return save_workflow(cat, spec, args.dry_run)
+        return save_workflow(cat, spec, args.dry_run, args.workflow_id, args.on_duplicate)
     if cmd == "import":
         return import_entries(cat, args.paths, args.dedupe_code, args.overwrite)
     if cmd == "export":

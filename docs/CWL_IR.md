@@ -136,7 +136,7 @@ object (`cwltool` refuses a list there). `curate:axis` sits on the `Operation`'s
 | `curate:deliver_as` | workflow output | `"<path>"` | Where the file goes under the delivery folder (`deliver/`). For a `File[]` output it holds the output's axes as `{axis}` placeholders, filled in axis order (`results/part_{rank5}.json`). |
 | `curate:folder` | step `in:` entry | `true` | The `File[]` arriving here reaches the function as one local directory. A folder may gather several sources with `linkMerge: merge_flattened`. |
 | `curate:after` | step `hints` | `{steps: [<step>, ...]}` | Control-only dependency: run after those steps (every copy of a scattered one) although no file passes between them. Builders turn it into a Pegasus job dependency or a FaaSr `InvokeNext`; no marker files. |
-| `curate:run_if` | step `hints` | `{step: <step>, result: true\|false}` | Run this step only if `step`'s `main` returned `result`. Implies `after: [step]`. The FaaSr builder emits a conditional `InvokeNext`; the Pegasus builder refuses the workflow with a clear message, and Gate 4 does not offer Pegasus for it. **Untested on real FaaSr** until the phase 7 check passes (a `run_if` step that a data producer also invokes, branch taken and not taken). |
+| `curate:run_if` | step `hints` | `{step: <step>, result: true\|false}` | Run this step only if `step`'s `main` returned `result`. Implies `after: [step]`. The FaaSr builder emits a conditional `InvokeNext`; the Pegasus builder refuses the workflow with a clear message, and Gate 4 does not offer Pegasus for it. **Untested on real FaaSr** until the phase 7 check passes (a `run_if` step that a data producer also invokes, branch taken and not taken). One condition per step: a step conditional on two steps' results is refused. That is a deliberate change from the spec-to-FaaSr path, which allowed it without it ever being tested on FaaSr. |
 | `curate:secrets` | step `hints` | `{names: [NAME, ...]}` | The secrets the step reads from its environment, by name (`UPPER_SNAKE`). Never values. Each builder maps the names to its own mechanism (FaaSr secrets, a Pegasus environment profile). |
 | `curate:axis` | `Operation` output of type `File[]` | `<axis input>` | The list has one file per value of that axis, in axis order. Required on every `File[]` output of an unscattered step. |
 
@@ -153,7 +153,9 @@ curate:content_hash: sha256:...
   unique in the global catalog (`~/.curate/catalog`). Parse it with `^(.+)-v(\d+)$`.
 - The **name** is asked for at the sketch and checked against the catalog then. It is stored
   in the generation run's metadata.
-- **Every generation of an existing workflow is a new version**, numbered at emit. Which
+- **Every approved generation of an existing workflow is a new version**, numbered when Gate 4
+  approves. Emit writes a draft inside the generation run folder; only an approved draft is
+  published as a version (a rejected or rewound draft never becomes one). Which
   workflow it belongs to comes from lineage (a reused catalog workflow, or `--from-run`) or
   from the name; a name that is taken with no lineage makes CURATE ask: a new name, or a new
   version of the existing workflow. A version folder is never edited.
@@ -179,7 +181,8 @@ notes: {class: File, location: inputs/notes.txt}
 ## Layout
 
 ```
-.curate/workflows/<workflow-id>/workflow.yml            # tested values as defaults
+.curate/runs/<run-id>/draft/                            # emit's draft (a generation session)
+.curate/workflows/<workflow-id>/workflow.yml            # published on approval; tested values as defaults
 .curate/workflows/<workflow-id>/functions/<step>.py
 .curate/workflows/<workflow-id>/runs/<run-id>/          # one execution: inputs.yml, the
                                                         # target's bundle, outputs, logs, status
@@ -187,6 +190,10 @@ notes: {class: File, location: inputs/notes.txt}
 
 Run IDs are `YYYYMMDD-HHMMSS-<4 hex>`; a run's full reference is `<workflow-id>/<run-id>`.
 Generation sessions keep their own folders, `.curate/runs/<run-id>/`.
+
+A builder writes its bundle into the execution run's folder with a small manifest: the version
+folder's hash, the CURATE version (git commit), the target, and the bundle's own hash. Deploy
+checks the version hash against the approved one and records the bundle hash.
 
 ## Builders
 

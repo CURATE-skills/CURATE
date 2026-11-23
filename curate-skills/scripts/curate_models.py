@@ -143,8 +143,11 @@ class CatalogEntry(BaseModel):
 
 class WorkflowEntry(BaseModel):
     """A stored, reusable complete workflow (analogous to CatalogEntry)."""
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))  # kept as an alias of workflow_id
     workflow_spec: WorkflowSpec
+    workflow_id: Optional[str] = None  # <name>-v<N>; entries saved before IDs have none
+    version: Optional[int] = None
+    content_hash: Optional[str] = None  # spec_cwl.content_hash: only detects duplicates
     keywords: list[str] = Field(default_factory=list)
     provenance: str = ""  # e.g. "user request"
     usage_count: int = 0

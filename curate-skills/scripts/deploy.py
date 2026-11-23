@@ -65,7 +65,7 @@ import leakcheck  # noqa: E402
 
 NATIVE_CONTAINERS = SCRIPT_DIR / "vendor" / "curate_deploy" / "native_containers.txt"
 SUFFIX_RX = re.compile(r"^[-_A-Za-z0-9]+$")
-RUN_TS_RX = re.compile(r"^\d{4}(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})")  # run ids: YYYYMMDD-HHMMSS-<name>
+RUN_TS_RX = re.compile(r"^\d{4}(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})")  # run ids: YYYYMMDD-HHMMSS-<4 hex> (older: -<name>)
 MAX_PATH_PART = 255  # bytes per file name in a git tree / most file systems
 COMMIT_TAG = "(curate-skills)"  # in every commit message curate-deploy makes
 DEPLOY_LOG = Path("deploy") / "deploy-log.jsonl"  # in the run; one JSON line per path a deploy step wrote
