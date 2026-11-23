@@ -125,7 +125,7 @@ def seeded_catalog(tmp_path):
         name="split_text", description="split text into chunks",
         inputs=[IOSpec(name="words.txt")], outputs=[IOSpec(name="chunk_{rank}.txt")],
         dependencies=["os", "numpy"], secrets=["TOKEN"], rank=9,
-        code="def split_text(folder, input1, output1): pass"))
+        code="def main(inputs, outputs, params):\n    pass  # split_text\n"))
     cat.save_function(e)
     return e.id
 
@@ -166,8 +166,10 @@ def test_rename_collision_downgrades_to_adapt(make_run, capsys, seeded_catalog):
 
 def test_cached_and_adapt_from_cache(make_run, capsys):
     prior = WorkflowSpec(name="old", nodes=[
-        FunctionSpec(name="split_words", description="old split", code="def split_words(): 1"),
-        FunctionSpec(name="map_words", description="old map", code="def map_words(): 2")])
+        FunctionSpec(name="split_words", description="old split",
+                     code="def main(inputs, outputs, params):\n    pass  # 1\n"),
+        FunctionSpec(name="map_words", description="old map",
+                     code="def main(inputs, outputs, params):\n    pass  # 2\n")])
     run = approved_run(make_run, capsys, prior_spec=json.loads(prior.model_dump_json()))
     cands = [{"node": "split_words", "decision": "cached"},
              {"node": "map_words", "decision": "adapt", "adapt_from": "cached", "adaptation_notes": "faster"},
@@ -176,6 +178,35 @@ def test_cached_and_adapt_from_cache(make_run, capsys):
     src = {c["name"]: (c["source"], c["origin_kind"]) for c in out["candidates"]}
     assert src == {"split_words": ("cached", "cache"), "map_words": ("adapt", "cache"),
                    "reduce_counts": ("new", None)}
+
+
+FAASR_STYLE = "def split_words(folder, input1, output1):\n    faasr_log('x')\n"
+
+
+def test_old_style_cached_code_is_regenerated_not_reused(make_run, capsys):
+    prior = WorkflowSpec(name="old", nodes=[FunctionSpec(name="split_words", code=FAASR_STYLE)])
+    run = approved_run(make_run, capsys, prior_spec=json.loads(prior.model_dump_json()))
+    cands = [{"node": "split_words", "decision": "cached"}, {"node": "map_words", "decision": "new"},
+             {"node": "reduce_counts", "decision": "new"}]
+    code, out = call(S, ["apply-candidates", "--run", str(run), "--json", write(run, "candidates.json", cands)], capsys)
+    assert code == 0, out
+    c = out["candidates"][0]
+    assert (c["source"], c["origin_kind"]) == ("adapt", "cache")
+    assert any("older FaaSr style → adapt" in n for n in out["notes"])
+
+
+def test_old_style_catalog_hit_is_regenerated_not_reused(make_run, capsys, tmp_path):
+    cat = catalog.Catalog(tmp_path / "catalog")
+    e = CatalogEntry(function_spec=FunctionSpec(name="split_text", code=FAASR_STYLE))
+    cat.save_function(e)
+    run = approved_run(make_run, capsys)
+    cands = [{"node": "split_words", "decision": "reuse", "catalog_id": e.id},
+             {"node": "map_words", "decision": "new"}, {"node": "reduce_counts", "decision": "new"}]
+    code, out = call(S, ["apply-candidates", "--run", str(run), "--json", write(run, "candidates.json", cands)], capsys)
+    assert code == 0, out
+    c = out["candidates"][0]
+    assert (c["source"], c["origin_kind"], c["origin_name"]) == ("adapt", "catalog", "split_text")
+    assert any("catalog function split_text is in the older FaaSr style → adapt" in n for n in out["notes"])
 
 
 def test_user_model_wins(make_run, capsys, tmp_path):

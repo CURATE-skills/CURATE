@@ -37,6 +37,7 @@ from typing import Optional
 from pydantic import ValidationError
 from rank_bm25 import BM25Okapi
 
+from plain_contract import is_plain
 from curate_models import (
     CATALOG_EXCLUDED_SPEC_FIELDS,
     CatalogEntry,
@@ -228,6 +229,10 @@ def save_functions(cat: Catalog, spec: WorkflowSpec, state: dict, only_verified:
         if only_verified and (mga.get(node.name) or {}).get("status") not in VERIFIED_STATUSES:
             skipped.append({"name": node.name, "reason": "not verified"})
             continue
+        if not is_plain(node.code):
+            skipped.append({"name": node.name, "reason": "not a plain function (older FaaSr style): "
+                                                          "only plain main(inputs, outputs, params) code is stored"})
+            continue
         # Only new/adapted implementations enter the catalog. Verbatim catalog reuse
         # is already there; byte-identical code (cached copies, re-saves) is skipped.
         if node.source == "catalog" or node.code.strip() in existing_codes:
@@ -248,6 +253,10 @@ def save_functions(cat: Catalog, spec: WorkflowSpec, state: dict, only_verified:
 
 
 def save_workflow(cat: Catalog, spec: WorkflowSpec, dry_run: bool = False) -> dict:
+    old_style = [n.name for n in spec.nodes if n.code and not is_plain(n.code)]
+    if old_style:
+        return {"ok": False, "error": f"not saved: step(s) {', '.join(old_style)} are not plain functions "
+                                      "(older FaaSr style); only plain workflows are stored"}
     existing = cat.workflow_by_name(spec.name)
     if dry_run:
         return {"ok": True, "dry_run": True, "id": existing.id if existing else None,

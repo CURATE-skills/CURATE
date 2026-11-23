@@ -16,11 +16,13 @@ def weather():
     return WorkflowSpec(
         name="weather", description="compare winter weather", entry="download",
         nodes=[FunctionSpec(name="download", description="Download the station CSV.",
-                            code="def download():\n    return 'csv'\n", dependencies=["requests"]),
+                            code="def main(inputs, outputs, params):\n    return 'csv'\n",
+                            dependencies=["requests"]),
                FunctionSpec(name="process", rank=3, description="One variable per rank.",
-                            code="def process():\n    pass\n"),
+                            code="def main(inputs, outputs, params):\n    pass  # process\n"),
                FunctionSpec(name="plot", description="Plot three panels.", source="catalog",
-                            origin_kind="catalog", origin_name="plot0", code="def plot():\n    pass\n")],
+                            origin_kind="catalog", origin_name="plot0",
+                            code="def main(inputs, outputs, params):\n    pass  # plot\n")],
         edges=[{"from_node": "download", "to_node": "process"}, {"from_node": "process", "to_node": "plot"}])
 
 
@@ -64,14 +66,15 @@ def test_gate3_is_short_per_function_and_full_code_is_on_request(make_run, capsy
     assert blocks[1].splitlines()[0] == "process  [new] · 3 ranks · stub test: failed (2 attempts)"
     assert "  last test lines:\n    line a\n    line b\n    ValueError: rank out of range" in blocks[1]
     assert "  kept (not regenerated)" in blocks[2] and "stub test: passed (not regenerated)" in blocks[2]
-    assert "def download():" not in md and "```python" not in md  # no code in the default display
+    assert "def main(" not in md and "```python" not in md  # no code in the default display
     assert "**Show the full code**" in md and out["options"] == ["Approve", "Show the full code", "Stop here"]
     full = ok(S, ["show", "--run", str(run), "--gate", "3", "--full"], capsys)
-    for body in ("def download():\n    return 'csv'", "def process():\n    pass", "def plot():\n    pass"):
+    main = "def main(inputs, outputs, params):\n"
+    for body in (main + "    return 'csv'", main + "    pass  # process", main + "    pass  # plot"):
         assert f"```python\n{body}\n```" in full["markdown"]
     assert full["markdown"].endswith(out["marker"])
     review = (run / "review" / "gate3.md").read_text()
-    assert review.startswith(md) and "def download():\n    return 'csv'" in review  # full code kept on file
+    assert review.startswith(md) and main + "    return 'csv'" in review  # full code kept on file
     code, err = __import__("conftest").call(S, ["show", "--run", str(run), "--gate", "2", "--full"], capsys)
     assert code == 2 and "only for Gate 3" in err["error"]
 

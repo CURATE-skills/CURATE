@@ -73,6 +73,7 @@ from curate_models import (
     clean_dependencies,
 )
 from emit import external_inputs
+from plain_contract import is_plain
 from runstate import node_basis, obj_hash, run_lock, spec_hash, write_json_atomic
 from deploy import tree_hash
 
@@ -791,6 +792,12 @@ def decide_node(node: FunctionSpec, result: dict, prior: Optional[FunctionSpec],
     adapt_from = result.get("adapt_from")
     has_prior = prior is not None and bool(prior.code)
 
+    if decision == "cached" and has_prior and not is_plain(prior.code):
+        # Older, FaaSr-style code is never reused verbatim: it seeds a regeneration instead.
+        notes.append(f"{node.name}: the cached code is in the older FaaSr style → adapt (regenerated as a "
+                     "plain function from it)")
+        return prior.model_copy(update={"source": "adapt", "catalog_id": None, "rank": node.rank,
+                                        "origin_kind": "cache", "origin_name": prior.name})
     if decision == "cached" and has_prior:
         return prior.model_copy(update={"source": "cached", "rank": node.rank,
                                         "origin_kind": "cache", "origin_name": prior.name})
@@ -815,6 +822,11 @@ def decide_node(node: FunctionSpec, result: dict, prior: Optional[FunctionSpec],
             notes.append(f"{node.name}: catalog_id {catalog_id!r} not in catalog → new")
         else:
             source = "adapt" if decision == "adapt" else "catalog"
+            if source == "catalog" and not is_plain(entry.function_spec.code):
+                # A catalog entry not yet migrated (migrate_catalog.py) is never reused verbatim.
+                source = "adapt"
+                notes.append(f"{node.name}: catalog function {entry.function_spec.name} is in the older FaaSr "
+                             "style → adapt (regenerated as a plain function from it)")
             updates = {
                 "source": source, "catalog_id": catalog_id, "origin_kind": "catalog",
                 "origin_name": entry.function_spec.name,

@@ -17,7 +17,8 @@ def fn(name, desc, ins=(), outs=(), code=None, source="new"):
     return FunctionSpec(name=name, description=desc,
                         inputs=[IOSpec(name=i) for i in ins],
                         outputs=[IOSpec(name=o) for o in outs],
-                        code=code if code is not None else f"def {name}(folder):\n    pass\n",
+                        code=code if code is not None else
+                        f"def main(inputs, outputs, params):\n    pass  # {name}\n",
                         source=source)
 
 
@@ -293,3 +294,15 @@ def test_curate_catalog_skill_commands_run_as_documented(tmp_path):
     bad = subprocess.run(["sh", "-c", f'"{sys.executable}" "{plugin}/scripts/catalog.py"{suffix} where'],
                          capture_output=True, text=True)
     assert bad.returncode == 2
+
+
+def test_only_plain_code_is_saved(tmp_path):
+    cat = catalog.Catalog(tmp_path / "cat")
+    old = fn("split_words", "split", code="def split_words(folder, output1):\n    faasr_log('x')\n")
+    spec = WorkflowSpec(name="wc", nodes=[old, fn("map_words", "map")])
+    res = catalog.save_functions(cat, spec, {}, only_verified=False)
+    assert [s["name"] for s in res["stored"]] == ["map_words"]
+    assert res["skipped"][0]["name"] == "split_words" and "not a plain function" in res["skipped"][0]["reason"]
+    res = catalog.save_workflow(cat, spec)
+    assert res["ok"] is False and "split_words are not plain functions" in res["error"]
+    assert catalog.Catalog(tmp_path / "cat").workflows == {}
