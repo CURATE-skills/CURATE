@@ -271,3 +271,34 @@ def test_download_outputs_reads_the_builders_manifest(tmp_path):
     (tmp_path / "b" / "outputs.json").write_text(json.dumps(manifest))
     assert M.run_outputs(tmp_path, {"bundle_dir": str(tmp_path / "b")}, wf) == \
         [{"action": "reduce", "key": "wc-0101/reduce__output1__1"}]
+
+
+# ── the Pegasus backend on a built folder (Pegasus.api from pegasus-wms, a test dependency) ──
+
+def emitted(folder, work):
+    sys.path.insert(0, str(PLUGIN / "curate_ir" / "backends"))
+    import pegasus_backend as B
+    B.emit(V0.load(folder / "ir.yaml"), work, "docker")
+    return yaml.safe_load((work / "workflow.yml").read_text())
+
+
+def test_backend_turns_after_into_dependencies_and_secrets_into_getenv(tmp_path):
+    def no_run_if(doc):
+        del doc["steps"]["report"]["hints"]["curate:run_if"]
+    folder = CP.write_folder(tmp_path / "ir", CP.build(features_wf(tmp_path, no_run_if), "f"))
+    wf = emitted(folder, tmp_path / "work")
+    jobs = {j["id"]: j for j in wf["jobs"]}
+    parents = {d["id"]: set(d["children"]) for d in wf.get("jobDependencies", [])}
+    assert "cleanup" in parents["report"]  # curate:after: no file passes between them
+    for i in (1, 2, 3):
+        assert jobs[f"map__{i}"]["profiles"]["condor"]["getenv"] == "API_TOKEN"
+    assert "profiles" not in jobs["cleanup"] or "getenv" not in jobs["cleanup"]["profiles"].get("condor", {})
+    assert "API_TOKEN=" not in (tmp_path / "work" / "workflow.yml").read_text()
+
+
+def test_backend_plans_the_e2_folder(tmp_path):
+    folder = CP.write_folder(tmp_path / "pegasus", CP.build(cwl_of(e2_spec(), tmp_path), "t-flow", image=IMAGE))
+    wf = emitted(folder, tmp_path / "work")
+    assert len(wf["jobs"]) == 11
+    reduce3 = next(j for j in wf["jobs"] if j["id"] == "reduce__3")
+    assert {u["lfn"] for u in reduce3["uses"] if u["type"] == "input"} >= {"shuffle__output1__3"}

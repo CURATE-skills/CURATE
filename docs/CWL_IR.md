@@ -136,7 +136,7 @@ object (`cwltool` refuses a list there). `curate:axis` sits on the `Operation`'s
 | `curate:deliver_as` | workflow output | `"<path>"` | Where the file goes under the delivery folder (`deliver/`). For a `File[]` output it holds the output's axes as `{axis}` placeholders, filled in axis order (`results/part_{rank5}.json`). |
 | `curate:folder` | step `in:` entry | `true` | The `File[]` arriving here reaches the function as one local directory. A folder may gather several sources with `linkMerge: merge_flattened`. |
 | `curate:after` | step `hints` | `{steps: [<step>, ...]}` | Control-only dependency: run after those steps (every copy of a scattered one) although no file passes between them. Builders turn it into a Pegasus job dependency or a FaaSr `InvokeNext`; no marker files. |
-| `curate:run_if` | step `hints` | `{step: <step>, result: true\|false}` | Run this step only if `step`'s `main` returned `result`. Implies `after: [step]`. The FaaSr builder emits a conditional `InvokeNext`; the Pegasus builder refuses the workflow with a clear message, and Gate 4 does not offer Pegasus for it. |
+| `curate:run_if` | step `hints` | `{step: <step>, result: true\|false}` | Run this step only if `step`'s `main` returned `result`. Implies `after: [step]`. The FaaSr builder emits a conditional `InvokeNext`; the Pegasus builder refuses the workflow with a clear message, and Gate 4 does not offer Pegasus for it. **Untested on real FaaSr** until the phase 7 check passes (a `run_if` step that a data producer also invokes, branch taken and not taken). |
 | `curate:secrets` | step `hints` | `{names: [NAME, ...]}` | The secrets the step reads from its environment, by name (`UPPER_SNAKE`). Never values. Each builder maps the names to its own mechanism (FaaSr secrets, a Pegasus environment profile). |
 | `curate:axis` | `Operation` output of type `File[]` | `<axis input>` | The list has one file per value of that axis, in axis order. Required on every `File[]` output of an unscattered step. |
 
@@ -201,7 +201,7 @@ After Gate 4 picks a target, its builder reads `workflow.yml` (and the run's `in
 - **FaaSr** (`curate-skills/scripts/cwl_faasr.py`) reads `scatter` directly: one ranked action
   per step (`InvokeNext: step(N)`), at most one axis per step. Each step ships as its generated
   wrapper and its unchanged function. `curate:after` becomes `InvokeNext`, `curate:run_if` a
-  conditional `InvokeNext`, `curate:secrets` the workflow's `Secrets`. The bundle's
+  conditional `InvokeNext` (untested on real FaaSr; see the extension table), `curate:secrets` the workflow's `Secrets`. The bundle's
   `outputs.json` lists every object the run writes and the deliverables; `monitor.py
   download-outputs` reads it instead of working names out.
 

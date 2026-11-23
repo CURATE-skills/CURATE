@@ -157,7 +157,16 @@ steps:
 ### 7. End-to-end check
 
 - Weather and MapReduce: generate with `/curate`, build, and run on **real Pegasus on maxwell** and **real FaaSr**.
-- **Done when:** the deliverables are byte-identical across Pegasus and FaaSr, and byte-identical to the old IR v0.2 path on the same inputs.
+- **MapReduce:** compare the deliverables byte-for-byte. Its intermediates come from an unseeded `random.shuffle`
+  in `generate_text`, so they differ between any two runs; don't change the fixture's functions.
+- **Weather:** run Pegasus and FaaSr on the same saved input data (or record the data fetched once and reuse it),
+  so differences cannot come from the live data changing.
+- **Two real-system checks:**
+  - (a) FaaSr with the features example: a `curate:run_if` step that is also invoked by a data producer, with the
+    branch both taken and not taken. Until this passes, `run_if` is documented as untested on FaaSr.
+  - (b) Pegasus on maxwell: a step with `curate:secrets` actually sees the variable inside its container.
+- **Done when:** the deliverables are byte-identical across Pegasus and FaaSr, and byte-identical to the old IR
+  v0.2 path on the same inputs; (a) and (b) pass.
 
 ### 8. Migrate and clean up (only after phase 7 passes)
 

@@ -8,3 +8,4 @@ boto3
 requests
 cwltool==3.3.20261106131234
 cwl-utils==0.47
+pegasus-wms==5.1.3
