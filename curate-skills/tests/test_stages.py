@@ -192,10 +192,16 @@ def test_routing_through_reuse(make_run, capsys, tmp_path):
 def test_gate4_refuses_stale_bundle(make_run, capsys):
     spec = coded_spec()
     run = make_run(stage="gate4", spec=spec, validation={"ok": True, "spec_hash": "stale"})
-    code, out = call(S, ["approve", "--run", str(run), "--gate", "4"], capsys)
+    code, out = call(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
     assert code == 2 and "different version of the spec" in out["error"]
     patch(run, validation={"ok": True, "spec_hash": spec_hash(spec)})
-    assert ok(S, ["approve", "--run", str(run), "--gate", "4"], capsys)["stage"] == "finalize"
+    code, out = call(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
+    assert code == 2 and "no workflow draft" in out["error"]  # emit writes the draft Gate 4 approves
+    import emit
+    from curate_models import WorkflowSpec
+    patch(run, draft_dir=emit.write_draft(WorkflowSpec.model_validate(spec), run)["dir"])
+    out = ok(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
+    assert out["stage"] == "finalize" and out["workflow_id"] == "mapreduce-word-count-v1"
 
 
 # ── v1 state, lock, scratch changes ──
@@ -259,8 +265,11 @@ def test_walk_from_generate_import_to_finalize(tmp_path, capsys, monkeypatch):
     s = state(run)
     s["validation"] = {"ok": True, "level": "structural", "error": None, "spec_hash": spec_hash(s["spec"])}
     s["stage"] = "gate4"
+    import emit
+    from curate_models import WorkflowSpec
+    s["draft_dir"] = emit.write_draft(WorkflowSpec.model_validate(s["spec"]), Path(run))["dir"]
     Path(run, "state.json").write_text(json.dumps(s))
-    ok(S, ["approve", "--run", run, "--gate", "4"], capsys)
+    ok(S, ["approve", "--run", run, "--gate", "4", "--on-duplicate", "keep"], capsys)
     assert ok(S, ["require", "--run", run, "--stage", "finalize"], capsys)["problems"] == []
     assert ok(S, ["next", "--run", run], capsys)["next_skill"] == "curate-skills:wda-finalize"
 

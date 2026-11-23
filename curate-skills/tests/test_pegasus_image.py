@@ -124,7 +124,7 @@ def test_approve_with_image_records_it_for_this_run_only(source_run, capsys, mon
     f.write_text("CURATE_PEGASUS_IMAGE=docker:///from/settings:1\n")
     monkeypatch.setattr(envfile, "default_path", lambda: f)
     at_gate4(source_run)
-    out = ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--deploy", "pegasus",
+    out = ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus",
                  "--image", "docker://me/tools:2"], capsys)
     assert out["deploy"] == "pegasus" and out["stage"] == "deploy"
     s = state(source_run)
@@ -137,18 +137,18 @@ def test_approve_with_image_records_it_for_this_run_only(source_run, capsys, mon
 def test_approve_with_a_bad_image_changes_nothing(source_run, capsys):  # noqa: F811
     at_gate4(source_run)
     before = (source_run / "state.json").read_text()
-    code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--deploy", "pegasus",
+    code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus",
                          "--image", "file:///nowhere/img.tar"], capsys)
     assert code == 2 and "does not exist or is not readable" in out["error"]
     assert (source_run / "state.json").read_text() == before
-    code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--deploy", "yes",
+    code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes",
                          "--image", DEFAULT_IMG], capsys)
     assert code == 2 and out["error"] == "--image only applies to --deploy pegasus"
 
 
 def test_normal_pegasus_option_unchanged(source_run, capsys):  # noqa: F811
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--deploy", "pegasus"], capsys)
+    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     s = state(source_run)
     assert s["pegasus"] is None and "image" not in s["history"][-1] and s["deploy_choice"] == "pegasus"
 
@@ -159,7 +159,7 @@ def test_normal_pegasus_option_unchanged(source_run, capsys):  # noqa: F811
 def chosen(source_run, capsys, monkeypatch, tmp_path):  # noqa: F811
     monkeypatch.setattr(PD, "RUN", Fake(tmp_path))
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--deploy", "pegasus",
+    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus",
            "--image", "docker://me/tools:2"], capsys)
     return source_run
 

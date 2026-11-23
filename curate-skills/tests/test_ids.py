@@ -102,7 +102,7 @@ def test_next_versions_and_duplicates_from_project_and_catalog(tmp_path):
 def test_name_status_against_the_global_catalog(tmp_path):
     cat = C.Catalog(tmp_path / "cat")
     assert ids.name_status("mapreduce-word-count", cat)["taken"] is False
-    C.save_workflow(cat, e2())
+    C.save_workflow(cat, e2(), workflow_id="mapreduce-word-count-v1")
     st = ids.name_status("mapreduce-word-count", cat)
     assert st["taken"] and st["versions"] == [1]
     legacy = C.WorkflowEntry(workflow_spec=e2().model_copy(update={"name": "Old Weather"}))
@@ -125,3 +125,27 @@ def test_bundle_manifest_and_deploys_check(tmp_path):
     (ex / "bundle" / "workflow.json").write_text('{"x": 1}')
     with pytest.raises(ids.IdError, match="changed after it was built"):
         ids.check_manifest(ex, "v-hash")
+
+
+def test_set_name_checks_the_catalog_and_records_lineage(make_run, capsys):
+    import spec as S
+    from conftest import call
+    run = make_run()
+    s = json.loads((run / "state.json").read_text())
+    cat = C.Catalog(Path(s["catalog_dir"]))
+    C.save_workflow(cat, e2(), workflow_id="mapreduce-word-count-v1")
+    code, out = call(S, ["set-name", "--run", str(run), "Bad Name"], capsys)
+    assert code == 2 and "lower-case" in out["error"]
+    code, out = call(S, ["set-name", "--run", str(run), "mapreduce-word-count"], capsys)
+    assert code == 1 and out["needs_choice"] and out["taken"]["versions"] == [1]
+    assert json.loads((run / "state.json").read_text()).get("workflow_name") is None
+    code, out = call(S, ["set-name", "--run", str(run), "mapreduce-word-count", "--version-of", "other-v2"], capsys)
+    assert code == 2 and "is a version of other" in out["error"]
+    code, out = call(S, ["set-name", "--run", str(run), "mapreduce-word-count", "--new-version"], capsys)
+    assert code == 0 and out["lineage"] == {"new_version_of": "mapreduce-word-count"}
+    code, out = call(S, ["set-name", "--run", str(run), "fresh-name"], capsys)
+    assert code == 0 and out["taken"] is False
+    st = json.loads((run / "state.json").read_text())
+    assert st["workflow_name"] == "fresh-name" and st["workflow_lineage"] is None  # the lineage was about another name
+    code, out = call(S, ["set-name", "--run", str(run), "mapreduce-word-count"], capsys)
+    assert code == 1 and out["needs_choice"]

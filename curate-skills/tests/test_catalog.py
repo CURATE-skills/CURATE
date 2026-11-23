@@ -135,35 +135,91 @@ def test_only_verified_requires_run(tmp_path, capsys):
                          "--catalog-dir", str(tmp_path / "c")]) == 2
 
 
-def test_save_workflow_creates_a_new_version_never_an_update(tmp_path):
-    """Saving a name again makes the next version; the earlier entry is untouched. An identical
-    workflow (same content hash) is a duplicate: ask, keep both, or drop the new one."""
+def _e2():
     import json as _json
     from curate_models import WorkflowSpec
-    e2 = WorkflowSpec.model_validate(_json.loads(
+    return WorkflowSpec.model_validate(_json.loads(
         (Path(__file__).parent / "fixtures" / "e2-stages" / "spec-with-code.json").read_text()))
+
+
+def test_save_workflow_stores_the_published_version_never_its_own(tmp_path):
     cat = catalog.Catalog(tmp_path)
-    first = catalog.save_workflow(cat, e2)
-    assert first["ok"] and first["workflow_id"] == "mapreduce-word-count-v1" and first["stored"]
+    e2 = _e2()
+    assert catalog.save_workflow(cat, e2)["ok"] is False  # no published version: nothing is numbered here
+    first = catalog.save_workflow(cat, e2, workflow_id="mapreduce-word-count-v1")
+    assert first["ok"] and first["stored"] and first["version"] == 1
     assert (tmp_path / "workflows" / "mapreduce-word-count-v1.json").is_file()
     wf = cat.workflows[first["id"]]
     wf.usage_count = 4
     cat.save_workflow(wf)
-    again = catalog.save_workflow(catalog.Catalog(tmp_path), e2)
-    assert again["ok"] is False and again["needs_choice"] and again["duplicates"] == ["mapreduce-word-count-v1"]
-    assert catalog.save_workflow(catalog.Catalog(tmp_path), e2, on_duplicate="drop")["stored"] is False
-    kept = catalog.save_workflow(catalog.Catalog(tmp_path), e2, on_duplicate="keep")
-    assert kept["workflow_id"] == "mapreduce-word-count-v2" and kept["id"] != first["id"]
-    reloaded = catalog.Catalog(tmp_path)
-    assert reloaded.workflows[first["id"]].usage_count == 4 and reloaded.workflows[first["id"]].version == 1
-    assert reloaded.workflow_by_name(e2.name).workflow_id == "mapreduce-word-count-v2"
+    again = catalog.save_workflow(catalog.Catalog(tmp_path), e2, workflow_id="mapreduce-word-count-v1")
+    assert again["ok"] and again["stored"] is False and again["already_in_catalog"]
     changed = e2.model_copy(deep=True)
     changed.nodes[2].code += "\n# changed\n"
-    third = catalog.save_workflow(reloaded, changed)
-    assert third["stored"] and third["workflow_id"] == "mapreduce-word-count-v3" and third["duplicates"] == []
-    pinned = catalog.save_workflow(catalog.Catalog(tmp_path), changed, workflow_id="mapreduce-word-count-v3")
-    assert pinned["ok"] is False and "never updated in place" in pinned["error"]
+    clash = catalog.save_workflow(catalog.Catalog(tmp_path), changed, workflow_id="mapreduce-word-count-v1")
+    assert clash["ok"] is False and "never updated" in clash["error"]
+    second = catalog.save_workflow(catalog.Catalog(tmp_path), e2, workflow_id="mapreduce-word-count-v2")
+    assert second["stored"] and second["duplicates"] == ["mapreduce-word-count-v1"]
+    reloaded = catalog.Catalog(tmp_path)
+    assert reloaded.workflows[first["id"]].usage_count == 4
+    assert reloaded.workflow_by_name(e2.name).workflow_id == "mapreduce-word-count-v2"
 
+
+def _approved_run(tmp_path, name, spec, on_duplicate=None, new_version_of=None):
+    """A generation run at Gate 4 with a draft, approved through spec.publish_version (what Gate 4
+    approval does); returns the run folder with state.json written."""
+    import emit
+    import spec as S
+    project = tmp_path / "project"
+    run = project / ".curate" / "runs" / name
+    run.mkdir(parents=True)
+    s = {"run_id": name, "project_dir": str(project), "catalog_dir": str(tmp_path / "cat"),
+         "spec": json.loads(spec.model_dump_json()), "draft_dir": emit.write_draft(spec, run)["dir"]}
+    if new_version_of:  # what spec.py set-name NAME --new-version records
+        s.update(workflow_name=new_version_of, workflow_lineage={"new_version_of": new_version_of})
+    s.update(S.publish_version(s, run, on_duplicate))
+    (run / "state.json").write_text(json.dumps(s))
+    return run, s
+
+
+def test_publishing_then_saving_gives_the_same_versions(tmp_path, capsys):
+    """The catalog entry and the version folder always carry the same workflow ID and version, also
+    when the user drops a duplicate at Gate 4 (the existing version is used and saved, not a new one)."""
+    import spec as S
+    cat_dir = tmp_path / "cat"
+    run1, s1 = _approved_run(tmp_path, "r1", _e2())
+    assert s1["workflow_id"] == "mapreduce-word-count-v1" and Path(s1["version_dir"]).is_dir()
+    assert catalog.main(["save-workflow", "--run", str(run1), "--catalog-dir", str(cat_dir)]) == 0
+    saved = json.loads(capsys.readouterr().out)
+    assert (saved["workflow_id"], saved["version"]) == (s1["workflow_id"], s1["workflow_version"])
+    # an identical generation: Gate 4 asks; dropping it reuses v1, and saving stores nothing new
+    with pytest.raises(S.InputError, match="already used"):  # a taken name with no lineage: ask first
+        _approved_run(tmp_path, "r2a", _e2())
+    with pytest.raises(S.InputError, match="identical to mapreduce-word-count-v1"):
+        _approved_run(tmp_path, "r2", _e2(), new_version_of="mapreduce-word-count")
+    run3, s3 = _approved_run(tmp_path, "r3", _e2(), on_duplicate="drop", new_version_of="mapreduce-word-count")
+    assert s3["workflow_id"] == "mapreduce-word-count-v1" and s3["version_reused"]
+    assert not (Path(s1["version_dir"]).parent / "mapreduce-word-count-v2").exists()
+    assert catalog.main(["save-workflow", "--run", str(run3), "--catalog-dir", str(cat_dir)]) == 0
+    dropped = json.loads(capsys.readouterr().out)
+    assert dropped["workflow_id"] == "mapreduce-word-count-v1" and dropped["stored"] is False
+    # keeping it makes v2, in the project and then in the catalog
+    run4, s4 = _approved_run(tmp_path, "r4", _e2(), on_duplicate="keep", new_version_of="mapreduce-word-count")
+    assert s4["workflow_id"] == "mapreduce-word-count-v2"
+    assert catalog.main(["save-workflow", "--run", str(run4), "--catalog-dir", str(cat_dir)]) == 0
+    kept = json.loads(capsys.readouterr().out)
+    assert (kept["workflow_id"], kept["version"], kept["stored"]) == ("mapreduce-word-count-v2", 2, True)
+    # a version already in the catalog counts when numbering the next one (also from another project)
+    other = tmp_path / "other"
+    other.mkdir()
+    changed = _e2()
+    changed.nodes[2].code += "\n# changed\n"
+    run5, s5 = _approved_run(other, "r5", changed)
+    assert s5["workflow_id"] == "mapreduce-word-count-v1"  # its own catalog is empty
+    import ids
+    plan = ids.plan_publish(ids.draft_dir(run5), "mapreduce-word-count", other / "project",
+                            catalog=catalog.Catalog(cat_dir))
+    assert plan["workflow_id"] == "mapreduce-word-count-v3"
 
 def test_increment_usage_cli(tmp_path, capsys):
     cat = seeded(tmp_path)
@@ -213,7 +269,7 @@ def test_import_dedupe_code(tmp_path):
 
 def test_export_import_round_trip(tmp_path):
     src = seeded(tmp_path / "src")
-    catalog.save_workflow(src, _spec())
+    catalog.save_workflow(src, _spec(), workflow_id="word-count-v1")
     some = list(src.functions)[:2]
     res = catalog.export_entries(src, tmp_path / "out", some)
     assert res["ok"] and res["exported"] == some
@@ -246,7 +302,7 @@ def test_dry_run_writes_nothing(tmp_path):
     assert res["dry_run"] and [s["name"] for s in res["stored"]] == ["split_words", "map_words"]
     assert all(s["id"] is None for s in res["stored"]) and not (tmp_path / "c").exists()
     wf = catalog.save_workflow(cat, _spec(), dry_run=True)
-    assert wf["ok"] and wf["dry_run"] and wf["workflow_id"].endswith("-v1") and wf["duplicates"] == []
+    assert wf["ok"] and wf["dry_run"] and wf["workflow_id"] is None  # nothing published, nothing numbered
     assert not (tmp_path / "c").exists()
 
 

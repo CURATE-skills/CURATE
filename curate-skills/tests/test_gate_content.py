@@ -105,7 +105,7 @@ def test_gate5_shows_the_run_summary_and_what_would_be_saved(make_run, capsys):
     assert md.startswith("## Run summary — weather") and "### What would be saved" in md
     assert "- `download` — would be stored (keywords: download, download, the, station, csv.)" in md
     assert "- `process` — skipped: not verified" in md and "- `plot` — skipped: already in catalog" in md
-    assert "Workflow `weather`: would be stored as a new version, `weather-v1`" in md
+    assert "Workflow `weather`: no published version to store (Gate 4 approval publishes it)" in md
     assert out["header"] == "Gate 5" and out["question"] == "Save to the catalog?"
     assert not list((Path(json.loads((run / "state.json").read_text())["catalog_dir"])).rglob("*.json"))  # dry run
 

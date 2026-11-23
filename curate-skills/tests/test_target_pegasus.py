@@ -113,7 +113,7 @@ def test_gate4_says_why_it_cannot_run_and_drops_the_image_option(source_run, cap
 
 def test_approve_pegasus_goes_to_deploy(source_run, capsys):
     at_gate4(source_run)
-    out = ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--deploy", "pegasus"], capsys)
+    out = ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     assert out["stage"] == "deploy" and out["deploy"] == "pegasus" and out["next_skill"] == "curate-skills:curate-deploy"
     s = state(source_run)
     assert s["deploy_choice"] == "pegasus" and s["pegasus"] is None and s["deploy"] is None
@@ -123,14 +123,14 @@ def test_approve_pegasus_goes_to_deploy(source_run, capsys):
 
 def test_approve_pegasus_refused_when_it_cannot_run(source_run, capsys):
     with_conditional_edge(source_run)
-    code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--deploy", "pegasus"], capsys)
+    code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     assert code == 2 and out["error"].startswith("this workflow cannot run on Pegasus: conditional edge")
     assert state(source_run)["stage"] == "gate4"
 
 
 def test_monitor_and_finalize_checks_for_pegasus(source_run, capsys):
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--deploy", "pegasus"], capsys)
+    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     code, out = call(S, ["require", "--run", str(source_run), "--stage", "monitor"], capsys)
     assert code == 1 and out["problems"][0].startswith("nothing to monitor: the Pegasus run was not started")
     s = state(source_run)
@@ -149,7 +149,7 @@ def test_monitor_and_finalize_checks_for_pegasus(source_run, capsys):
 
 def test_faasr_deploy_refuses_a_pegasus_run(source_run, capsys):
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--deploy", "pegasus"], capsys)
+    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     s = state(source_run)
     assert D.gate4_problem(s) == D.PEGASUS_REFUSAL
     out = D.deploy_step(str(source_run), "publish", "-x", None, None, "none")
@@ -162,7 +162,7 @@ def test_faasr_deploy_refuses_a_pegasus_run(source_run, capsys):
 
 def test_faasr_run_unchanged(source_run, capsys):
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--deploy", "yes"], capsys)
+    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
     s = state(source_run)
     assert s["deploy_choice"] == "yes" and s["stage"] == "deploy" and "pegasus" not in s
     assert ok(S, ["require", "--run", str(source_run), "--stage", "deploy"], capsys)["problems"] == []
@@ -197,7 +197,7 @@ def test_no_deploy_unchanged(source_run, capsys):
 
 def test_pegasus_field_cleared_on_rewind(source_run, capsys):
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--deploy", "pegasus"], capsys)
+    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     s = state(source_run)
     s["pegasus"] = {"steps": {"launch": {"ok": True}}}
     save(source_run, s)
@@ -272,7 +272,7 @@ def test_start_at_deploy_offers_both_targets_and_runs_on_pegasus(source_run, cap
 def test_start_at_deploy_pegasus_refused_when_it_cannot_run(source_run, capsys):
     from test_start import start
     with_conditional_edge(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4"], capsys)
+    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep"], capsys)
     code, out = start(capsys, source_run, "deploy", "--from-run", state(source_run)["run_id"])
     assert code == 0, out
     new = Path(out["run"])

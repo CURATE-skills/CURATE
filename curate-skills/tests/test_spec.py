@@ -348,13 +348,21 @@ def test_gate4_requires_validation_and_reports_reuse(make_run, capsys):
     spec = WorkflowSpec(name="w", nodes=[FunctionSpec(name="a", source="catalog", catalog_id="c1"),
                                          FunctionSpec(name="b", source="new")])
     run = make_run(spec=spec)
-    assert call(S, ["approve", "--run", str(run), "--gate", "4"], capsys)[0] == 2
+    assert call(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)[0] == 2
     s = state(run)
     s["validation"] = {"ok": True, "level": "structural", "error": None,
                        "spec_hash": spec_hash(s["spec"])}  # v2: the bundle must match the spec
     (run / "state.json").write_text(json.dumps(s))
-    code, out = call(S, ["approve", "--run", str(run), "--gate", "4"], capsys)
+    code, out = call(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
+    assert code == 2 and "no workflow draft" in out["error"]
+    import emit  # a draft (any valid one; this test is about the approval's report)
+    e2 = WorkflowSpec.model_validate(json.loads((Path(__file__).parent / "fixtures" / "e2-stages" /
+                                                 "spec-with-code.json").read_text()))
+    s["draft_dir"] = emit.write_draft(e2, run)["dir"]
+    (run / "state.json").write_text(json.dumps(s))
+    code, out = call(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
     assert code == 0 and out["reused_catalog_ids"] == ["c1"] and out["stage"] == "finalize"
+    assert out["workflow_id"] == "w-v1"  # the spec's name; the draft's content is published under it
 
 
 def test_show_and_prompt_context(make_run, capsys, seeded_catalog):

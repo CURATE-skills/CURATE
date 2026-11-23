@@ -142,12 +142,10 @@ OS_METADATA = re.compile(r"(^|/)(\.DS_Store|Thumbs\.db|desktop\.ini|\._[^/]*|__p
 
 
 def tree_hash(folder: Path) -> str:
-    """sha256 over the bundle's files (relative path + bytes), ignoring OS_METADATA."""
-    h = hashlib.sha256()
-    for p in sorted(folder.rglob("*")):
-        if p.is_file() and not OS_METADATA.search(p.relative_to(folder).as_posix()):
-            h.update(str(p.relative_to(folder)).encode() + b"\0" + p.read_bytes())
-    return h.hexdigest()
+    """sha256 over the bundle's files (relative path + bytes), ignoring OS metadata: ids.tree_hash,
+    the one hash rule for bundles, drafts and versions."""
+    import ids
+    return ids.tree_hash(folder)
 
 
 def load_run(run: str) -> tuple[dict, Path]:
@@ -640,6 +638,13 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
     elif not s.get("bundle_hash"):
         warnings.append("this run has no recorded bundle hash (approved before deploy existed); "
                         "the bundle is checked as it is now")
+    if s.get("workflow_id"):  # the version Gate 4 published must be the one deployed
+        import ids
+        vdir = Path(s.get("version_dir") or "")
+        if not vdir.is_dir():
+            problems.append(f"the approved version {s['workflow_id']} is missing ({vdir})")
+        elif ids.tree_hash(vdir, skip=("runs",)) != s.get("version_hash"):
+            problems.append(f"the approved version {s['workflow_id']} changed after it was published")
     filled_wf, filled, unset = fill_placeholders(wf)
     if unset:
         problems.append(f"the bundle's placeholders cannot be filled in the deploy copy: {', '.join(unset)} "

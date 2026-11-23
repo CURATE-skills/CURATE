@@ -45,7 +45,7 @@ def source_run(make_run, capsys, monkeypatch, tmp_path):
     ok(S, ["approve", "--run", str(run), "--gate", "3"], capsys)
     emit.main(["bundle", "--run", str(run), "--out", str(tmp_path / "faasr_output")])
     capsys.readouterr()
-    ok(S, ["approve", "--run", str(run), "--gate", "4"], capsys)
+    ok(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
     return run
 
 
@@ -291,7 +291,7 @@ def test_gate4_approve_and_deploy_goes_to_the_deploy_stage(source_run, capsys, m
     s = state(source_run)
     s["stage"] = "gate4"
     (source_run / "state.json").write_text(json.dumps(s))
-    out = ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--deploy", "yes"], capsys)
+    out = ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
     assert out["stage"] == "deploy" and out["deploy"] == "yes" and out["next_skill"] == "curate-skills:curate-deploy"
     assert ok(S, ["require", "--run", str(source_run), "--stage", "deploy"], capsys)["problems"] == []
     code, out = call(S, ["approve", "--run", str(source_run), "--gate", "3", "--deploy", "yes"], capsys)
@@ -307,7 +307,7 @@ def test_approve_and_deploy_needs_the_bundle(source_run, capsys):
     s = state(source_run)
     s.update(stage="gate4", bundle_dir=str(source_run / "nowhere"))
     (source_run / "state.json").write_text(json.dumps(s))
-    code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--deploy", "yes"], capsys)
+    code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
     assert code == 2 and "cannot be deployed" in out["error"]
 
 

@@ -288,6 +288,9 @@ def _new_run(args, request: str, run_id_hint: str = "") -> tuple[Path, dict, dic
         "mga": {},
         "validation": None,
         "bundle_dir": None,
+        "draft_dir": None,
+        "workflow_name": None,
+        "workflow_lineage": None,
         "history": [],
         "stopped_from": None,
         "begun": None,
@@ -1151,6 +1154,7 @@ def cmd_approve(args) -> dict:
         if image and choice != "pegasus":
             raise InputError("--image only applies to --deploy pegasus")
         peg_rec = pegasus_choice(s, image, IMAGE_FROM_GATE4) if choice == "pegasus" else None
+        s.update(publish_version(s, run, getattr(args, "on_duplicate", None)))
         # The approved bundle's hash: curate-deploy refuses to deploy a bundle that changed since.
         s.update(feedback=None, bundle_hash=tree_hash(bundle) if has_bundle else None,
                  deploy_choice=choice, deploy=None,
@@ -1169,10 +1173,109 @@ def cmd_approve(args) -> dict:
     if g == 4:
         spec = spec_of(s["spec"])
         out["deploy"] = s["deploy_choice"]
+        out.update({k: s.get(k) for k in ("workflow_id", "workflow_version", "version_dir")})
+        if s.get("version_reused"):
+            out["version_reused"] = True
         out["next_skill"] = next_skill(s)
         out["reused_catalog_ids"] = sorted({n.catalog_id for n in spec.nodes
                                             if n.catalog_id and n.source in ("catalog", "adapt")})
     return out
+
+
+def _project(s: dict, run: Path) -> Path:
+    return Path(s.get("project_dir") or run.parent.parent.parent)
+
+
+def _name_taken(name: str, s: dict, run: Path) -> dict:
+    import ids
+    cat = catalog_mod.Catalog(Path(s["catalog_dir"]).expanduser())
+    st = ids.name_status(name, cat)
+    local = sorted(ids.versions(name, project=_project(s, run)))
+    return {**st, "taken": st["taken"] or bool(local), "project_versions": local}
+
+
+def publish_version(s: dict, run: Path, on_duplicate: Optional[str]) -> dict:
+    """Gate 4 approval: publish the run's draft as the workflow's next version (ids.publish), and
+    return the state fields that record it. Nothing is published when the approval is refused."""
+    import ids
+    draft = Path(s.get("draft_dir") or ids.draft_dir(run))
+    if not (draft / "workflow.yml").is_file():
+        problems = s.get("draft_problems") or []
+        raise InputError("there is no workflow draft to approve"
+                         + (": " + "; ".join(problems) if problems else
+                            f"; run /{PLUGIN}:curate-emit --run {s['run_id']} again"))
+    spec = spec_of(s["spec"])
+    name = s.get("workflow_name") or ids.slug(spec.name)
+    if not s.get("workflow_name"):
+        taken = _name_taken(name, s, run)
+        if taken["taken"] and _lineage_name(s.get("workflow_lineage"), s) != name:
+            raise InputError(f"the workflow name {name!r} is already used (versions "
+                             f"{taken['versions'] or taken['project_versions'] or taken['legacy_entries']}) and this "
+                             "run is not a new version of it: ask the user for another name, or whether this is a "
+                             f"new version of {name}, and record it with spec.py set-name")
+    cat = catalog_mod.Catalog(Path(s["catalog_dir"]).expanduser())
+    plan = ids.plan_publish(draft, name, _project(s, run), catalog=cat)
+    approved = plan["draft_hash"]
+    if plan["duplicates"] and on_duplicate not in ("keep", "drop"):
+        raise InputError(f"this workflow is identical to {', '.join(plan['duplicates'])}: ask the user whether to keep "
+                         "both (approve again with --on-duplicate keep) or drop the new one and use the existing "
+                         "version (--on-duplicate drop)")
+    if plan["duplicates"] and on_duplicate == "drop":
+        wid = plan["duplicates"][-1]
+        vdir = ids.version_dir(_project(s, run), wid)
+        if not (vdir / "workflow.yml").is_file():
+            raise InputError(f"the identical version {wid} is not in this project (only in the catalog), so it "
+                             "cannot be used here: keep both (--on-duplicate keep)")
+        return {"workflow_name": name, "workflow_id": wid, "workflow_version": ids.parse_workflow_id(wid)[1],
+                "draft_hash": approved, "version_dir": str(vdir), "version_reused": True,
+                "version_hash": ids.tree_hash(vdir, skip=("runs",)), "workflow_content_hash": plan["content_hash"]}
+    pub = ids.publish(draft, name, _project(s, run), plan["version"], approved)
+    return {"workflow_name": name, "workflow_id": pub["workflow_id"], "workflow_version": pub["version"],
+            "draft_hash": approved, "version_dir": pub["dir"], "version_hash": pub["version_hash"],
+            "version_reused": None, "workflow_content_hash": pub["content_hash"]}
+
+
+def _lineage_name(lineage: Optional[dict], s: dict) -> Optional[str]:
+    """The workflow name a recorded lineage is about."""
+    import ids
+    if not lineage:
+        return None
+    if lineage.get("new_version_of"):
+        return lineage["new_version_of"]
+    wid = lineage.get("version_of") or lineage.get("workflow_id")
+    if wid:
+        return ids.parse_workflow_id(wid)[0]
+    return s.get("workflow_name")
+
+
+def cmd_set_name(args) -> dict:
+    """The workflow's name (its ID's <name>), asked at the sketch and checked against the global catalog.
+    A taken name needs --new-version (the user said this is a new version of that workflow) or a
+    --version-of lineage (a reused catalog workflow)."""
+    import ids
+    run = Path(args.run)
+    s = load_state(run)
+    name = args.name
+    try:
+        ids.check_name(name)
+    except ids.IdError as e:
+        raise InputError(str(e)) from e
+    taken = _name_taken(name, s, run)
+    lineage = s.get("workflow_lineage") if _lineage_name(s.get("workflow_lineage"), s) == name else None
+    if args.version_of:
+        n, _ = ids.parse_workflow_id(args.version_of)
+        if n != name:
+            raise InputError(f"{args.version_of} is a version of {n}, not of {name}")
+        lineage = {"version_of": args.version_of}
+    elif args.new_version:
+        lineage = {"new_version_of": name}
+    if taken["taken"] and not lineage:
+        return {"ok": False, "needs_choice": True, "name": name, "taken": taken,
+                "error": f"{name!r} is already used: ask the user for another name, or confirm this is a new "
+                         f"version of {name} (--new-version)"}
+    s.update(workflow_name=name, workflow_lineage=lineage if taken["taken"] else None)
+    save_state(run, s)
+    return {"ok": True, "name": name, "taken": taken["taken"], "lineage": lineage}
 
 
 def _bool(v: Optional[str]) -> Optional[bool]:
@@ -1519,6 +1622,9 @@ def _import_into(run: Path, s: dict, stage: str, src: str, data, args, warnings:
 
 # ── start: /curate --start-at with typed sources ─────────────────────────────
 
+VERSION_OUTPUTS = ("workflow_id", "workflow_version", "draft_hash", "version_dir", "version_hash",
+                   "version_reused", "workflow_content_hash")  # set when Gate 4 publishes the draft
+
 # Which gate's approval a start point builds on, and the stage that owns that gate.
 START_GATE = {"reuse": 1, "resolve": 2, "generate": 2, "emit": 3, "deploy": 4, "finalize": 4}
 GATE_OWNER = {1: "skeleton", 2: "resolve", 3: "generate", 4: "emit"}
@@ -1528,8 +1634,9 @@ START_COPY = {
     "resolve": ("enriched_spec", "enriched_basis", "spec_basis", "candidates"),
     "generate": ("enriched_spec", "spec_basis"),
     "emit": ("enriched_spec", "spec_basis", "mga"),
-    "deploy": ("enriched_spec", "spec_basis", "mga", "validation", "bundle_dir", "bundle_hash"),
-    "finalize": ("enriched_spec", "spec_basis", "mga", "validation", "bundle_dir"),
+    "deploy": ("enriched_spec", "spec_basis", "mga", "validation", "bundle_dir", "bundle_hash", "draft_dir")
+              + VERSION_OUTPUTS,
+    "finalize": ("enriched_spec", "spec_basis", "mga", "validation", "bundle_dir", "draft_dir") + VERSION_OUTPUTS,
 }
 INIT_FLAGS = ("user_model", "context_file", "catalog_dir", "config_catalog_dir", "mga_retries",
               "config_mga_retries", "stubtest_mode", "config_stubtest_mode", "project_dir")
@@ -1633,6 +1740,9 @@ def _start_from_run(args, at: str) -> dict:
     s["revision_directives"] = list(snap.get("revision_directives") or [])
     s["spec"] = dump(spec)
     s.update(copied)
+    if st.get("workflow_name"):  # a run started from another is a version of the same workflow
+        s["workflow_name"] = st["workflow_name"]
+        s["workflow_lineage"] = {"from_run": st.get("run_id"), "workflow_id": st.get("workflow_id")}
     if at == "deploy":
         # Pending until the user answers Yes to "Start this run?" (spec.py confirm-start).
         s["deploy_choice"] = None
@@ -1883,21 +1993,22 @@ def start_summary(at: str, p: dict) -> str:
 # ── stages: next / require / begin / end ─────────────────────────────────────
 
 # Fields a stage (and everything after it) produces; cleared on a fresh entry.
-DEPLOY_OUTPUTS = ("bundle_hash", "deploy_choice", "deploy", "monitor", "pegasus")
+DEPLOY_OUTPUTS = ("bundle_hash", "deploy_choice", "deploy", "monitor", "pegasus") + VERSION_OUTPUTS
 STAGE_OUTPUTS = {
     "skeleton": ("enriched_spec", "enriched_basis", "spec_basis", "candidates", "mga",
-                 "validation", "bundle_dir") + DEPLOY_OUTPUTS,
+                 "validation", "bundle_dir", "draft_dir", "draft_problems") + DEPLOY_OUTPUTS,
     "reuse": ("enriched_spec", "enriched_basis", "spec_basis", "candidates", "mga",
-              "validation", "bundle_dir") + DEPLOY_OUTPUTS,
-    "resolve": ("spec_basis", "mga", "validation", "bundle_dir") + DEPLOY_OUTPUTS,
-    "generate": ("mga", "validation", "bundle_dir") + DEPLOY_OUTPUTS,
-    "emit": ("validation", "bundle_dir") + DEPLOY_OUTPUTS,
+              "validation", "bundle_dir", "draft_dir", "draft_problems") + DEPLOY_OUTPUTS,
+    "resolve": ("spec_basis", "mga", "validation", "bundle_dir", "draft_dir", "draft_problems") + DEPLOY_OUTPUTS,
+    "generate": ("mga", "validation", "bundle_dir", "draft_dir", "draft_problems") + DEPLOY_OUTPUTS,
+    "emit": ("validation", "bundle_dir", "draft_dir", "draft_problems") + DEPLOY_OUTPUTS,
     "deploy": ("monitor",),  # what was deployed stays recorded (the deploy log is in <run>/deploy/)
     "monitor": (),
     "finalize": (),
 }
 _EMPTY = {"mga": {}, "candidates": []}
-OPTIONAL_OUTPUTS = ("pegasus",)  # written only for the Pegasus target (pegasus_deploy.py)
+OPTIONAL_OUTPUTS = ("pegasus", "draft_dir", "draft_problems") + VERSION_OUTPUTS  # pegasus: Pegasus target only;
+# the draft and version fields are absent in runs made before workflow versions
 
 
 def stage_index(stage_value: str) -> Optional[int]:
@@ -2553,16 +2664,23 @@ def save_preview(s: dict) -> list[str]:
         spec = spec_of(s.get("spec"))
         cat = C.Catalog(Path(s["catalog_dir"]).expanduser())
         fns = C.save_functions(cat, spec, s, only_verified=True, dry_run=True)
-        wf = C.save_workflow(cat, spec, dry_run=True)
+        wf = C.save_workflow(cat, spec, dry_run=True, workflow_id=s.get("workflow_id"),
+                             content_hash=s.get("workflow_content_hash"))
         blocked = C.deployed_run_problem(s)
     except Exception as e:  # noqa: BLE001 — the preview is informational; finalize runs the real dry runs
         return out + [f"- (could not preview: {type(e).__name__}: {e})"]
     out += ["", "Functions (only verified ones are saved):"]
     out += [f"- `{x['name']}` — would be stored (keywords: {', '.join(x['keywords'])})" for x in fns["stored"]]
     out += [f"- `{x['name']}` — skipped: {x['reason']}" for x in fns["skipped"]]
-    out += ["", f"Workflow `{spec.name}`: would be stored as a new version, `{wf.get('workflow_id')}`"
-            + (f" (identical to {', '.join(wf['duplicates'])}: you will be asked to keep both or drop it)"
-               if wf.get("duplicates") else "")]
+    if not wf.get("workflow_id"):
+        line = "no published version to store (Gate 4 approval publishes it)"
+    elif wf.get("already_in_catalog"):
+        line = f"`{wf['workflow_id']}` is already in the catalog; nothing new is stored"
+    elif wf.get("ok"):
+        line = f"would be stored as `{wf['workflow_id']}` (the version Gate 4 published)"
+    else:
+        line = f"cannot be stored: {wf.get('error')}"
+    out += ["", f"Workflow `{spec.name}`: {line}"]
     if blocked:
         out += ["", f"**Saving is refused for now:** {blocked}"]
     return out
@@ -2711,6 +2829,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Gate 4 only: the user chose Approve & deploy to FaaSr (yes), Approve & run on "
                         "Pegasus (pegasus) or Approve, no deploy (no; default)")
     q.add_argument("--image", help="with --deploy pegasus: this run's own image (checked; settings unchanged)")
+    q.add_argument("--on-duplicate", choices=["keep", "drop"],
+                   help="Gate 4 only, when the draft is identical to an existing version: keep both, or drop the "
+                        "new one and use the existing version")
+    q = with_run("set-name")
+    q.add_argument("name")
+    q.add_argument("--new-version", action="store_true", help="the user confirmed: a new version of that workflow")
+    q.add_argument("--version-of", help="this run reuses that catalog workflow version (<name>-v<N>)")
     q = with_run("directive")
     q.add_argument("--gate", required=True, choices=["1", "2", "3", "4", "emit"])
     q.add_argument("--text", required=True)
@@ -2753,7 +2878,7 @@ COMMANDS = {
     "init": cmd_init, "runs": cmd_runs, "preflight": cmd_preflight, "status": cmd_status, "prompt-context": cmd_prompt_context,
     "skeleton": cmd_skeleton, "apply-candidates": cmd_apply_candidates,
     "merge-resolved": cmd_merge_resolved, "check": cmd_check, "toposort": cmd_toposort,
-    "approve": cmd_approve, "directive": cmd_directive, "set-cap": cmd_set_cap,
+    "approve": cmd_approve, "set-name": cmd_set_name, "directive": cmd_directive, "set-cap": cmd_set_cap,
     "set-stage": cmd_set_stage, "confirm-start": cmd_confirm_start, "show": cmd_show, "summary": cmd_summary,
     "pegasus-image": cmd_pegasus_image,
     "import": cmd_import, "start": cmd_start, "next": cmd_next, "require": cmd_require, "begin": cmd_begin,

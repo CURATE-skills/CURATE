@@ -739,9 +739,21 @@ def test_steps_go_in_order_and_a_finished_step_is_skipped(deploying, env, capsys
     ("stage", "not deploy"),
     ("no_deploy", "without deploying"),
     ("actions_env", "GITHUB_REPOSITORY is set here"),
+    ("version_changed", "approved version w-v1 changed after it was published"),
+    ("version_missing", "approved version w-v1 is missing"),
 ])
 def test_steps_refuse_before_writing(deploying, env, capsys, monkeypatch, case, needle):
     s = json.loads((deploying / "state.json").read_text())
+    if case.startswith("version"):  # the version Gate 4 published must be the one deployed
+        import ids
+        vdir = deploying / "w-v1"
+        vdir.mkdir()
+        (vdir / "workflow.yml").write_text("class: Workflow\n")
+        s.update(workflow_id="w-v1", version_dir=str(vdir), version_hash=ids.tree_hash(vdir, skip=("runs",)))
+        if case == "version_changed":
+            (vdir / "workflow.yml").write_text("class: Workflow\nedited: true\n")
+        else:
+            s["version_dir"] = str(deploying / "gone")
     if case == "changed":
         (Path(s["bundle_dir"]) / "functions" / "plot_weather.py").write_text("def plot_weather(): return 1\n")
     if case == "no_hash":

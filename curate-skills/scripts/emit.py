@@ -593,10 +593,34 @@ def main(argv=None) -> int:
     run_id = json.loads((Path(args.run) / "state.json").read_text()).get("run_id") if args.run else None
     result = write_bundle(spec, Path(args.out), args.level, run_id=run_id)
     if "bundle_dir" in result:
-        update_state(args.run, bundle_dir=result["bundle_dir"], stage="gate4",
-                     validation={**{k: result["validation"][k] for k in ("ok", "level", "error")},
-                                 "spec_hash": spec_hash(spec.model_dump(mode="json"))})
+        fields = {"bundle_dir": result["bundle_dir"], "stage": "gate4",
+                  "validation": {**{k: result["validation"][k] for k in ("ok", "level", "error")},
+                                 "spec_hash": spec_hash(spec.model_dump(mode="json"))}}
+        if args.run:
+            draft = write_draft(spec, Path(args.run))
+            result["draft"] = draft
+            fields.update(draft_dir=draft.get("dir"), draft_problems=draft.get("problems") or None)
+            if not draft["ok"]:
+                result["ok"] = False
+        update_state(args.run, **fields)
     return _print(result, names)
+
+
+def write_draft(spec: WorkflowSpec, run: Path) -> dict:
+    """The workflow's draft for Gate 4: <run>/draft/ (workflow.yml, inputs.yml, functions/), built from
+    the spec by spec_cwl. An earlier, unapproved draft is replaced; Gate 4 approves the draft by its
+    tree hash, and only then is it published as a version (ids.publish)."""
+    import ids
+    import spec_cwl
+    target = ids.draft_dir(run)
+    try:
+        built = spec_cwl.build(spec)
+    except spec_cwl.BuildError as e:
+        return {"ok": False, "dir": None, "problems": e.problems}
+    if target.exists():
+        shutil.rmtree(target)
+    spec_cwl.write(built, target)
+    return {"ok": True, "dir": str(target), "hash": ids.tree_hash(target), "problems": []}
 
 
 if __name__ == "__main__":

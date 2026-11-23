@@ -84,7 +84,7 @@ def peg_run(source_run, capsys):  # noqa: F811
     s = state(source_run)
     s["stage"] = "gate4"
     (source_run / "state.json").write_text(json.dumps(s))
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--deploy", "pegasus"], capsys)
+    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     return source_run
 
 
