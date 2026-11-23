@@ -253,7 +253,7 @@ def build_ir(spec: WorkflowSpec, name: str | None = None, image: str = DEFAULT_I
 
 def write_folder(out: Path, built: dict) -> Path:
     """Write a new IR folder; an existing one is never overwritten."""
-    import yaml  # only here: spec.py builds the Gate 4 preview without PyYAML
+    import yaml  # spec.py's header has PyYAML too (it loads the CWL draft); the Pegasus host never runs this
 
     out = Path(out)
     if out.exists():
