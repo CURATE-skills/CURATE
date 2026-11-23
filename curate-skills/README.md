@@ -100,12 +100,17 @@ run it the same way. The sketch is reconstructed, not the paper's verbatim promp
 Each gate shows a table and waits. Type **approve**, **stop**, or the change you want in your own
 words.
 
+Before Gate 1 you are asked for the **workflow's name** (lower-case words joined by dashes). It
+becomes the workflow's ID, `<name>-v<N>`: if the name is already in your catalog, you choose whether
+this is a new version of that workflow or pick another name. The version number is assigned when
+you approve Gate 4.
+
 | Gate | After | You review |
 |---|---|---|
 | 1 | skeleton | the steps and their order |
 | 2 | reuse + resolve | per function: new, from the catalog, adapted, or cached; files and data flow; packages |
 | 3 | generate | the code and each function's stub-test result (ask to see any function) |
-| 4 | emit | the validated workflow and a short summary per target (no file lists; those are in the run's `review/gate4.md`); **approve & deploy to FaaSr (cloud)**, **approve & run on Pegasus (this machine or your host · image)**, **… with a different image…**, **approve, no deploy**, or type **stop** (see below) |
+| 4 | emit | the validated workflow draft and a short summary per target (no file lists; those are in the run's `review/gate4.md`); **approve & deploy to FaaSr (cloud)**, **approve & run on Pegasus (this machine or your host · image)**, **… with a different image…**, **approve, no deploy**, or type **stop** (see below). Approving publishes the draft as the next version; if it is identical to an existing version, you choose to keep both or use that one |
 | 5 | finalize | the summary; which verified functions to save to the catalog |
 
 A change at Gates 2–4 sends the run back to the right stage (structural changes to the skeleton,
@@ -246,9 +251,10 @@ again with it (with package warnings), and you confirm. Your settings file is no
 Accepted addresses: `docker:///<repo>:<tag>` (or `docker://…`), or a `file:///…` `docker save` tar;
 with `CURATE_PEGASUS_RUNTIME=singularity` also `library://`, `shub://`, `oras://` and `file:///….sif`.
 After a read-only preflight, it asks before each step:
-1. **Prepare:** writes the workflow folder `.curate/runs/<run_id>/pegasus/ir/` (validated); input
+1. **Prepare:** builds the workflow folder from the approved version into
+   `.curate/workflows/<workflow-id>/runs/<run-id>/bundle/` (validated, with `manifest.json`); input
    files, if the workflow needs any, are copied from a folder you name
-2. **Copy** (ssh host only): to `<host>:~/curate-runs/<run_id>/`
+2. **Copy** (ssh host only): to `<host>:~/curate-runs/<workflow-id>/<run-id>/`
 3. **Launch:** plans and submits to HTCondor, and returns at once; HTCondor runs the workflow
 
 The monitor then follows it (as for FaaSr; it reads the Pegasus run folder recorded at launch, so
@@ -281,21 +287,31 @@ The plugin also declares Claude Code plugin settings (`catalog_dir`, `mga_retrie
 
 ## Where files live
 
-- `.curate/runs/<run_id>/` in the folder you started in: the run's state (`state.json`), one
-  folder per function (spec, code, test data, stub-test log), gate history, `deploy/` (the deploy
-  log). Add `.curate/` to `.gitignore`.
-- `faasr_output/<workflow>-<run_id>/`: the bundle — `workflow.json`, `functions/`, `spec.json`,
-  `external_inputs.json`, `README.md`. Unset deploy values appear as `<FAASR_…>` placeholders;
-  only secret **names** are written.
+- `.curate/runs/<run_id>/` in the folder you started in: the generation run's state
+  (`state.json`), one folder per function (spec, code, test data, stub-test log), gate history,
+  `draft/` (the workflow draft emit writes and Gate 4 approves: `workflow.yml` in CWL,
+  `inputs.yml`, `functions/`), `deploy/` (the deploy log). Add `.curate/` to `.gitignore`. Run IDs
+  look like `20261118-012903-a3f9`.
+- `.curate/workflows/<name>-v<N>/`: a workflow version, published when Gate 4 is approved and never
+  edited afterwards (`workflow.yml` with `s:identifier`, `s:version` and `curate:content_hash`;
+  `inputs.yml`; `functions/`). Each execution of it gets `runs/<run-id>/`: the target's `bundle/`
+  (built from the version after you chose the target), `manifest.json` (the version's hash, the
+  CURATE version, the target, the bundle's hash), and for Pegasus its `work/`, `result/` and
+  `monitor-report.md`. Its full reference is `<name>-v<N>/<run-id>`. The deploy logs stay in the
+  generation run (`deploy/`, `pegasus/deploy-log.jsonl`).
+- `faasr_output/<workflow>-<run_id>/`: the older FaaSr bundle emit still writes for runs approved
+  before workflow versions (`workflow.json`, `functions/`, `spec.json`, `external_inputs.json`,
+  `README.md`); newer runs deploy the bundle in their execution run. Unset deploy values appear as
+  `<FAASR_…>` placeholders; only secret **names** are written.
 - `pegasus_output/<workflow>-<run_id>/` (Pegasus runs): the delivered results (`results/`) and
   `run-report.json`; `FAILED.txt` when the run failed (the outputs are partial). One folder per
   launch (`-2`, `-3`… for a later launch); never overwritten.
-- The catalog folder (`~/.curate/catalog` by default): `functions/<uuid>.json`,
-  `workflows/<uuid>.json`, in the original prototype's format.
-- `.curate/runs/<run_id>/pegasus/` (Pegasus runs): `ir/` (the workflow, functions, inputs),
-  `work/` (Pegasus's full work folder: its run folder under `submit/`, results in `deliver/`),
-  `deploy-log.jsonl`, `monitor-report.md`; with an ssh host also `result/`, and the run's copy on
-  the host in `~/curate-runs/<run_id>/`.
+- The catalog folder (`~/.curate/catalog` by default): `functions/<uuid>.json`; workflows as
+  `workflows/<name>-v<N>.json` (each save is a new version; older entries keep `<uuid>.json`) and
+  their version folders in `versions/<name>-v<N>/`.
+- `.curate/runs/<run_id>/pegasus/` (Pegasus runs approved before workflow versions): `ir/`,
+  `work/`, `deploy-log.jsonl`, `monitor-report.md`, `result/` with an ssh host, and the host copy in
+  `~/curate-runs/<run_id>/`. Newer runs keep these in their execution run (above).
 - `~/.config/curate/.env`: your deploy and Pegasus settings (mode 600), read by deploy, monitor
   and doctor; an environment variable of the same name overrides it.
 - `.curate/mga_guard.log`: writes the guard denied.

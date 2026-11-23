@@ -592,36 +592,68 @@ def main(argv=None) -> int:
         return _print(result, names)
     run_id = json.loads((Path(args.run) / "state.json").read_text()).get("run_id") if args.run else None
     result = write_bundle(spec, Path(args.out), args.level, run_id=run_id)
+    if not args.run:  # a bundle on its own, as before
+        return _print(result, names)
+    # A run: Gate 4 approves the workflow draft, validated with what the builders make of it. Emit's
+    # FaaSr bundle is still written for runs approved before versions (until the old emit is removed);
+    # nothing at Gate 4 or later depends on it, so its problems are reported but do not block.
+    draft = write_draft(spec, Path(args.run), args.level)
+    sh = spec_hash(spec.model_dump(mode="json"))
+    fields = {"draft_dir": draft.get("dir"), "draft_problems": draft.get("problems") or None,
+              "draft_spec_hash": sh if draft["ok"] else None,
+              "validation": {**draft["validation"], "spec_hash": sh}}
     if "bundle_dir" in result:
-        fields = {"bundle_dir": result["bundle_dir"], "stage": "gate4",
-                  "validation": {**{k: result["validation"][k] for k in ("ok", "level", "error")},
-                                 "spec_hash": spec_hash(spec.model_dump(mode="json"))}}
-        if args.run:
-            draft = write_draft(spec, Path(args.run))
-            result["draft"] = draft
-            fields.update(draft_dir=draft.get("dir"), draft_problems=draft.get("problems") or None,
-                          draft_spec_hash=spec_hash(spec.model_dump(mode="json")) if draft["ok"] else None)
-            if not draft["ok"]:
-                result["ok"] = False
-        update_state(args.run, **fields)
-    return _print(result, names)
+        fields["bundle_dir"] = result["bundle_dir"]
+    if draft["ok"]:
+        fields["stage"] = "gate4"
+    update_state(args.run, **fields)
+    out = {**result, "ok": bool(draft["ok"] and draft["validation"]["ok"]), "draft": draft,
+           "validation": draft["validation"], "bundle_validation": result.get("validation"),
+           "bundle_ok": bool(result.get("ok"))}
+    if not result.get("ok"):
+        out["bundle_note"] = ("emit's FaaSr bundle was not written or did not validate; it only serves runs "
+                              "approved before workflow versions, so this run is not affected")
+    return _print(out, names)
 
 
-def write_draft(spec: WorkflowSpec, run: Path) -> dict:
+def write_draft(spec: WorkflowSpec, run: Path, level: str = "auto") -> dict:
     """The workflow's draft for Gate 4: <run>/draft/ (workflow.yml, inputs.yml, functions/), built from
     the spec by spec_cwl. An earlier, unapproved draft is replaced; Gate 4 approves the draft by its
-    tree hash, and only then is it published as a version (ids.publish)."""
+    tree hash, and only then is it published as a version (ids.publish).
+
+    `validation` is what Gate 4 checks: the draft passes the CWL validator, and the FaaSr workflow
+    the builder makes of it (in memory) passes the same workflow.json validation emit's bundle had.
+    A draft FaaSr cannot take is still valid (Pegasus, or no deploy); approving FaaSr is refused."""
     import ids
     import spec_cwl
     target = ids.draft_dir(run)
+    failed = {"ok": False, "level": "cwl", "error": None, "source": "draft"}
     try:
         built = spec_cwl.build(spec)
     except spec_cwl.BuildError as e:
-        return {"ok": False, "dir": None, "problems": e.problems}
+        return {"ok": False, "dir": None, "problems": e.problems,
+                "validation": {**failed, "error": "; ".join(e.problems)}}
     if target.exists():
         shutil.rmtree(target)
     spec_cwl.write(built, target)
-    return {"ok": True, "dir": str(target), "hash": ids.tree_hash(target), "problems": []}
+    return {"ok": True, "dir": str(target), "hash": ids.tree_hash(target), "problems": [],
+            "validation": validate_draft(spec, target, level)}
+
+
+def validate_draft(spec: WorkflowSpec, draft: Path, level: str = "auto") -> dict:
+    import cwl_faasr
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "curate_ir"))
+    from cwl.validate import validate as cwl_validate
+    wf, errors, _ = cwl_validate(draft / "workflow.yml", draft / "inputs.yml")
+    if errors:
+        return {"ok": False, "level": "cwl", "error": "; ".join(errors), "source": "draft"}
+    try:
+        built = cwl_faasr.build(wf, spec.name, spec.folder, spec.compute_target, spec.data_store, level)
+        faasr = {k: built["validation"][k] for k in ("ok", "level", "error")}
+    except cwl_faasr.BuildError as e:
+        faasr = {"ok": False, "level": None, "error": "; ".join(e.problems)}
+    return {"ok": True, "level": f"cwl + faasr {faasr['level'] or 'not built'}", "error": None, "source": "draft",
+            "faasr": faasr}
 
 
 if __name__ == "__main__":

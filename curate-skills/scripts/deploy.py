@@ -199,7 +199,9 @@ def gate4_problem(s: dict, bundle_hash: str | None = None) -> str | None:
     if not approvals:
         return "Gate 4 was never approved in this run; only an approved bundle can be deployed"
     last = hist[approvals[-1]]
-    if last["decision"] == "copied":
+    if last["decision"] == "copied" and s.get("workflow_id"):
+        pass  # a versioned run: the carried-over version is checked by its hash and the bundle by its manifest
+    elif last["decision"] == "copied":
         if not (last.get("from_run") and last.get("snapshot") and last.get("bundle_hash")):
             return ("this run's Gate 4 approval was carried over from another run without a bundle hash; "
                     "start again with --start-at deploy --from-run <run_id>")

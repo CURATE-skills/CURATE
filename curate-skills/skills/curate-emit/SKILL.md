@@ -1,6 +1,6 @@
 ---
 name: curate-emit
-description: CURATE stage 5 of 6 — build the FaaSr workflow.json and bundle, validate it, and stop at Gate 4. Run it by name; /curate runs it as part of the full pipeline.
+description: CURATE stage 5 of 6 — write the workflow draft (CWL), validate it with what each target's builder makes of it, and stop at Gate 4, where approving publishes it as the workflow's next version. Run it by name; /curate runs it as part of the full pipeline.
 argument-hint: "--run <run_id> | --from <spec.json> [--functions DIR] [--review] [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity]"
 disable-model-invocation: true
 allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*)

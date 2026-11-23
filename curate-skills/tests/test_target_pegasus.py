@@ -73,7 +73,7 @@ def test_gate4_summary_local(source_run, capsys):
             f"`{DEFAULT_IMG}` (the built-in default), runtime docker, 5 deliverables") in sec
     assert "- input files you must provide: none" in sec
     # no file lists at the gate, for either target
-    for listing in ("### Deploy would write", "### Pegasus run would write", "Files in the bundle:", "- Writes:",
+    for listing in ("### Deploy would write", "### Pegasus run would write", "Files in the workflow draft", "- Writes:",
                     "ir.yaml", "functions/", "word_count_{rank5}"):
         assert listing not in md, listing
     full = (source_run / "review" / "gate4.md").read_text()  # the review file keeps them
@@ -124,7 +124,9 @@ def test_approve_pegasus_goes_to_deploy(source_run, capsys):
     assert out["stage"] == "deploy" and out["deploy"] == "pegasus" and out["next_skill"] == "curate-skills:curate-deploy"
     s = state(source_run)
     assert s["deploy_choice"] == "pegasus" and s["pegasus"] is None and s["deploy"] is None
-    assert s["bundle_hash"] == D.tree_hash(Path(s["bundle_dir"])) and s["history"][-1]["deploy"] == "pegasus"
+    # a versioned run records no emit-bundle hash: Gate 4 opened the Pegasus execution run instead
+    assert s["bundle_hash"] is None and s["history"][-1]["deploy"] == "pegasus"
+    assert s["execution"]["target"] == "pegasus" and s["execution"]["reference"].startswith(s["workflow_id"] + "/")
     assert ok(S, ["require", "--run", str(source_run), "--stage", "deploy"], capsys)["problems"] == []
 
 

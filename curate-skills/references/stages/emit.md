@@ -1,4 +1,4 @@
-# Stage: emit (FaaSr workflow.json, bundle, validation) → Gate 4
+# Stage: emit (workflow draft, validation) → Gate 4
 
 Paths below are relative to `<plugin>`; `spec.py …`, `emit.py …`, `catalog.py …` are the script
 shorthand.
@@ -10,16 +10,20 @@ function has code generated for the current spec). If the run is already at `gat
 step 3.
 
 1. `emit.py bundle --run <run> --out <project>/faasr_output` (`<project>` = the run's
-   `project_dir` from `spec.py status`). The bundle goes to a new folder
-   `faasr_output/<workflow>-<run_id>/` (`-2`, `-3`… if emitted again; an existing folder is never
-   overwritten), recorded as `bundle_dir`. It writes `workflow.json`, the functions, `spec.json`,
-   `external_inputs.json` and a README; validates with FaaSr_py (or structural checks if FaaSr_py
-   cannot run); records `bundle_dir` and the validation with the spec's hash; and moves the run to
-   `gate4`. It refuses to write anything if a secret value would leak.
+   `project_dir` from `spec.py status`). It writes the **workflow draft**, `<run>/draft/`
+   (`workflow.yml` in CWL, `inputs.yml`, `functions/`), built from the approved spec by code; never
+   write or edit CWL yourself. It validates the draft (the CWL validator, then the FaaSr workflow
+   built from it in memory, checked like a FaaSr bundle), records `draft_dir` and the validation
+   with the spec's hash, and moves the run to `gate4`. It refuses to write anything if a secret
+   value would leak. It also still writes the older FaaSr bundle under `faasr_output/`
+   (`bundle_dir`), which only runs approved before workflow versions use; nothing from Gate 4 on
+   depends on it, and its `bundle_note`, if any, needs no action.
+   If `draft.problems` is not empty, the spec cannot be expressed as a workflow (each problem says
+   why, e.g. a step that depends on two steps' results): show them at Gate 4 and ask for a change.
 2. If `validation.ok` is false and `spec.py status` shows `auto_emit_retries` = 0:
-   `spec.py directive --run <run> --gate emit --text "FaaSr validation failed: <error>"` (the run
-   goes back to `reuse`), then finish as `gates.md` "After the gate decision" says. Otherwise show
-   the error at Gate 4 and ask.
+   `spec.py directive --run <run> --gate emit --text "workflow validation failed: <error>"` (the
+   run goes back to `reuse`), then finish as `gates.md` "After the gate decision" says. Otherwise
+   show the error at Gate 4 and ask.
 3. **Gate 4**: `spec.py show --run <run> --gate 4`, print its `markdown` verbatim as a message — never re-formatted (the user does not see tool results) — then its `review_line` (`Full review: <path>`) on its own line. **Print the content first, then ask; never ask before printing it**
    with AskUserQuestion — the returned `question`, `header` and `options`, no previews. Use the
    options exactly as returned: **Approve & deploy to FaaSr (cloud)** / **Approve & run on Pegasus
@@ -46,8 +50,18 @@ step 3.
         image>'`. **Choose another image** → 1. **Back** → ask Gate 4 again (step 3 above).
    - Approve, no deploy → `spec.py approve --run <run> --gate 4 --deploy no` (straight to
      finalize, as before).
-   - After any approval: for each id in `reused_catalog_ids`,
-     `catalog.py increment-usage --run <run> --id <id>`.
+   - **Approving publishes the draft** as the workflow's next version, `<name>-v<N>`, in
+     `<project>/.curate/workflows/<name>-v<N>/` (read-only; never edited). Two answers can come
+     back instead, with nothing published; ask, then repeat the same `approve` with the answer:
+     - the `error` says the workflow is **identical to an existing version** → AskUserQuestion,
+       header "Duplicate": **Keep both (a new version)** → add `--on-duplicate keep`; **Use
+       `<that version>`** (drop the new one) → add `--on-duplicate drop`.
+     - the `error` says the **workflow name is already used** and this run is not a new version of
+       it → ask as in the skeleton stage's step 0 ("Name taken"), record it with `spec.py set-name`,
+       then approve again.
+   - After any approval: tell the user in one line `Published <workflow_id> (<version_dir>)` from
+     the result (for FaaSr, the bundle is built next: `<version_dir>/runs/<run-id>/bundle/`). Then
+     for each id in `reused_catalog_ids`, `catalog.py increment-usage --run <run> --id <id>`.
    - Changes → classify with `<plugin>/references/prompts/classify.md`, then
      `spec.py directive --run <run> --gate 4 --text "<verbatim>" --structural true|false`.
      On `cap_reached`, follow `gates.md` "Cap".

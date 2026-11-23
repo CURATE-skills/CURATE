@@ -49,6 +49,25 @@ def source_run(make_run, capsys, monkeypatch, tmp_path):
     return run
 
 
+@pytest.fixture
+def old_source_run(source_run):
+    """The source run as a run approved before workflow versions looked: no draft, no version, and the
+    emit bundle's hash recorded at Gate 4 (in state.json and the approval snapshot). Deploying and
+    starting from such a run keep the old bundle path until the old IR is removed (phase 8)."""
+    import deploy
+    drop = ("draft_dir", "draft_problems", "draft_spec_hash", "execution") + S.VERSION_OUTPUTS
+    s = state(source_run)
+    bhash = deploy.tree_hash(Path(s["bundle_dir"]))
+    for f in [source_run / "state.json", *sorted((source_run / "history").glob("*.json"))]:
+        d = json.loads(f.read_text())
+        for k in drop:
+            d.pop(k, None)
+        if f.name == "state.json" or f.name.endswith("-gate4-approve.json"):
+            d["bundle_hash"] = bhash
+        f.write_text(json.dumps(d, indent=2) + "\n")
+    return source_run
+
+
 def start(capsys, run, at, *extra):
     project = Path(state(run)["project_dir"])
     argv = ["start", "--at", at, "--project-dir", str(project), *map(str, extra)]
@@ -278,13 +297,16 @@ def test_keep_without_approved_code_is_refused(make_run, capsys):
 
 # ── Gate 4: Approve & deploy / Approve, no deploy; starting at deploy ──
 
-def test_gate4_records_the_bundle_hash_and_the_deploy_choice(source_run, capsys):
-    import deploy
+def test_gate4_records_the_published_version_and_the_deploy_choice(source_run, capsys):
+    """A versioned approval records the version it published (not an emit-bundle hash), also in the
+    approval snapshot that start --from-run reads."""
     s = state(source_run)
     assert s["deploy_choice"] == "no" and s["stage"] == "finalize"  # the fixture approved without --deploy
-    assert s["bundle_hash"] == deploy.tree_hash(Path(s["bundle_dir"]))
+    assert s["bundle_hash"] is None and s["workflow_id"] == "mapreduce-word-count-v1"
+    assert Path(s["version_dir"]).is_dir() and s["draft_hash"] and s["version_hash"]
     snap = json.loads(next((source_run / "history").glob("*-gate4-approve.json")).read_text())
-    assert snap["bundle_hash"] == s["bundle_hash"] and s["history"][-1]["deploy"] == "no"
+    assert snap["workflow_id"] == s["workflow_id"] and snap["version_hash"] == s["version_hash"]
+    assert s["history"][-1]["deploy"] == "no"
 
 
 def test_gate4_approve_and_deploy_goes_to_the_deploy_stage(source_run, capsys, monkeypatch):
@@ -335,13 +357,13 @@ def test_approve_and_deploy_refused_before_publishing_when_faasr_cannot_build(so
     assert sorted(p.name for p in (Path(s["project_dir"]) / ".curate" / "workflows").iterdir()) == versions
 
 
-def test_start_at_deploy_copies_the_approved_bundle_and_its_hash(source_run, capsys):
-    before = tree_hash(source_run)
-    rid = state(source_run)["run_id"]
-    code, out = start(capsys, source_run, "deploy", "--from-run", rid)
+def test_start_at_deploy_copies_the_approved_bundle_and_its_hash(old_source_run, capsys):
+    before = tree_hash(old_source_run)
+    rid = state(old_source_run)["run_id"]
+    code, out = start(capsys, old_source_run, "deploy", "--from-run", rid)
     assert code == 0, out
     new = Path(out["run"])
-    s, src = state(new), state(source_run)
+    s, src = state(new), state(old_source_run)
     assert s["stage"] == "deploy" and out["next_skill"] == "curate-skills:curate-deploy"
     assert s["bundle_dir"] == src["bundle_dir"] and s["bundle_hash"] == src["bundle_hash"]
     rec = s["history"][-1]
@@ -359,7 +381,7 @@ def test_start_at_deploy_copies_the_approved_bundle_and_its_hash(source_run, cap
     assert last["decision"] == "deploy-confirmed" and 'answered Yes to "Start this run?"' in last["text"]
     assert ok(S, ["require", "--run", str(new), "--stage", "deploy"], capsys)["problems"] == []
     assert ok(S, ["confirm-start", "--run", str(new)], capsys)["recorded"] is None  # once only
-    assert tree_hash(source_run) == before
+    assert tree_hash(old_source_run) == before
 
 
 def _drop_snapshot_hash(run):
@@ -369,12 +391,12 @@ def _drop_snapshot_hash(run):
     snap_path.write_text(json.dumps(snap))
 
 
-def test_start_at_deploy_takes_a_later_recorded_hash_from_state(source_run, capsys):
-    _drop_snapshot_hash(source_run)  # a run approved before Gate 4 recorded hashes
-    s = state(source_run)
+def test_start_at_deploy_takes_a_later_recorded_hash_from_state(old_source_run, capsys):
+    _drop_snapshot_hash(old_source_run)  # a run approved before Gate 4 recorded hashes
+    s = state(old_source_run)
     s["bundle_hash_recorded"] = {"how": "checked by hand"}
-    (source_run / "state.json").write_text(json.dumps(s))
-    code, out = start(capsys, source_run, "deploy", "--from-run", s["run_id"])
+    (old_source_run / "state.json").write_text(json.dumps(s))
+    code, out = start(capsys, old_source_run, "deploy", "--from-run", s["run_id"])
     assert code == 0, out
     assert "state.json (recorded after approval: checked by hand)" in state(Path(out["run"]))["history"][-1]["bundle_hash_from"]
 
@@ -384,20 +406,20 @@ def test_start_at_deploy_takes_a_later_recorded_hash_from_state(source_run, caps
     ("changed", "changed after Gate 4 was approved"),
     ("never", "never approved Gate 4"),
 ])
-def test_start_at_deploy_refuses(source_run, capsys, case, needle):
-    s = state(source_run)
+def test_start_at_deploy_refuses(old_source_run, capsys, case, needle):
+    s = state(old_source_run)
     if case == "no_hash":
-        _drop_snapshot_hash(source_run)
+        _drop_snapshot_hash(old_source_run)
         s.pop("bundle_hash")
     if case == "changed":
         (Path(s["bundle_dir"]) / "README.md").write_text("edited after approval\n")
     if case == "never":
         s["history"] = [h for h in s["history"] if h.get("gate") != 4]
-    (source_run / "state.json").write_text(json.dumps(s))
-    runs = sorted(source_run.parent.iterdir())
-    code, out = start(capsys, source_run, "deploy", "--from-run", s["run_id"])
+    (old_source_run / "state.json").write_text(json.dumps(s))
+    runs = sorted(old_source_run.parent.iterdir())
+    code, out = start(capsys, old_source_run, "deploy", "--from-run", s["run_id"])
     assert code == 2 and needle in out["error"], out
-    assert sorted(source_run.parent.iterdir()) == runs
+    assert sorted(old_source_run.parent.iterdir()) == runs
 
 
 def test_start_at_deploy_only_from_a_run(source_run, capsys):
@@ -405,7 +427,8 @@ def test_start_at_deploy_only_from_a_run(source_run, capsys):
     assert code == 2 and "--from-run" in out["error"]
 
 
-def test_redoing_emit_clears_the_deploy_record(source_run, capsys):
+def test_redoing_emit_clears_the_deploy_record(old_source_run, capsys):
+    source_run = old_source_run
     s = state(source_run)
     s.update(deploy_choice="yes", deploy={"steps": {"publish": {"ok": True}}})
     (source_run / "state.json").write_text(json.dumps(s))
@@ -428,57 +451,57 @@ def _move_bundle(run):
 
 
 @pytest.mark.parametrize("snapshot_hash", [True, False])
-def test_start_from_a_copied_run_uses_the_copied_bundle(source_run, capsys, snapshot_hash):
-    old, new = _move_bundle(source_run)
+def test_start_from_a_copied_run_uses_the_copied_bundle(old_source_run, capsys, snapshot_hash):
+    old, new = _move_bundle(old_source_run)
     if not snapshot_hash:
-        _drop_snapshot_hash(source_run)  # approved before hashes: the hash comes from state.json
-    snap_before = next((source_run / "history").glob("*-gate4-approve.json")).read_text()
-    code, out = start(capsys, source_run, "deploy", "--from-run", state(source_run)["run_id"])
+        _drop_snapshot_hash(old_source_run)  # approved before hashes: the hash comes from state.json
+    snap_before = next((old_source_run / "history").glob("*-gate4-approve.json")).read_text()
+    code, out = start(capsys, old_source_run, "deploy", "--from-run", state(old_source_run)["run_id"])
     assert code == 0, out
     s = state(Path(out["run"]))
     assert s["bundle_dir"] == str(new) and s["history"][-1]["bundle_dir_moved_from"] == str(old)
     assert "points at a copied or moved bundle folder" in out["summary"]
-    assert next((source_run / "history").glob("*-gate4-approve.json")).read_text() == snap_before  # source untouched
+    assert next((old_source_run / "history").glob("*-gate4-approve.json")).read_text() == snap_before  # source untouched
 
 
-def test_start_from_a_copied_run_refuses_a_changed_copy(source_run, capsys):
-    _, new = _move_bundle(source_run)
+def test_start_from_a_copied_run_refuses_a_changed_copy(old_source_run, capsys):
+    _, new = _move_bundle(old_source_run)
     (new / "README.md").write_text("edited in the copy\n")
-    code, out = start(capsys, source_run, "deploy", "--from-run", state(source_run)["run_id"])
+    code, out = start(capsys, old_source_run, "deploy", "--from-run", state(old_source_run)["run_id"])
     assert code == 2 and "changed after Gate 4 was approved" in out["error"]
 
 
-def test_a_differently_named_bundle_is_not_taken_for_the_approved_one(source_run, capsys):
-    s = state(source_run)
+def test_a_differently_named_bundle_is_not_taken_for_the_approved_one(old_source_run, capsys):
+    s = state(old_source_run)
     other = Path(s["bundle_dir"]).parent / "something-else"
     import shutil
     shutil.copytree(s["bundle_dir"], other)
     s["bundle_dir"] = str(other)
-    (source_run / "state.json").write_text(json.dumps(s))
-    code, out = start(capsys, source_run, "deploy", "--from-run", s["run_id"])
+    (old_source_run / "state.json").write_text(json.dumps(s))
+    code, out = start(capsys, old_source_run, "deploy", "--from-run", s["run_id"])
     assert code == 0 and state(Path(out["run"]))["bundle_dir"] != str(other)  # the snapshot's folder
 
 
 @pytest.mark.parametrize("at", ["deploy", "finalize"])
-def test_a_moved_bundle_without_any_hash_is_refused(source_run, capsys, at):
+def test_a_moved_bundle_without_any_hash_is_refused(old_source_run, capsys, at):
     # Never by folder name alone: with no hash in the snapshot or state.json, a copied run's
     # moved bundle cannot be confirmed to be the approved one.
-    _move_bundle(source_run)
-    _drop_snapshot_hash(source_run)
-    s = state(source_run)
+    _move_bundle(old_source_run)
+    _drop_snapshot_hash(old_source_run)
+    s = state(old_source_run)
     s.pop("bundle_hash")
-    (source_run / "state.json").write_text(json.dumps(s))
-    runs = sorted(source_run.parent.iterdir())
-    code, out = start(capsys, source_run, at, "--from-run", s["run_id"])
+    (old_source_run / "state.json").write_text(json.dumps(s))
+    runs = sorted(old_source_run.parent.iterdir())
+    code, out = start(capsys, old_source_run, at, "--from-run", s["run_id"])
     assert code == 2 and "cannot be confirmed to be the approved bundle by its name alone" in out["error"]
     assert "approve Gate 4 again" in out["error"] and "put the approved bundle back" in out["error"]
-    assert sorted(source_run.parent.iterdir()) == runs
+    assert sorted(old_source_run.parent.iterdir()) == runs
 
 
-def test_a_moved_bundle_that_differs_from_the_hash_is_refused_at_finalize_too(source_run, capsys):
-    _, new = _move_bundle(source_run)
+def test_a_moved_bundle_that_differs_from_the_hash_is_refused_at_finalize_too(old_source_run, capsys):
+    _, new = _move_bundle(old_source_run)
     (new / "README.md").write_text("edited in the copy\n")
-    code, out = start(capsys, source_run, "finalize", "--from-run", state(source_run)["run_id"])
+    code, out = start(capsys, old_source_run, "finalize", "--from-run", state(old_source_run)["run_id"])
     assert code == 2 and "does not match the hash recorded for the approved bundle" in out["error"]
 
 
@@ -535,3 +558,33 @@ def test_start_at_deploy_end_to_end_with_fakes(source_run, capsys, monkeypatch):
     code = D.main(["upload", "--run", new, "--confirmed"], opener=fake, s3_factory=FakeS3())
     res = json.loads(capsys.readouterr().out)
     assert code == 1 and any("the bundle changed after it was built" in p for p in res["problems"])
+
+
+def test_redoing_emit_clears_a_versioned_approval(source_run, capsys):
+    """Rewinding to emit undoes the approval's version fields in the run (the published version stays
+    on disk, never edited) and the execution record."""
+    s = state(source_run)
+    vdir = Path(s["version_dir"])
+    s.update(deploy_choice="yes", deploy={"steps": {"publish": {"ok": True}}})
+    (source_run / "state.json").write_text(json.dumps(s))
+    out = ok(S, ["begin", "--run", str(source_run), "--stage", "emit", "--rewind", "--confirmed"], capsys)
+    assert {"workflow_id", "version_dir", "version_hash", "deploy_choice", "deploy"} <= set(out["cleared"])
+    s = state(source_run)
+    assert s["workflow_id"] is None and s["execution"] is None and (vdir / "workflow.yml").is_file()
+
+
+def test_start_at_deploy_from_a_versioned_run_uses_its_version(source_run, capsys):
+    code, out = start(capsys, source_run, "deploy", "--from-run", state(source_run)["run_id"])
+    assert code == 0, out
+    s, src = state(Path(out["run"])), state(source_run)
+    assert (s["workflow_id"], s["version_hash"], s["version_dir"]) == (src["workflow_id"], src["version_hash"],
+                                                                       src["version_dir"])
+    assert not s.get("bundle_hash")
+
+
+def test_start_at_deploy_refuses_a_changed_version(source_run, capsys):
+    f = Path(state(source_run)["version_dir"]) / "inputs.yml"
+    f.chmod(0o644)
+    f.write_text("edited: true\n")
+    code, out = start(capsys, source_run, "deploy", "--from-run", state(source_run)["run_id"])
+    assert code == 2 and "changed after it was published" in out["error"]

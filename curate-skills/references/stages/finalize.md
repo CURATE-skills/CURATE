@@ -7,7 +7,8 @@ The local stand-in for CURATE's post-run Workflow Deployment Agent (the original
 Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
 
 Precondition: `spec.py begin --run <run> --stage finalize` returned `ok` (it checked that the
-bundle was validated and built from the current spec).
+workflow draft, or for a run approved before versions the bundle, was validated and built from the
+current spec).
 
 1. **Gate 5 content.** `spec.py show --run <run> --gate 5`. Print its `markdown` verbatim as a
    message — the run summary (for a deployed run, the monitor result, and the note that output
@@ -29,7 +30,11 @@ bundle was validated and built from the current spec).
    explicit answer.
 4. **Save** what was chosen: `catalog.py save-functions --run <run> --only-verified` and/or
    `catalog.py save-workflow --run <run>`. Only verified functions
-   are saved: stub test `passed`, or `reused`.
+   are saved: stub test `passed`, or `reused`. The workflow is saved as exactly the version Gate 4
+   published (`workflow_id`), with its version folder, so the catalog and the project always agree;
+   the catalog never numbers a workflow itself. A version already in the catalog is not stored
+   twice (`already_in_catalog`). A run approved before versions has none to save: say so (its
+   functions can still be saved).
 5. **Report** the ids stored and anything skipped, then
    `spec.py set-stage --run <run> --stage done`. Mention that later runs using the same catalog
    folder can reuse these functions.

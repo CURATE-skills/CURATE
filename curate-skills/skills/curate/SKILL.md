@@ -26,7 +26,7 @@ Arguments: `$ARGUMENTS`
 
 - `--start-at <stage>` with exactly one source starts a **new** run; the source is never changed:
   `--from-run <run_id>` (copies that run's gate-approved results; `--start-at deploy` deploys
-  that run's Gate 4-approved bundle), `--from-bundle <folder>`
+  that run's Gate 4-approved workflow version; the new run builds its own bundle from it), `--from-bundle <folder>`
   (generate or emit), `--from-file <file>` (see `stage-io.md`), `--sketch "<text>"` (write it to
   `.curate/sketches/<short-name>.txt` first) or `--sketch-file <file>`.
   1. `spec.py start --at <stage> <source flag> [--existing-code …] [init flags]`. It only

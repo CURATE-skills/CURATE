@@ -1,6 +1,6 @@
 ---
 name: curate-skeleton
-description: CURATE stage 1 of 6 — turn a workflow sketch into a skeleton (the steps and their order) and stop at Gate 1. Run it by name; /curate runs it as part of the full pipeline.
+description: CURATE stage 1 of 6 — ask for the workflow's name, turn a workflow sketch into a skeleton (the steps and their order) and stop at Gate 1. Run it by name; /curate runs it as part of the full pipeline.
 argument-hint: "--run <run_id> | --from <sketch> | <sketch text> [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity]"
 disable-model-invocation: true
 allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*)

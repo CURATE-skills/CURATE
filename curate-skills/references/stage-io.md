@@ -14,9 +14,9 @@ produces it.
 | resolve | reuse decisions made for the current spec | curate-reuse |
 | generate | a resolved spec: inputs/outputs on every node, no `check` errors, a description for every function to generate, resolved from the current reuse decisions; plus the foreground setting when anything is generated | curate-resolve |
 | emit | code for every function, generated for the current spec | curate-generate |
-| deploy | Gate 4 approved with Approve & deploy to FaaSr or Approve & run on Pegasus, a validated bundle for the current spec, its recorded hash | curate-emit |
+| deploy | Gate 4 approved with Approve & deploy to FaaSr or Approve & run on Pegasus; the published version (unchanged) and, for FaaSr, the bundle built from it with its manifest (runs approved before versions: a validated bundle and its recorded hash) | curate-emit |
 | monitor | the deploy stage started the workflow (FaaSr: InvocationID recorded; Pegasus: the launch step done) | curate-deploy |
-| finalize | a validated bundle built from the current spec; after a FaaSr deploy, a monitor result of success (or success with an unconfirmed match); after a Pegasus run, success | curate-emit, curate-monitor |
+| finalize | a validated workflow draft (or, for runs approved before versions, bundle) built from the current spec; after a FaaSr deploy, a monitor result of success (or success with an unconfirmed match); after a Pegasus run, success | curate-emit, curate-monitor |
 
 ## Start points (`/curate --start-at <stage>`)
 
@@ -28,7 +28,7 @@ returned `start_options`); Stop marks the new run stopped and deletes nothing.
 
 | Source | Allowed stages | What is used |
 |---|---|---|
-| `--from-run <run_id or folder>` | reuse, resolve, generate, emit, deploy, finalize | the latest approval snapshot `history/NNN-gateN-approve.json` of: Gate 1 (reuse), Gate 2 (resolve, generate), Gate 3 (emit), Gate 4 (deploy, finalize). Deploy also needs the bundle's hash (from the snapshot, or for runs approved before hashes existed, `bundle_hash` in the source's state.json for the same bundle) and refuses a bundle that changed |
+| `--from-run <run_id or folder>` | reuse, resolve, generate, emit, deploy, finalize | the latest approval snapshot `history/NNN-gateN-approve.json` of: Gate 1 (reuse), Gate 2 (resolve, generate), Gate 3 (emit), Gate 4 (deploy, finalize). A versioned source (Gate 4 published a version) carries that version over and refuses one that changed since it was published; the new run builds its own bundle from it. A source approved before versions needs the bundle's hash instead (from the snapshot, or for runs approved before hashes existed, `bundle_hash` in the source's state.json for the same bundle) and refuses a bundle that changed |
 | `--from-bundle <folder>` | generate (needs `--existing-code`), emit | the bundle's `spec.json` with code |
 | `--from-file <file>` | as `--from` below | the file |
 | `--sketch-file <file>` | skeleton | the sketch |

@@ -8,6 +8,22 @@ Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`:
 Precondition: `spec.py begin --run <run> --stage skeleton` returned `ok` (fresh or resume).
 If the run is already at `gate1`, skip to step 4.
 
+0. **Workflow name** (once per run; skip it when `spec.py status` already shows a `workflow_name`,
+   e.g. a run started with `--from-run`, which inherits its source's name). The name becomes the
+   workflow's ID, `<name>-v<N>`; the version number is assigned when Gate 4 approves.
+   1. Propose a short name for what the sketch asks for: lower-case letters and digits joined by
+      single dashes (e.g. `corvallis-winter-weather`), not ending in `-v<N>`. Ask with
+      AskUserQuestion, header "Name": **Use `<proposed>`** (the user types another in "Other").
+   2. `spec.py set-name --run <run> <name>`. It checks the name against the global catalog (and this
+      project's workflows).
+      - `ok` → go on to step 1.
+      - an `error` about the name's form → show it and ask again (1).
+      - `needs_choice` (the name is taken; `taken.versions` lists its versions) → ask with
+        AskUserQuestion, header "Name taken": **Yes, a new version of `<name>`** → `spec.py set-name
+        --run <run> <name> --new-version`; **No, choose another name** → ask again (1).
+   3. A run that reuses a whole catalog workflow records it with `spec.py set-name --run <run> <name>
+      --version-of <workflow-id>` (that version's name); its result is a new version of it.
+
 1. Read `<plugin>/references/prompts/wca-system.md` and `<plugin>/references/prompts/wca-skeleton.md`.
 2. `spec.py prompt-context --run <run> --stage skeleton`. Write the skeleton JSON to
    `<run>/work/skeleton.json` as `wca-skeleton.md` says (on a refinement round, revise the

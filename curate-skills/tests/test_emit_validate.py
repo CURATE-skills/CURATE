@@ -234,9 +234,12 @@ def test_cli_bundle_updates_run_state(tmp_path, capsys, structural_only):
     assert code == 0 and out["ok"]
     state = json.loads((run / "state.json").read_text())
     assert state["bundle_dir"] == out["bundle_dir"]
-    v = state["validation"]
-    assert {k: v[k] for k in ("ok", "level", "error")} == {"ok": True, "level": "structural", "error": None}
-    assert v["spec_hash"]  # v2: records which spec the bundle was built from
+    v = state["validation"]  # from the draft and the FaaSr workflow built from it, not emit's bundle
+    assert {k: v[k] for k in ("ok", "level", "error", "source")} == {
+        "ok": True, "level": "cwl + faasr structural", "error": None, "source": "draft"}
+    assert v["faasr"] == {"ok": True, "level": "structural", "error": None}
+    assert out["bundle_validation"]["ok"] and state["draft_dir"] == str(run / "draft")
+    assert v["spec_hash"] and state["draft_spec_hash"] == v["spec_hash"]  # which spec the draft was built from
     assert state["stage"] == "gate4"
 
 
@@ -272,3 +275,22 @@ def test_bundle_folder_is_per_run_and_never_overwritten(tmp_path, capsys, struct
     again = json.loads(capsys.readouterr().out)["bundle_dir"]
     assert again == first + "-2" and marker.read_text() == before
     assert json.loads((a / "state.json").read_text())["bundle_dir"] == again
+
+
+def test_cli_bundle_writes_the_draft_even_when_emits_faasr_bundle_is_refused(tmp_path, capsys, structural_only):
+    """Nothing at Gate 4 depends on emit's old FaaSr bundle: a step FaaSr cannot wrap (its function
+    defines a top-level name equal to the step's) still gets a valid draft; only the FaaSr target is
+    marked as not buildable."""
+    spec = single_node_spec()
+    spec.nodes[0].code = "calculate_number_summary = 1\n\ndef main(inputs, outputs, params):\n    pass\n"
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "state.json").write_text(json.dumps({"spec": json.loads(spec.model_dump_json())}))
+    code = emit.main(["bundle", "--run", str(run), "--out", str(tmp_path / "out")])
+    out = json.loads(capsys.readouterr().out)
+    assert out["bundle_ok"] is False and "bundle_note" in out
+    state = json.loads((run / "state.json").read_text())
+    assert state["stage"] == "gate4" and state["draft_dir"] and "bundle_dir" not in state
+    v = state["validation"]
+    assert v["ok"] is True and v["faasr"]["ok"] is False and "top-level" in v["faasr"]["error"]
+    assert code == 0 and out["ok"]
