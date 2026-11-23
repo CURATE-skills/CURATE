@@ -26,9 +26,7 @@ except ImportError:  # JSON still works
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 NODE_ID = re.compile(r"^[a-z0-9_]+$")
 ABS_PATH = re.compile(r"(^|[\s'\"=])(/(home|Users|tmp|root|mnt|data|scratch)/[^\s'\"]*)")
-# How a node's code is called: plain main(inputs, outputs, params) (runner/curate_run.py), or
-# FaaSr-style code with the FaaSr API (runner/curate_faasr_run.py; see IR_SPEC "contract").
-CONTRACTS = ("plain", "faasr")
+# Every node's code is called as plain main(inputs, outputs, params) (runner/curate_run.py).
 INSTALL = re.compile(r"\b(pip|conda|apt-get|apt|dnf|yum)\s+install\b|subprocess.*\bpip\b")
 
 
@@ -93,7 +91,6 @@ def check(ir):
 
     producers, consumers, ids, seen_origin = {}, {}, set(), set()
     list_outputs = []  # (node id, output name, [files]) for outputs written once per axis value
-    faasr_nodes = []  # contract faasr: one warning for all of them, after the loop
     for n in ir.get("nodes", []):
         nid = n.get("id", "")
         origin = n.get("_origin", nid)
@@ -102,9 +99,9 @@ def check(ir):
         if nid in ids:
             errors.append(f"duplicate node id {nid}")
         ids.add(nid)
-        contract = n.get("contract", "plain")
-        if contract not in CONTRACTS and origin not in seen_origin:
-            errors.append(f"{origin}: contract must be one of {', '.join(CONTRACTS)}, got {contract!r}")
+        if "contract" in n and origin not in seen_origin:
+            errors.append(f"{origin}: `contract` was removed from the IR; every node is a plain "
+                          "main(inputs, outputs, params) function")
         first = origin not in seen_origin
         seen_origin.add(origin)
         code = base / n.get("code", "")
@@ -116,11 +113,9 @@ def check(ir):
             src = code.read_text()
             if f"def {n.get('entrypoint', 'main')}(" not in src:
                 errors.append(f"{nid}: entrypoint {n.get('entrypoint', 'main')}() not in {n['code']}")
-            if contract == "faasr":
-                faasr_nodes.append(origin)
-            elif "faasr_" in src:
-                errors.append(f"{nid}: code calls FaaSr API; IR functions must use plain file paths "
-                              "(or mark the node contract: faasr)")
+            if "faasr_" in src:
+                errors.append(f"{nid}: code calls the FaaSr API; IR functions are plain and use only the "
+                              "local paths they are given")
             if INSTALL.search(src):
                 warnings.append(f"{nid}: code installs packages at run time; put them in the image")
             for m in ABS_PATH.finditer(src):
@@ -145,9 +140,6 @@ def check(ir):
             for f in files_of(v):
                 consumers.setdefault(f, []).append(nid)
 
-    if faasr_nodes:
-        warnings.append(f"contract faasr ({', '.join(faasr_nodes)}): FaaSr-style code run through "
-                        "runner/curate_faasr_run.py; portable only to backends that ship that runner")
     for f, users in consumers.items():
         if f not in producers and f not in external:
             errors.append(f"file {f} (used by {', '.join(users)}) has no producer and is not an input")

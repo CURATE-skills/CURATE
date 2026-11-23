@@ -344,7 +344,7 @@ def test_gate4_for_plain_steps_shows_both_targets_and_the_unchanged_function_fil
     plain IR, and the detailed review lists each plain step's wrapper and its unchanged function."""
     import re
     import emit
-    from test_pegasus_ir import plain_e2_spec
+    from test_pegasus_ir import e2_spec as plain_e2_spec
     monkeypatch.setenv("FAASR_GH_USERNAME", "alice")
     monkeypatch.setenv("FAASR_ACTION_REPO", "faasr-actions")
     run = make_run(spec=plain_e2_spec())

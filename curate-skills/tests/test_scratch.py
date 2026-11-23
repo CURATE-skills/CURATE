@@ -56,7 +56,7 @@ def test_build_layout(built):
     fns = run / "functions"
     assert sorted(p.name for p in fns.iterdir()) == ["load", "model", "tweak", "work"]  # stale removed
     assert out["order"] == ["load", "work", "model", "tweak"]
-    assert (run / "CONTEXT.md").exists() and (run / "stubs" / "faasr_stubs.py").exists()
+    assert (run / "CONTEXT.md").exists() and not (run / "stubs").exists()  # no FaaSr stubs any more
     assert (run / "context" / "raw.csv").exists()
     # reused catalog node: code + cleaned deps, no spec.md
     assert (fns / "load" / "load.py").exists() and not (fns / "load" / "spec.md").exists()
@@ -131,12 +131,12 @@ def test_harvest_and_record(built, capsys):
     d = run / "functions" / "work"
     code, out = call(scratch, ["harvest", "--run", str(run), "--node", "work"], capsys)
     assert code == 1  # nothing produced yet
-    (d / "work.py").write_text('def work(folder, input1, output1):\n    k = faasr_secret("API_KEY")\n')
+    (d / "work.py").write_text('import os\n\ndef main(inputs, outputs, params):\n    k = os.environ["API_KEY"]\n')
     (d / "work.deps.txt").write_text("# deps\nnumpy\njson\nfaasr\n")
     code, out = call(scratch, ["harvest", "--run", str(run), "--node", "work"], capsys)
     assert code == 0 and out["secrets"] == ["API_KEY"] and out["dependencies"] == ["numpy"]
     node = next(n for n in state(run)["spec"]["nodes"] if n["name"] == "work")
-    assert node["code"].startswith("def work") and node["dependencies"] == ["numpy"]
+    assert node["code"].startswith("import os") and node["dependencies"] == ["numpy"]
 
     (d / "stubtest.log").write_text("boom")
     code, out = call(scratch, ["record", "--run", str(run), "--node", "work", "--status", "failed",
@@ -169,7 +169,7 @@ def test_fan_out_text_depends_on_rank_placeholder(make_run, capsys):
 
 
 def plain_mapreduce_md(make_run, capsys):
-    from test_pegasus_ir import plain_e2_spec
+    from test_pegasus_ir import e2_spec as plain_e2_spec
     wf = plain_e2_spec()
     for n in wf.nodes:  # all to generate, so each gets a spec.md
         n.source, n.code = "new", None
@@ -226,9 +226,9 @@ def test_seed_in_the_older_faasr_style_is_converted(built):
     assert "OLDER FaaSr style" in tweak and "Convert it to `main(inputs, outputs, params)`" in tweak
 
 
-def test_extract_secrets_plain_and_legacy():
-    code = 'import os\nk = os.environ["API_KEY"]\nh = os.environ["HOME"]\nt = faasr_secret("OLD_TOKEN")\n'
-    assert scratch.extract_secrets(code) == ["API_KEY", "OLD_TOKEN"]
+def test_extract_secrets():
+    code = 'import os\nk = os.environ["API_KEY"]\nh = os.environ["HOME"]\nt = os.getenv("TOKEN_2")\n'
+    assert scratch.extract_secrets(code) == ["API_KEY", "TOKEN_2"]
 
 
 def test_record_keeps_empty_external_inputs(built, capsys):

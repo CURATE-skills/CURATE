@@ -5,8 +5,8 @@ from pathlib import Path
 import plain_contract as PC
 from curate_models import WorkflowSpec
 
-PLAIN = Path(__file__).resolve().parent / "fixtures" / "e2-stages-plain"
-FAASR = Path(__file__).resolve().parent / "fixtures" / "e2-stages"
+PLAIN = Path(__file__).resolve().parent / "fixtures" / "e2-stages"
+FAASR_CATALOG = Path(__file__).resolve().parent / "fixtures" / "catalog-e2-mapreduce-faasr"
 
 
 def load(folder) -> WorkflowSpec:
@@ -37,7 +37,8 @@ def test_each_problem_has_its_own_message():
 
 def test_fixtures():
     assert all(PC.is_plain(n.code) for n in load(PLAIN).nodes)
-    assert not any(PC.is_plain(n.code) for n in load(FAASR).nodes)
+    old = json.loads(next((FAASR_CATALOG / "workflows").glob("*.json")).read_text())["workflow_spec"]["nodes"]
+    assert old and not any(PC.is_plain(n["code"]) for n in old)  # the migration tests' input
 
 
 def test_secret_names():

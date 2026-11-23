@@ -11,8 +11,6 @@
 
 Layout built under <run>/:
   CONTEXT.md                 shared workflow context for every MGA subagent
-  stubs/faasr_stubs.py       FaaSr API stubs, only for reused catalog code not yet migrated
-                             to the plain contract (stubtest.py)
   context/                   copies of user reference files
   functions/<node>/          one folder per node — the only place its MGA may write
       spec.md  <node>.py  <node>.deps.txt  original_<node>.py
@@ -249,8 +247,7 @@ Every function that already exists (catalog/cached reuse, seeds, user-provided o
 `original_<name>.py`, and functions implemented earlier in this run) lives in its own folder.
 Steps are linked by the FILE NAMES in the spec, which the runtime turns into the paths each
 function receives; your code never writes a file name. Read neighbors to match DATA FORMATS
-(columns, JSON keys, units) exactly. A reused catalog neighbor may still be in the older FaaSr
-style (faasr_* calls); never copy that style. Its file names are the ones in its own spec.
+(columns, JSON keys, units) exactly.
 
 ## Testing with Stubs
 Run your function through the local stub test with the exact command in your spec.md
@@ -463,8 +460,6 @@ def cmd_build(args) -> dict:
     wf = spec_of(s.get("spec"))
     if wf is None:
         raise InputError("no resolved spec yet")
-    (run / "stubs").mkdir(exist_ok=True)
-    shutil.copy2(SCRIPTS / "faasr_stubs.py", run / "stubs" / "faasr_stubs.py")
     ctx = run / "context"
     ctx.mkdir(exist_ok=True)
     warnings = []
@@ -646,13 +641,8 @@ def cmd_verify_writes(args) -> dict:
 # ── harvest / record (fga.py 927-981) ────────────────────────────────────────
 
 def extract_secrets(code: str) -> list[str]:
-    """Credentials the code reads: os.environ / os.getenv names (plain contract), and
-    faasr_secret("X") in reused code that is still FaaSr-style."""
-    found: list[str] = list(PC.secret_names(code))
-    for raw in re.findall(r"faasr_secret\(\s*['\"]([^'\"]+)['\"]", code):
-        if raw not in found:
-            found.append(raw)
-    return found
+    """Credentials the code reads: UPPER_SNAKE os.environ / os.getenv names (plain contract)."""
+    return list(PC.secret_names(code))
 
 
 def read_reported_deps(path: Path) -> list[str]:

@@ -13,13 +13,13 @@ import plain_contract as PC
 pytestmark = pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
 
 FIX = Path(__file__).resolve().parent / "fixtures"
-SHUFFLE_PLAIN = (FIX / "e2-stages-plain" / "functions" / "shuffle.py").read_text()
+SHUFFLE_PLAIN = (FIX / "e2-stages" / "functions" / "shuffle.py").read_text()
 
 
 @pytest.fixture
 def cat(tmp_path):
     dst = tmp_path / "catalog"
-    shutil.copytree(FIX / "catalog-e2-mapreduce", dst)
+    shutil.copytree(FIX / "catalog-e2-mapreduce-faasr", dst)
     return dst
 
 
@@ -32,7 +32,7 @@ def blocks(res, kind=None) -> dict:
 
 
 def shuffle_fix(folder: Path) -> Path:
-    old = json.loads(next((FIX / "catalog-e2-mapreduce" / "workflows").glob("*.json")).read_text())
+    old = json.loads(next((FIX / "catalog-e2-mapreduce-faasr" / "workflows").glob("*.json")).read_text())
     code = next(n["code"] for n in old["workflow_spec"]["nodes"] if n["name"] == "shuffle")
     folder.mkdir()
     (folder / "shuffle.json").write_text(json.dumps({

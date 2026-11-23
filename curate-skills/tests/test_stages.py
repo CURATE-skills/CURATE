@@ -345,37 +345,40 @@ def test_gate3_after_a_kept_import_says_kept_and_passed(tmp_path, capsys, monkey
         assert "\n  kept (not regenerated)" in block
 
 
-@pytest.mark.parametrize("mix", ["plain", "mixed"])
-def test_generate_stage_stub_tests_plain_and_mixed_runs(tmp_path, capsys, monkeypatch, mix):
-    """The plain e2 fixture through the generate stage's stub tests; "mixed": one step is kept
-    FaaSr-style code (a reused, not yet migrated function) between plain ones."""
-    import stubtest
-    spec = json.loads((FIX.parent / "e2-stages-plain" / "spec-with-code.json").read_text())
-    if mix == "mixed":
-        old = {n["name"]: n["code"] for n in json.loads((FIX / "spec-with-code.json").read_text())["nodes"]}
-        next(n for n in spec["nodes"] if n["name"] == "map")["code"] = old["map"]
+def import_kept(tmp_path, capsys, spec: dict) -> str:
     src = tmp_path / "spec.json"
     src.write_text(json.dumps(spec))
     code, out = call(S, ["import", "--stage", "generate", "--from", str(src), "--existing-code", "keep",
                          "--project-dir", str(tmp_path / "p"), "--catalog-dir", str(tmp_path / "c")], capsys)
     assert code == 0, out
-    run = out["run"]
-    ok(S, ["begin", "--run", run, "--stage", "generate"], capsys)
+    ok(S, ["begin", "--run", out["run"], "--stage", "generate"], capsys)
+    return out["run"]
+
+
+def test_generate_stage_stub_tests_the_plain_fixture(tmp_path, capsys):
+    import stubtest
+    run = import_kept(tmp_path, capsys, json.loads((FIX / "spec-with-code.json").read_text()))
     built = ok(scratch, ["build", "--run", run], capsys)
-    harness = {}
     for n in built["order"]:
         res = stubtest.run_stubtest(Path(run), n)
-        assert res["ok"], (n, res["tail"])
-        harness[n] = res["harness"]
-    want = {n: "plain" for n in built["order"]}
-    if mix == "mixed":
-        want["map"] = "faasr"
-    assert harness == want
+        assert res["ok"] and res["harness"] == "plain", (n, res["tail"])
     out_dir = Path(run) / "functions" / "reduce" / "test_output"
     totals = {}
     for i in range(1, 6):
         totals.update(json.loads((out_dir / f"word_count_{i}.json").read_text()))
     assert totals == {w: 1000 for w in ("cat", "dog", "bird", "horse", "pig")}
+
+
+def test_a_kept_faasr_style_step_fails_its_stub_test(tmp_path, capsys):
+    """Phase 5: kept (reused) code in the older FaaSr style is no longer stub-tested."""
+    import stubtest
+    spec = json.loads((FIX / "spec-with-code.json").read_text())
+    next(n for n in spec["nodes"] if n["name"] == "map")["code"] = (
+        "def map(folder, input1, output1):\n    faasr_log('old style')\n")
+    run = import_kept(tmp_path, capsys, spec)
+    ok(scratch, ["build", "--run", run], capsys)
+    res = stubtest.run_stubtest(Path(run), "map")
+    assert not res["ok"] and "does not follow the plain contract" in res["tail"]
 
 
 # ── from the user's weather run (results log #25) ──

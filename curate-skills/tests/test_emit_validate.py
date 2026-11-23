@@ -23,7 +23,7 @@ def single_node_spec():
             name="calculate_number_summary",
             inputs=[IOSpec(name="run_params.json", type="json")],
             outputs=[IOSpec(name="number_summary.json", type="json")],
-            code="def calculate_number_summary(folder, input1, output1):\n    pass\n",
+            code="def main(inputs, outputs, params):\n    pass\n",
         )],
     )
 
@@ -133,8 +133,9 @@ def test_unset_faasr_vars_become_placeholders():
     wf = emit.emit_faasr_json(single_node_spec())
     assert wf["ComputeServers"]["GH"]["UserName"] == "<FAASR_GH_USERNAME>"
     assert wf["DataStores"]["S3"]["Bucket"] == "<FAASR_S3_BUCKET>"
-    assert wf["FunctionGitRepo"]["calculate_number_summary"].startswith(
-        "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/")
+    assert wf["FunctionGitRepo"]["calculate_number_summary"] == [
+        "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/calculate_number_summary.py",
+        "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/calculate_number_summary_main.py"]
     assert emit.placeholders_used() == list(emit.PLACEHOLDER_VARS)
 
 
@@ -192,7 +193,7 @@ def test_bundle_layout_and_names_only(tmp_path, monkeypatch, structural_only):
     out = tmp_path / "local_function_test"
     assert res["bundle_dir"] == str(out)
     for f in ("workflow.json", "spec.json", "external_inputs.json", "README.md",
-              "functions/calculate_number_summary.py",
+              "functions/calculate_number_summary.py", "functions/calculate_number_summary_main.py",
               "functions/calculate_number_summary.deps.txt"):
         assert (out / f).is_file(), f
     text = _all_text(out)

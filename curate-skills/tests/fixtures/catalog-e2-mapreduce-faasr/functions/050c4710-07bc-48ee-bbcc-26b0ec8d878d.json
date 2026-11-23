@@ -1,0 +1,37 @@
+{
+  "id": "050c4710-07bc-48ee-bbcc-26b0ec8d878d",
+  "function_spec": {
+    "name": "map",
+    "description": "Ranked map step (N=3 instances). N parallel map functions count how often each word occurs in their text chunk: each instance uses faasr_rank() to read the text batch matching its rank, counts word occurrences with no hard-coded vocabulary (any words, any frequency), and writes its partial count dictionary Y_i (word -> count) as JSON, numbered by its rank. Must be fully generalizable to vocabularies of any size and frequency.",
+    "inputs": [
+      {
+        "name": "text_batch_{rank}.txt",
+        "type": "txt",
+        "description": "this instance's text batch"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "map_counts_{rank}.json",
+        "type": "json",
+        "description": "partial word counts Y_i (word -> count)"
+      }
+    ],
+    "dependencies": [],
+    "secrets": [],
+    "rank": 3,
+    "source": "new",
+    "user_model_mode": null,
+    "code": "import json\nimport os\nimport tempfile\nfrom collections import Counter\n\n\ndef map(folder: str, input1: str, output1: str) -> None:\n    \"\"\"Count word occurrences in this instance's text batch (ranked map step).\n\n    Reads text_batch_{rank}.txt, tokenizes on whitespace (same as split),\n    counts every distinct word with no hard-coded vocabulary, and writes the\n    partial count dictionary Y_rank (word -> count) as JSON.\n    \"\"\"\n    r = faasr_rank()\n    rank = int(r[\"rank\"])\n    in_name = input1.replace(\"{rank}\", str(rank))\n    out_name = output1.replace(\"{rank}\", str(rank))\n    faasr_log(f\"map: rank {rank}/{r.get('max_rank')} reading {in_name}\")\n\n    workdir = tempfile.mkdtemp(prefix=f\"map_{rank}_\")\n    local_in = os.path.join(workdir, \"text_batch.txt\")\n    local_out = os.path.join(workdir, \"map_counts.json\")\n\n    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=in_name)\n    if not os.path.exists(local_in):\n        msg = f\"map: input file {in_name} could not be retrieved from {folder}\"\n        faasr_log(msg)\n        raise FileNotFoundError(msg)\n\n    with open(local_in, \"r\", encoding=\"utf-8\") as f:\n        words = f.read().split()\n\n    # An empty batch is legitimate (fewer words than mappers): emit {}.\n    counts = Counter(words)\n    result = {word: counts[word] for word in sorted(counts)}\n\n    with open(local_out, \"w\", encoding=\"utf-8\") as f:\n        json.dump(result, f, indent=2, sort_keys=True)\n\n    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=out_name)\n    faasr_log(\n        f\"map: rank {rank} counted {len(words)} words, \"\n        f\"{len(result)} distinct, wrote {out_name}\"\n    )\n"
+  },
+  "keywords": [
+    "map",
+    "ranked",
+    "map",
+    "step",
+    "(n=3",
+    "instances)."
+  ],
+  "provenance": "workflow:mapreduce_word_count",
+  "usage_count": 0
+}

@@ -38,10 +38,16 @@ def sha256(text: str) -> str:
 
 
 def bundle_problems(spec) -> list[str]:
-    """Why the plain steps of `spec` cannot be wrapped for FaaSr; empty if they can."""
+    """Why the steps of `spec` cannot be wrapped for FaaSr; empty if they can. Every step with
+    code must be a plain function (a step without code is reported by write_bundle)."""
     problems = []
     names = {n.name for n in spec.nodes}
     plain = [n for n in spec.nodes if PC.is_plain(n.code)]
+    for n in spec.nodes:
+        if n.code and not PC.is_plain(n.code):
+            problems.append(f"step {n.name} is not a plain main(inputs, outputs, params) function (the older "
+                            "FaaSr style): regenerate it, or migrate the catalog it came from "
+                            "(scripts/migrate_catalog.py)")
     for n in plain:
         clash = [m for m in names if f"{m}{MAIN_SUFFIX}" == n.name]
         if clash:

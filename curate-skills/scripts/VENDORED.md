@@ -16,8 +16,7 @@ Status: `planned` until the file exists; then `vendored`.
 | `emit.py` | `faasr/emit.py`; `agents/wda.py` | 1-218; 15-53 | CLI wrapper; unset `FAASR_*` deployment vars emitted as `<FAASR_NAME>` placeholders (original: `username`, `faasr-functions`, `faasr-data`, AWS defaults); bundle writer adds `spec.json`, `external_inputs.json`, `README.md`, `.deps.txt` and refuses to write if a known secret value appears; structural fallback validator | vendored |
 | `faasr_validate.py` | `faasr/validate.py` | 1-45 | Standalone PEP 723 script with its own `FaaSr_py==0.1.13` env (which pins `boto3==1.37.11`; the original's boto3 override was only for Bedrock); JSON in, JSON out | vendored |
 | `catalog.py` | `catalog/store.py`; `catalog/workflow_store.py`; `orchestrator.py` | 20-84; 1-63; 173-226 | Configurable root (`functions/`, `workflows/` subdirs); CLI; `--only-verified`; import/export | vendored |
-| `faasr_stubs.py` | `faasr/context_dir.py` (`_STUBS_CODE`) | 19-69 | Per-node layout: own `test_output` → own `test_data` → `$CURATE_UPSTREAM_DIRS`; warning on stderr when a file is missing (still created empty, as in the original) | vendored |
-| `stubtest.py` | `agents/fga.py` (`_run_stub_test`); `faasr/context_dir.py` (`signature_and_test_call`) | 239-286; 234-248 | Two modes: `strict` (default: every rank, isolated `uv run --with-requirements` env, faasr-import and declared-output checks, `test_output/` cleared first) and `parity` (original: rank 1 only, no dep install, `ModuleNotFoundError` with declared deps passes); deployment/provider credentials removed from the env; writes `stubtest.log` | vendored |
+| `stubtest.py` | `agents/fga.py` (`_run_stub_test`) | 239-286 | Rewritten for the plain contract: calls `main(inputs, outputs, params)` per rank on copies of the real files (own `test_output` → own `test_data` → upstream outputs; lists and folder inputs as the FaaSr wrapper and the Pegasus runner give them); a missing upstream file is an error in strict mode, a missing external input an empty stand-in that Gate 3 shows. Two modes: `strict` (default: every rank, isolated `uv run --with-requirements` env, every declared output must be written, `test_output/` cleared first) and `parity` (original: rank 1 only, no dep install, `ModuleNotFoundError` with declared deps passes); code that is not plain fails; deployment/provider credentials removed from the env; writes `stubtest.log` | adapted |
 
 ## Vendored deploy and runtime code (`scripts/vendor/`, D0; used from D1 on)
 
@@ -69,12 +68,12 @@ Replaces the FGA's single temporary context directory with one folder per node, 
 | Part | Purpose | Original | Relation |
 |---|---|---|---|
 | `_seed_real_input`, `seed_test_data` | Copy user files matching a node's inputs into its `test_data/`; never fabricate | `faasr/context_dir.py` 184-231 | adapted (also matches concrete shards of `{rank}` inputs) |
-| `signature_and_test_call` | Signature and stub test call | `faasr/context_dir.py` 234-248 | copy |
+| `signature_and_test_call` | The plain signature and the rank-1 stub call (from `plain_contract.io_layout`) | `faasr/context_dir.py` 234-248 | rewritten |
 | `shared_context_md`, `node_spec_md` | `CONTEXT.md` and per-node `spec.md` text | `faasr/context_dir.py` 251-357, 360-569 | adapted (per-node paths, write-scope section, `stubtest.py` command, `deps.txt` instead of `pip install`, parity report beside the code) |
 | `cmd_build` | Rebuild every node folder from the spec; seed reused code; set MGA statuses | `faasr/context_dir.py` 117-177 (`setup_context_directory`); `agents/fga.py` 1007-1032 (fresh dir per generation) | follows |
 | `cmd_lock`, `cmd_unlock` | Project-level lock naming the one folder the running MGA may write | — | new |
 | `manifest`, `cmd_snapshot`, `cmd_verify_writes` | Before/after manifests (run dir and catalog by hash, project by size and mtime) to catch writes outside the node folder | — | new |
-| `extract_secrets`, `read_reported_deps` | Secrets from `faasr_secret("X")`; deps from `<node>.deps.txt` | `agents/fga.py` 957-981 | copy |
+| `extract_secrets`, `read_reported_deps` | Secrets read via `os.environ` (`plain_contract.secret_names`); deps from `<node>.deps.txt` | `agents/fga.py` 957-981 | adapted |
 | `cmd_harvest` | Put generated code, secrets and deps back into the spec | `agents/fga.py` 927-947 | follows |
 | `cmd_record` | Record MGA status, attempts and the stub-test tail | — | new |
 

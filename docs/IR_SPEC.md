@@ -13,15 +13,18 @@ system's format (Pegasus now; FaaSr, CWL, Snakemake, Nextflow later).
    (no `faasr_get_file`, no Pegasus calls). Contract:
 
    ```python
-   def main(inputs: dict[str, str], outputs: dict[str, str], params: dict) -> None:
-       """inputs/outputs map logical names to local file paths."""
+   def main(inputs: dict, outputs: dict, params: dict) -> None:
+       """inputs/outputs map logical names to local paths: a path, a list of paths,
+       or (a folder input) a directory."""
    ```
 
-   Each backend ships a small shim (`curate-skills/curate_ir/runner/curate_run.py`)
-   that turns its own world into this call. For FaaSr the shim downloads/uploads S3
-   objects; for Pegasus it is just local paths. This is what decouples CURATE from FaaSr.
-   Interim exception: a node marked `contract: faasr` (below) runs today's
-   FaaSr-style functions unchanged; the validator reports it as a portability warning.
+   Each target turns its own world into this call, and the function is the same
+   file on every target. For Pegasus the shim
+   (`curate-skills/curate_ir/runner/curate_run.py`) calls it on the staged files; for
+   FaaSr a generated wrapper (`curate-skills/scripts/faasr_wrapper.py`) downloads the
+   inputs from S3, calls it, and uploads the outputs. This is what decouples CURATE
+   from FaaSr. The validator refuses code that calls the FaaSr API, and a `contract`
+   field (an earlier interim, now removed).
 3. **The image is part of the workflow; the runtime is not.** Nodes name an OCI
    image (`docker:///…` or a saved `file://….tar`). Docker vs Apptainer is chosen
    per site by the backend, so the same IR runs unchanged on a laptop, the lab
@@ -47,7 +50,6 @@ nodes:
   - id: make_data                       # unique, [a-z0-9_]+
     code: functions/make_data.py        # path relative to the IR file
     entrypoint: main                    # default: main
-    contract: plain                     # default; or faasr (see "contract: faasr")
     inputs:  {params: params.json}      # logical name -> file name
     outputs: {numbers: numbers.csv}
     params:  {n: 100}                   # JSON-serialisable
@@ -160,48 +162,43 @@ runner writes the output markers (empty) after `main` returns.
 | CWL | `scatter` on a step input; gather = array input |
 | Snakemake | wildcard in file names; gather = `expand()` |
 | Nextflow | channel of values; gather = `.collect()` |
-| FaaSr | to check (parallel invocations of one action) |
+| FaaSr | a ranked action (`InvokeNext: name(N)`); the generated wrapper fills in each copy's `{rank}` |
 
 
-## `contract: faasr` (interim: today's FaaSr-style functions)
+## How CURATE maps a spec
 
-Until generation switches to the plain contract, CURATE's Pegasus target runs the
-approved FaaSr functions unchanged. Such a node says `contract: faasr`; the backend
-runs it through `curate-skills/curate_ir/runner/curate_faasr_run.py` instead of
-`curate_run.py` (same command line). That shim:
+CURATE builds two targets from one approved spec. Every step is a plain function
+(`curate-skills/scripts/plain_contract.py`): slots `input1`…, `output1`… in the spec's
+order, `params` `{rank, max_rank}` on a ranked step, the entry point `main`.
 
-- calls the function as FaaSr does, `fn(**params["faasr"]["args"])` (`folder`,
-  `input1`…, `output1`…, with `{rank}` left in), with the FaaSr API as globals;
-- `faasr_get_file` / `faasr_put_file` read and write the job's staged files by
-  name, and refuse any file the node does not declare;
-- `faasr_get_folder_list(prefix)` returns the staged inputs as `<folder>/<name>`
-  keys, like FaaSr's S3 keys; `faasr_rank()` reads the copy's value of
-  `params["faasr"]["rank_axis"]` (`max_rank` alongside);
-- writes outputs whose logical name starts with `curate_done` (ordering markers)
-  and fails if any declared output was not uploaded.
+### Pegasus: the IR (`curate-skills/scripts/pegasus_ir.py`)
 
-The validator accepts FaaSr calls only in such nodes, with a portability warning
-(another backend needs the same shim). `contract` is any of `plain`, `faasr`.
+| Spec | IR |
+|---|---|
+| step with `rank: N` | `for_each: [rankN]`, axis `rankN: ["1".."N"]`; `params: {rank: "{rankN}", max_rank: N}` (an int per copy) |
+| `{rank}` file | the axis of its ranked writer, else of the ranked steps that read it one copy per rank |
+| unranked step writes a `{rank}` file | one list output (`output1: "f_{rankN}"`, not fanned out) |
+| ranked reader of its own copy | the default: paired copy by copy (same axis) |
+| ranked reader of every copy | the input says `read: all`: gather through the alias axis `rankN_all` |
+| unranked reader of a `{rank}` file | gather (a list) |
+| input `kind: folder` | `{folder: [...]}`: every workflow file whose name starts with the input's prefix (the text before `{rank}`), all copies |
+| edge with no file between its steps | marker file `curate_done__<step>[_{rankN}]`; the later step waits for every copy |
+| end files (written, read by no step) | `outputs`, delivered as `results/<file>`; an explicit list replaces this |
 
-### How CURATE maps a spec (`curate-skills/scripts/pegasus_ir.py`)
-
-A step whose code follows the plain contract (`curate-skills/scripts/plain_contract.py`)
-becomes a plain node: slots `input1`…, `output1`… in the spec's order, `entrypoint`
-`main`. FaaSr-style code that has not been migrated yet becomes a `contract: faasr` node.
-
-| Spec | Plain step | FaaSr-style step |
-|---|---|---|
-| step with `rank: N` | `for_each: [rankN]`, axis `rankN: ["1".."N"]`; `params: {rank: "{rankN}", max_rank: N}` (an int per copy) | same axis; `params.faasr` |
-| `{rank}` file | the axis of its ranked writer, else of the ranked steps that read it one copy per rank | same |
-| unranked step writes a `{rank}` file | one list output (`output1: "f_{rankN}"`, not fanned out) | one output per copy (`output1_1`, …) |
-| ranked reader of its own copy | the default: paired copy by copy (same axis) | code substitutes its rank (`input1.replace("{rank}", …)`) |
-| ranked reader of every copy | the input says `read: all`: gather through the alias axis `rankN_all` | code lists the folder (`faasr_get_folder_list`) |
-| unranked reader of a `{rank}` file | gather (a list) | gather |
-| input `kind: folder` | `{folder: [...]}`: every workflow file whose name starts with the input's prefix (the text before `{rank}`), all copies | — |
-| edge with no file between its steps | marker file `curate_done__<step>[_{rankN}]`; the later step waits for every copy | same |
-| end files (written, read by no step) | `outputs`, delivered as `results/<file>`; an explicit list replaces this | same |
-
-Refused, each with its own message: conditional edges, per-rank N→M handoffs, a
-FaaSr-style ranked reader whose code shows neither pattern, a folder input that
-matches no workflow file, secrets, steps without code.
+Refused, each with its own message: a step that is not a plain function (older
+FaaSr-style code: regenerate it, or migrate its catalog with
+`curate-skills/scripts/migrate_catalog.py`), conditional edges, per-rank N→M handoffs,
+a folder input that matches no workflow file or would also hold another file, secrets,
+steps without code.
 Packages only warn: they must already be in the image.
+
+### FaaSr: the bundle (`curate-skills/scripts/emit.py`, `faasr_wrapper.py`)
+
+Each step ships as two files: `functions/<step>_main.py`, the function byte-identical
+to the approved code, and `functions/<step>.py`, a generated wrapper that FaaSr calls
+with the step's `Arguments` (`folder`, `input1`…, `output1`…, `{rank}` left in).
+`FunctionGitRepo` lists both. The wrapper fills in `{rank}` from `faasr_rank()`,
+downloads the inputs (every copy of a list; every object under a folder input's prefix,
+and an empty folder is an error), calls `main`, forwards its stdout to `faasr_log`,
+checks and uploads the outputs, and returns `main`'s value (which drives a conditional
+`InvokeNext`). Secrets reach `main` as environment variables, as FaaSr's Actions set them.

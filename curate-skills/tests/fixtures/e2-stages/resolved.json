@@ -42,7 +42,7 @@
     },
     {
       "name": "map",
-      "description": "Ranked map step (N=3 instances). N parallel map functions count how often each word occurs in their text chunk: each instance uses faasr_rank() to read the text batch matching its rank, counts word occurrences with no hard-coded vocabulary (any words, any frequency), and writes its partial count dictionary Y_i (word -> count) as JSON, numbered by its rank. Must be fully generalizable to vocabularies of any size and frequency.",
+      "description": "Ranked map step (N=3 instances). N parallel map functions count how often each word occurs in their text chunk: each instance reads the text batch matching its rank (params[\"rank\"]), counts word occurrences with no hard-coded vocabulary (any words, any frequency), and writes its partial count dictionary Y_i (word -> count) as JSON, numbered by its rank. Must be fully generalizable to vocabularies of any size and frequency.",
       "rank": 3,
       "inputs": [
         {
@@ -68,7 +68,8 @@
         {
           "name": "map_counts_{rank}.json",
           "type": "json",
-          "description": "all N mapper partial counts"
+          "description": "all N mapper partial counts",
+          "kind": "folder"
         }
       ],
       "outputs": [
@@ -82,7 +83,7 @@
     },
     {
       "name": "reduce",
-      "description": "Ranked reduce step (M=5 instances). M reducers count the total occurrences of their respective word(s) in parallel, yielding Z_i. Each instance uses faasr_rank() to read the shuffle partition matching its rank, sums the list of partial counts for each word in that partition, and writes Z_i (word -> total count) as JSON numbered by its rank. Handles an empty partition (writes an empty object). Must be fully generalizable to vocabularies of any size and frequency.",
+      "description": "Ranked reduce step (M=5 instances). M reducers count the total occurrences of their respective word(s) in parallel, yielding Z_i. Each instance reads the shuffle partition matching its rank (params[\"rank\"]), sums the list of partial counts for each word in that partition, and writes Z_i (word -> total count) as JSON numbered by its rank. Handles an empty partition (writes an empty object). Must be fully generalizable to vocabularies of any size and frequency.",
       "rank": 5,
       "inputs": [
         {

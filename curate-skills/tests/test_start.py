@@ -499,7 +499,7 @@ def test_start_at_deploy_end_to_end_with_fakes(source_run, capsys, monkeypatch):
     assert name == f"{pf['approved_name']}-{m[1]}{m[2]}-{m[3]}{m[4]}", name
     assert "Gate 4 approval in run " + state(source_run)["run_id"] in pf["name_source"]
     assert all(p.startswith(f"functions/{name}/") for p, _ in fake.puts)
-    assert len(fake.puts) == len(state(source_run)["spec"]["nodes"])
+    assert len(fake.puts) == 2 * len(state(source_run)["spec"]["nodes"])  # each step: wrapper + _main
 
     # the carried-over approval only counts while the bundle matches its hash
     bundle = Path(state(Path(new))["bundle_dir"])

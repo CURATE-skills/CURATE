@@ -42,9 +42,7 @@ try:  # needed by emit/submit only; status and collect just read files
 except ImportError as _e:  # PYTHONPATH=$(pegasus-config --python) not set
     PEGASUS_IMPORT_ERROR = _e
 
-SHIM = HERE.parent / "runner" / "curate_run.py"
-# The node shim per IR contract (validate.CONTRACTS).
-RUNNERS = {"plain": SHIM, "faasr": HERE.parent / "runner" / "curate_faasr_run.py"}
+SHIM = HERE.parent / "runner" / "curate_run.py"  # calls main(inputs, outputs, params) on staged files
 
 
 def runner_args(n):
@@ -129,8 +127,7 @@ def emit(ir, work, runtime):
             image = n.get("image") or defaults["image"]
             c = container_for(image, runtime, containers)
             res = {**defaults.get("resources", {}), **n.get("resources", {})}
-            runner = RUNNERS[n.get("contract", "plain")]
-            tr = Transformation(origin, site="local", pfn="file://" + str(runner),
+            tr = Transformation(origin, site="local", pfn="file://" + str(SHIM),
                                 is_stageable=True, container=c)
             if "cpus" in res:
                 tr.add_pegasus_profile(cores=int(res["cpus"]))

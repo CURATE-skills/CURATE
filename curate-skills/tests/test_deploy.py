@@ -610,7 +610,7 @@ def test_uppercase_spellings_are_leak_checked_and_scrubbed(monkeypatch):
     assert L.find_leaks(text) == ["S3_SECRETKEY"]
     assert "[REDACTED:S3_SECRETKEY]" in L.redact(text)
     assert emit.find_leaked_secrets(text, emit.BASE_SECRET_NAMES) == ["S3_SECRETKEY"]
-    assert "S3_SECRETKEY" not in stubtest._env(None, None, [])
+    assert "S3_SECRETKEY" not in stubtest._env()
 
 
 def test_tree_hash_ignores_os_metadata_but_not_content(tmp_path):

@@ -112,14 +112,14 @@ def plain_read(spec, node_name: str, i: int) -> str:
     return "all" if n.inputs[i - 1].read == "all" else "own"
 
 
-def family_counts(spec, read_of=None) -> tuple[dict[str, int], dict[tuple[str, int], str | None], list[str]]:
-    """({rank} file -> number of copies, {(ranked reader, input index): "own"|"all"|None}, problems).
+def family_counts(spec) -> tuple[dict[str, int], dict[tuple[str, int], str], list[str]]:
+    """({rank} file -> number of copies, {(ranked reader, input index): "own"|"all"}, problems).
 
     The count of a {rank} file is its ranked writer's rank, else the rank of the ranked steps
-    that read it one copy each. `read_of(node, i)` says how a ranked step reads input<i>
-    (default: plain_read); None means the code shows neither way. Folder inputs do not count:
-    they take whatever copies exist."""
-    read_of = read_of or (lambda c, i: plain_read(spec, c, i))
+    that read it one copy each (plain_read). Folder inputs do not count: they take whatever
+    copies exist."""
+    def read_of(c: str, i: int) -> str:
+        return plain_read(spec, c, i)
     rank = {n.name: node_rank(n) for n in spec.nodes}
     producers: dict[str, str] = {}
     consumers: dict[str, list[tuple[str, int]]] = {}
@@ -162,14 +162,7 @@ def family_counts(spec, read_of=None) -> tuple[dict[str, int], dict[tuple[str, i
         for c, i in readers:
             if rank[c] <= 1:
                 continue
-            m = mode[(c, i)]
-            if m is None:
-                problems.append(
-                    f"ranked step {c} (×{rank[c]}) reads {f} as input{i}, but its code neither substitutes "
-                    f"its own rank into input{i} (one copy per rank) nor lists the folder with "
-                    "faasr_get_folder_list (all copies), so CURATE cannot tell how to pair its copies "
-                    f"on Pegasus. Use input{i}.replace(\"{RANK}\", str(rank)) or faasr_get_folder_list.")
-            elif m == "own" and rank[c] != count:
+            if mode[(c, i)] == "own" and rank[c] != count:
                 problems.append(
                     f"N→M ranked handoff: {source} provides {count} copies of {f}, but ranked step {c} "
                     f"runs {rank[c]} ranks and reads one copy per rank. Pegasus cannot pair them; put an "

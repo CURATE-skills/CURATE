@@ -1,0 +1,37 @@
+{
+  "id": "e7e1f112-2258-4a20-a69d-33fdd20f0faa",
+  "function_spec": {
+    "name": "split",
+    "description": "The split function partitions the input text into N batches (N=3, the number of mapping functions; configurable via a function argument). Read the full input text, tokenize on whitespace, and divide the word sequence into N contiguous, near-equal batches (sizes differ by at most one; no word is lost or duplicated). Write one plain-text batch per mapper, numbered 1..N to match the mapper ranks. Must work for any input text, vocabulary size and word frequency.",
+    "inputs": [
+      {
+        "name": "input_text.txt",
+        "type": "txt",
+        "description": "full input text"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "text_batch_{rank}.txt",
+        "type": "txt",
+        "description": "one batch per mapper rank 1..N"
+      }
+    ],
+    "dependencies": [],
+    "secrets": [],
+    "rank": 1,
+    "source": "new",
+    "user_model_mode": null,
+    "code": "import os\nimport tempfile\n\n# Number of parallel map instances (ranked successor `map` x3).\nN_BATCHES = 3\n\n\ndef split(folder: str, input1: str, output1: str) -> None:\n    \"\"\"Partition the input text into N_BATCHES contiguous, near-equal word batches.\n\n    Tokenizes on whitespace; batch sizes differ by at most one and every word\n    appears in exactly one batch, preserving order. Works for any vocabulary.\n    \"\"\"\n    workdir = tempfile.mkdtemp(prefix=\"split_\")\n    local_in = os.path.join(workdir, \"input_text.txt\")\n\n    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=input1)\n    if not os.path.exists(local_in):\n        msg = f\"split: input file {input1} could not be retrieved from {folder}\"\n        faasr_log(msg)\n        raise FileNotFoundError(msg)\n\n    with open(local_in, \"r\", encoding=\"utf-8\") as f:\n        words = f.read().split()\n\n    if not words:\n        msg = f\"split: input file {input1} contains no words\"\n        faasr_log(msg)\n        raise ValueError(msg)\n\n    total = len(words)\n    base, extra = divmod(total, N_BATCHES)\n    faasr_log(f\"split: {total} words into {N_BATCHES} batches\")\n\n    start = 0\n    for i in range(1, N_BATCHES + 1):\n        size = base + (1 if i <= extra else 0)\n        batch = words[start:start + size]\n        start += size\n\n        local_out = os.path.join(workdir, f\"text_batch_{i}.txt\")\n        with open(local_out, \"w\", encoding=\"utf-8\") as f:\n            f.write(\" \".join(batch))\n            f.write(\"\\n\")\n\n        remote_name = output1.replace(\"{rank}\", str(i))\n        faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=remote_name)\n        faasr_log(f\"split: wrote {remote_name} with {len(batch)} words\")\n\n    if start != total:\n        msg = f\"split: word accounting mismatch ({start} written vs {total} read)\"\n        faasr_log(msg)\n        raise RuntimeError(msg)\n"
+  },
+  "keywords": [
+    "split",
+    "the",
+    "split",
+    "function",
+    "partitions",
+    "the"
+  ],
+  "provenance": "workflow:mapreduce_word_count",
+  "usage_count": 0
+}

@@ -241,6 +241,9 @@ def test_e2_seed_catalog_is_complete():
     assert all(e.function_spec.code and e.provenance == "workflow:mapreduce_word_count"
                for e in cat.functions.values())
     assert [w.workflow_spec.name for w in cat.workflows.values()] == ["mapreduce_word_count"]
+    from plain_contract import is_plain  # the seed catalog is migrated: plain code only
+    assert all(is_plain(e.function_spec.code) for e in cat.functions.values())
+    assert all(is_plain(n.code) for w in cat.workflows.values() for n in w.workflow_spec.nodes)
 
 
 @pytest.mark.parametrize("query,expected,top", [

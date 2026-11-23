@@ -1,0 +1,37 @@
+{
+  "id": "07716896-50b9-4abe-a958-9ef0a3faad75",
+  "function_spec": {
+    "name": "reduce",
+    "description": "Ranked reduce step (M=5 instances). M reducers count the total occurrences of their respective word(s) in parallel, yielding Z_i. Each instance uses faasr_rank() to read the shuffle partition matching its rank, sums the list of partial counts for each word in that partition, and writes Z_i (word -> total count) as JSON numbered by its rank. Handles an empty partition (writes an empty object). Must be fully generalizable to vocabularies of any size and frequency.",
+    "inputs": [
+      {
+        "name": "shuffle_partition_{rank}.json",
+        "type": "json",
+        "description": "this reducer's word partition"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "word_count_{rank}.json",
+        "type": "json",
+        "description": "Z_i: total count per assigned word"
+      }
+    ],
+    "dependencies": [],
+    "secrets": [],
+    "rank": 5,
+    "source": "new",
+    "user_model_mode": null,
+    "code": "import json\nimport os\nimport tempfile\n\n\ndef reduce(folder: str, input1: str, output1: str) -> None:\n    \"\"\"Sum partial counts for this reducer's word partition, yielding Z_i.\n\n    Reads the shuffle partition for this instance's rank (a JSON object\n    word -> list of partial integer counts), sums each list, and writes\n    word -> total count as JSON numbered by rank. An empty partition\n    produces an empty JSON object.\n    \"\"\"\n    r = faasr_rank()\n    rank = r[\"rank\"]\n    in_name = input1.replace(\"{rank}\", str(rank))\n    out_name = output1.replace(\"{rank}\", str(rank))\n\n    workdir = tempfile.mkdtemp(prefix=f\"reduce_{rank}_\")\n    local_in = os.path.join(workdir, \"partition.json\")\n    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=in_name)\n    if not os.path.exists(local_in):\n        msg = f\"reduce[{rank}]: could not retrieve {in_name} from {folder}\"\n        faasr_log(msg)\n        raise FileNotFoundError(msg)\n\n    with open(local_in, \"r\", encoding=\"utf-8\") as f:\n        text = f.read()\n    if not text.strip():\n        msg = f\"reduce[{rank}]: partition {in_name} is empty (expected a JSON object)\"\n        faasr_log(msg)\n        raise ValueError(msg)\n\n    partition = json.loads(text)\n    if not isinstance(partition, dict):\n        msg = f\"reduce[{rank}]: partition {in_name} is not a JSON object\"\n        faasr_log(msg)\n        raise ValueError(msg)\n\n    totals = {}\n    for word, counts in partition.items():\n        if isinstance(counts, bool) or isinstance(counts, int):\n            counts = [counts]\n        if not isinstance(counts, list):\n            msg = f\"reduce[{rank}]: counts for word {word!r} are not a list\"\n            faasr_log(msg)\n            raise ValueError(msg)\n        total = 0\n        for c in counts:\n            if isinstance(c, bool) or not isinstance(c, int):\n                msg = f\"reduce[{rank}]: non-integer count {c!r} for word {word!r}\"\n                faasr_log(msg)\n                raise ValueError(msg)\n            total += c\n        totals[word] = total\n\n    local_out = os.path.join(workdir, \"word_count.json\")\n    with open(local_out, \"w\", encoding=\"utf-8\") as f:\n        json.dump(totals, f, indent=2, sort_keys=True)\n    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=out_name)\n    faasr_log(f\"reduce[{rank}]: wrote {out_name} with {len(totals)} words: {totals}\")\n"
+  },
+  "keywords": [
+    "reduce",
+    "ranked",
+    "reduce",
+    "step",
+    "(m=5",
+    "instances)."
+  ],
+  "provenance": "workflow:mapreduce_word_count",
+  "usage_count": 0
+}

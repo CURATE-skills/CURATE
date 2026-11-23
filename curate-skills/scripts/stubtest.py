@@ -25,8 +25,8 @@ A missing input: in strict mode, a file some upstream step writes is an error (a
 an external input (no step writes it) is created EMPTY with a warning and listed in
 "empty_external_inputs" (Gate 3 shows it). Parity mode creates every missing input empty.
 
-A generated function that is not plain fails, in both modes. A REUSED catalog/cached function
-that is still FaaSr-style (not yet migrated) runs through the FaaSr stubs, as before.
+A function that is not plain fails, in both modes (older FaaSr-style catalog code is migrated
+with migrate_catalog.py, or regenerated: reuse turns it into an adapt seed).
 
 Modes (default: the run's pinned state.stubtest_mode):
   strict  every rank 1..N; the node's deps.txt installed into an isolated uv env;
@@ -41,7 +41,6 @@ functions/<node>/stubtest.log (the result JSON, a blank line, then the output).
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import os
 import re
@@ -57,27 +56,16 @@ PYTHON = "3.13"
 TAIL = 6000
 ENV_SYNC_TIMEOUT = 600
 # Deployment / provider credentials never reach a stub run. Secrets a function
-# declares (faasr_secret) are passed through so its local test can use them.
+# reads (os.environ["NAME"]) are passed through so its local test can use them.
 SCRUBBED_ENV = ("GH_PAT", "S3_AccessKey", "S3_SecretKey", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
                 "BEDROCK_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
                 "AWS_BEARER_TOKEN_BEDROCK")
-FAASR_IMPORT = re.compile(r"^\s*(import\s+(faasr|FaaSr_py|faasr_stubs)\b|from\s+(faasr|FaaSr_py|faasr_stubs)\b)",
-                          re.MULTILINE)
 NETWORK_HINTS = ("URLError", "ConnectionError", "ConnectTimeout", "gaierror", "NameResolutionError",
                  "Max retries exceeded", "Temporary failure in name resolution", "HTTPError")
 
 
 class InputError(Exception):
     pass
-
-
-def signature_and_test_call(node: dict) -> tuple[str, str]:
-    ins, outs = node.get("inputs") or [], node.get("outputs") or []
-    sig = (["folder: str"] + [f"input{i + 1}: str" for i in range(len(ins))]
-           + [f"output{i + 1}: str" for i in range(len(outs))])
-    signature = f"def {node['name']}({', '.join(sig)}) -> None"
-    args = ["'test_folder'"] + [f"'{i['name']}'" for i in ins] + [f"'{o['name']}'" for o in outs]
-    return signature, f"{node['name']}({', '.join(args)})"
 
 
 def upstream_dirs(spec: dict, node: str, run: Path) -> list[str]:
@@ -98,29 +86,6 @@ def upstream_dirs(spec: dict, node: str, run: Path) -> list[str]:
     return [str(run / "functions" / p / "test_output") for p in order]
 
 
-def ast_check(code: str, node: dict, strict: bool) -> str | None:
-    try:
-        tree = ast.parse(code)
-    except SyntaxError as exc:
-        return f"Generated function is not valid Python: {exc}"
-    outs = node.get("outputs") or []
-    if outs:
-        uploads = sum(1 for item in ast.walk(tree)
-                      if isinstance(item, ast.Call) and isinstance(item.func, ast.Name)
-                      and item.func.id == "faasr_put_file")
-        if uploads < len(outs):
-            return (f"The function declares {len(outs)} output file(s), but contains only {uploads} "
-                    "faasr_put_file call(s). Write each output locally and upload it with "
-                    "faasr_put_file so it survives the serverless invocation.")
-    if strict:
-        if FAASR_IMPORT.search(code):
-            return ("The function imports faasr / FaaSr_py / faasr_stubs. The FaaSr runtime injects "
-                    "faasr_get_file etc. as globals; remove every faasr import.")
-        if not any(isinstance(n, ast.FunctionDef) and n.name == node["name"] for n in tree.body):
-            return f"No top-level `def {node['name']}(...)` found."
-    return None
-
-
 def _declared_deps(deps_file: Path) -> list[str]:
     if not deps_file.exists():
         return []
@@ -138,26 +103,15 @@ def _uv_cmd(deps_file: Path, with_deps: bool) -> list[str]:
     return cmd + ["python"]
 
 
-def _env(rank: int | None, max_rank: int | None, upstream: list[str]) -> dict:
+def _env() -> dict:
     scrubbed = {n.upper() for n in SCRUBBED_ENV}  # any spelling: S3_ACCESSKEY too
     env = {k: v for k, v in os.environ.items() if k.upper() not in scrubbed}
-    env.pop("FAASR_RANK", None)
-    env.pop("FAASR_MAX_RANK", None)
-    if rank is not None:
-        env["FAASR_RANK"] = str(rank)
-        env["FAASR_MAX_RANK"] = str(max_rank)
-    env["CURATE_UPSTREAM_DIRS"] = os.pathsep.join(upstream)
     env.setdefault("MPLBACKEND", "Agg")
     return env
 
 
-def _expected_outputs(node: dict, rank: int) -> list[str]:
-    return [o["name"].replace("{rank}", str(rank)) for o in node.get("outputs") or []]
-
-
 # ── the plain harness ────────────────────────────────────────────────────────
 
-REUSED = ("catalog", "cached")
 NOT_PLAIN = ("The function `{node}` does not follow the plain contract: its file must define "
              "`def main(inputs, outputs, params)` and work only on the local paths it is given "
              "(see the function-reference skill). Problems:\n{problems}")
@@ -268,7 +222,7 @@ def _run_plain(run: Path, spec: dict, node: dict, node_dir: Path, deps_file: Pat
         shutil.rmtree(node_dir / "test_output", ignore_errors=True)
         try:
             sync = subprocess.run(cmd + ["-c", "pass"], cwd=node_dir, capture_output=True, text=True,
-                                  timeout=ENV_SYNC_TIMEOUT, env=_env(None, None, upstream))
+                                  timeout=ENV_SYNC_TIMEOUT, env=_env())
         except subprocess.TimeoutExpired:
             return finish(f"Installing dependencies from {deps_file.name} timed out after {ENV_SYNC_TIMEOUT}s")
         if sync.returncode != 0:
@@ -292,7 +246,7 @@ def _run_plain(run: Path, spec: dict, node: dict, node_dir: Path, deps_file: Pat
         call_path.write_text(json.dumps(call, indent=2))
         try:
             proc = subprocess.run(cmd + ["-c", PLAIN_SCRIPT, os.path.relpath(call_path, node_dir)], cwd=node_dir,
-                                  capture_output=True, text=True, timeout=timeout, env=_env(None, None, upstream))
+                                  capture_output=True, text=True, timeout=timeout, env=_env())
             text = "\n".join(p for p in ["\n".join(warns), proc.stdout, proc.stderr] if p)
             ok = proc.returncode == 0
         except subprocess.TimeoutExpired as exc:
@@ -352,78 +306,11 @@ def run_stubtest(run: Path, node_name: str, mode: str | None = None, timeout: in
     if not impl.exists():
         return finish(f"{impl.relative_to(run)} does not exist")
     code = impl.read_text()
-    if PC.is_plain(code):
-        result.update(harness="plain", returns=[], empty_external_inputs=[], missing_inputs=[])
-        return _run_plain(run, spec, node, node_dir, deps_file, strict, timeout, result, finish)
-    if node.get("source") not in REUSED:
+    if not PC.is_plain(code):
         return finish(NOT_PLAIN.format(node=node_name, problems="\n".join(
             f"- {p}" for p in PC.plain_problems(code))))
-    result["harness"] = "faasr"  # a reused, not yet migrated FaaSr-style function
-    problem = ast_check(code, node, strict)
-    if problem:
-        return finish(problem)
-
-    stubs = run / "stubs"
-    _, test_call = signature_and_test_call(node)
-    script = (
-        "import sys\n"
-        f"sys.path.insert(0, {str(stubs)!r})\n"
-        "from faasr_stubs import faasr_get_file, faasr_put_file, faasr_log, "
-        "faasr_secret, faasr_rank, faasr_get_folder_list\n"
-        f"exec(compile(open({impl.name!r}).read(), {impl.name!r}, 'exec'))\n"
-        f"{test_call}\n"
-    )
-    upstream = upstream_dirs(spec, node_name, run)
-    cmd = _uv_cmd(deps_file, with_deps=strict)
-    max_rank = max(1, int(node.get("rank") or 1))
-    ranks = list(range(1, max_rank + 1)) if strict else [None]
-    if strict:
-        shutil.rmtree(node_dir / "test_output", ignore_errors=True)
-        (node_dir / "test_output").mkdir()
-        # Sync the uv env (dependency install) outside the per-rank time limit.
-        try:
-            sync = subprocess.run(cmd + ["-c", "pass"], cwd=node_dir, capture_output=True, text=True,
-                                  timeout=ENV_SYNC_TIMEOUT, env=_env(None, None, upstream))
-        except subprocess.TimeoutExpired:
-            return finish(f"Installing dependencies from {deps_file.name} timed out "
-                          f"after {ENV_SYNC_TIMEOUT}s")
-        if sync.returncode != 0:
-            return finish(f"Could not install dependencies from {deps_file.name}:\n"
-                          + (sync.stderr or sync.stdout))
-
-    outputs = []
-    all_ok = True
-    for r in ranks:
-        label = f"rank {r}/{max_rank}" if r is not None else "rank 1 (parity)"
-        try:
-            proc = subprocess.run(cmd + ["-c", script], cwd=node_dir, capture_output=True, text=True,
-                                  timeout=timeout, env=_env(r, max_rank if r else None, upstream))
-            text = "\n".join(p for p in (proc.stdout, proc.stderr) if p)
-            ok = proc.returncode == 0
-        except subprocess.TimeoutExpired as exc:
-            text, ok = f"Stub test timed out after {timeout}s\n{exc}", False
-        if ok and strict:
-            missing = [f for f in _expected_outputs(node, r)
-                       if not (node_dir / "test_output" / f).exists()]
-            if missing:
-                ok = False
-                result["missing_outputs"] += missing
-                text += f"\nDeclared output(s) not uploaded with faasr_put_file: {missing}"
-        result["ranks"].append({"rank": r or 1, "ok": ok})
-        outputs.append(f"=== {label} ===\n{text}")
-        if not ok:
-            all_ok = False
-            break
-
-    tail = "\n".join(outputs)
-    if not all_ok and not strict and _declared_deps(deps_file) and "ModuleNotFoundError" in tail:
-        # Original CURATE: a missing optional generated dep is an install-time issue.
-        result["module_missing_pass"] = True
-        all_ok = True
-    if not all_ok:
-        result["network_error_suspected"] = any(h in tail for h in NETWORK_HINTS)
-    result["ok"] = all_ok
-    return finish(tail)
+    result.update(harness="plain", returns=[], empty_external_inputs=[], missing_inputs=[])
+    return _run_plain(run, spec, node, node_dir, deps_file, strict, timeout, result, finish)
 
 
 def main(argv=None) -> int:

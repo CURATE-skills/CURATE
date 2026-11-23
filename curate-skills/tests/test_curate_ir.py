@@ -20,7 +20,7 @@ sys.path.insert(0, str(IR_DIR))
 
 import expand  # noqa: E402
 import validate  # noqa: E402
-from ir_local import RUNNERS, run_locally  # noqa: E402
+from ir_local import RUNNER, run_locally  # noqa: E402
 
 yaml = pytest.importorskip("yaml")
 
@@ -69,7 +69,7 @@ def test_faasr_calls_are_an_error_for_plain_functions(tmp_path):
     (tmp_path / "functions" / "a.py").write_text(
         "def main(inputs, outputs, params):\n    faasr_put_file('x', 'f', 'o.txt')\n")
     _, errors, _, _ = validate.prepare(ir)
-    assert any("calls FaaSr API" in e for e in errors)
+    assert any("calls the FaaSr API" in e for e in errors)
 
 
 def test_missing_producer_and_cycle(tmp_path):
@@ -176,22 +176,25 @@ def test_fanout_output_must_name_its_axis(tmp_path):
 
 # ── the runner shim, with condorio-style staging ──
 
-def test_contract_faasr_is_a_warning_and_unknown_contract_an_error(tmp_path):
+def test_contract_was_removed_and_faasr_code_is_an_error(tmp_path):
     ir = ir_dict(tmp_path, [{"id": "a", "contract": "faasr", "entrypoint": "a", "outputs": {"o": "o.txt"}},
-                            {"id": "b", "contract": "wasm", "inputs": {"i": "o.txt"}, "outputs": {"o": "p.txt"}}],
+                            {"id": "b", "inputs": {"i": "o.txt"}, "outputs": {"o": "p.txt"}}],
                  outputs=[{"file": "p.txt"}])
     (tmp_path / "functions" / "a.py").write_text(
         "def a(folder, output1):\n    faasr_put_file(local_file='x', remote_folder=folder, remote_file=output1)\n")
     _, errors, warnings, _ = validate.prepare(ir)
-    assert errors == ["b: contract must be one of plain, faasr, got 'wasm'"]
-    assert any(w.startswith("contract faasr (a):") for w in warnings)
+    assert "a: `contract` was removed from the IR; every node is a plain main(inputs, outputs, params) " \
+           "function" in errors
+    assert "a: code calls the FaaSr API; IR functions are plain and use only the local paths they are " \
+           "given" in errors
+    assert not [w for w in warnings if "contract" in w]
 
 
-def test_backend_has_a_runner_per_contract():
+def test_one_runner_for_every_node():
     src = (IR_DIR / "backends" / "pegasus_backend.py").read_text()
-    assert 'RUNNERS = {"plain": SHIM, "faasr": HERE.parent / "runner" / "curate_faasr_run.py"}' in src
-    assert set(validate.CONTRACTS) == set(RUNNERS)
-    assert all(p.is_file() for p in RUNNERS.values())
+    assert "RUNNERS" not in src and 'pfn="file://" + str(SHIM)' in src
+    assert RUNNER.is_file() and not (IR_DIR / "runner" / "curate_faasr_run.py").exists()
+    assert not hasattr(validate, "CONTRACTS")
 
 
 def test_diamond_and_fanout_give_the_same_result(tmp_path):

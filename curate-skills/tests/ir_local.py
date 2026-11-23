@@ -1,6 +1,6 @@
 """A tiny local stand-in for Pegasus, for tests: run an IR's expanded jobs in dependency order,
 each in its own empty folder, with its input files copied in under their flat names (what
-condorio staging does), through the same runner shim the backend would use (by contract)."""
+condorio staging does), through the same runner shim and command line the backend uses."""
 import json
 import shutil
 import subprocess
@@ -15,7 +15,7 @@ import validate  # noqa: E402
 sys.path.insert(0, str(IR_DIR / "backends"))
 from pegasus_backend import runner_args  # noqa: E402
 
-RUNNERS = {"plain": IR_DIR / "runner" / "curate_run.py", "faasr": IR_DIR / "runner" / "curate_faasr_run.py"}
+RUNNER = IR_DIR / "runner" / "curate_run.py"
 
 
 def run_locally(ir_path: Path, work: Path, inputs_dir: Path | None = None) -> dict:
@@ -35,7 +35,7 @@ def run_locally(ir_path: Path, work: Path, inputs_dir: Path | None = None) -> di
             job.mkdir(parents=True)
             code = job / ("code__" + Path(n["code"]).name)
             shutil.copy(base / n["code"], code)
-            args = [sys.executable, str(RUNNERS[n.get("contract", "plain")]), "--code", code.name,
+            args = [sys.executable, str(RUNNER), "--code", code.name,
                     "--entrypoint", n.get("entrypoint", "main")]
             for v in n["inputs"].values():
                 for f in validate.files_of(v):

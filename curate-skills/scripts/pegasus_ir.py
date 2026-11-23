@@ -12,35 +12,28 @@ approved code, unchanged) and an empty inputs/ folder for the workflow's input f
 validates it with curate_ir/validate.py. Prints JSON {"ok", ...}; exit 0 ok, 1 the spec cannot
 run on Pegasus (`problems`, one message each), 2 bad input.
 
-A step whose code follows the plain contract (scripts/plain_contract.py) becomes a plain IR node:
-the IR runner (curate_ir/runner/curate_run.py) calls main(inputs, outputs, params) on the files
-Pegasus stages, with slots input1.., output1.. and params {rank, max_rank} on a ranked step.
-FaaSr-style code (until it is migrated) keeps IR `contract: faasr`:
-curate_ir/runner/curate_faasr_run.py calls it with the same Arguments FaaSr would
-(emit.faasr_arguments) and serves the FaaSr API from the job's staged files.
+Every step is a plain function (scripts/plain_contract.py): the IR runner
+(curate_ir/runner/curate_run.py) calls main(inputs, outputs, params) on the files Pegasus
+stages, with slots input1.., output1.. and params {rank, max_rank} on a ranked step.
 
 Ranked steps become IR v0.2 fan-out:
 - a step with rank N fans out over axis `rankN` (values "1".."N");
 - a `{rank}` file gets the axis of its ranked writer, or else of the ranked steps that read it
-  one copy per rank; an unranked step that writes it writes every copy (plain: one list
-  output; FaaSr-style: one output per copy);
-- a ranked reader that reads its own copy (plain: the default; FaaSr-style: its code
-  substitutes its rank, `input1.replace("{rank}", …)` or `.format(rank=…)`) is paired copy by
-  copy (same axis); one that reads all copies (plain: the input says read: all; FaaSr-style:
-  `faasr_get_folder_list`) gets them as a list through the alias axis `rankN_all`; an unranked
-  reader always gets the list;
-- a plain folder input gets every workflow file whose name starts with its prefix, as one
-  directory (IR `{folder: [...]}`);
+  one copy per rank; an unranked step that writes it has one list output (every copy);
+- a ranked reader reads its own copy (paired copy by copy, same axis) unless its input says
+  read: all, which gives it every copy as a list through the alias axis `rankN_all`; an
+  unranked reader always gets the list;
+- a folder input gets every workflow file whose name starts with its prefix, as one directory
+  (IR `{folder: [...]}`); no other file may start with that prefix;
 - an edge with no file between its steps gets an empty marker file, written by the runner, that
   the later step waits for (all copies of the earlier step).
-Refused, each with its own message: conditional edges, N→M ranked handoffs read per rank,
-FaaSr-style readers whose code shows neither pattern, folder inputs that match no file,
+Refused, each with its own message: steps that are not plain functions, conditional edges,
+N→M ranked handoffs read per rank, folder inputs that match no file or would hold other files,
 secrets, steps without code.
 """
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import os
 import re
@@ -52,14 +45,13 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import envfile  # noqa: E402
 import plain_contract as PC  # noqa: E402
 from curate_models import WorkflowSpec, clean_dependencies  # noqa: E402
-from emit import faasr_arguments  # noqa: E402
 
 IR_DIR = SCRIPT_DIR.parent / "curate_ir"
 DEFAULT_IMAGE = envfile.DEFAULT_PEGASUS_IMAGE
 RUN_TS_RX = re.compile(r"^\d{4}(\d{2})(\d{2})-(\d{2})(\d{2})")  # run ids: YYYYMMDD-HHMMSS-<name>
 DEFAULT_RESOURCES = {"cpus": 1, "memory_mb": 2048}
 RANK = "{rank}"
-MARKER_KEY = "curate_done"  # runner/curate_faasr_run.py writes outputs whose key starts with this
+MARKER_KEY = "curate_done"  # runner/curate_run.py writes outputs whose key starts with this
 NODE_ID = re.compile(r"^[a-z0-9_]+$")
 
 
@@ -88,29 +80,6 @@ def _with_axis(f: str, ax: str) -> str:
     return f.replace(RANK, "{" + ax + "}")
 
 
-def read_mode(code: str, i: int) -> str | None:
-    """How a ranked function reads input<i>: "rank" (its own rank's copy), "all" (lists the
-    folder and reads every copy), or None (the code shows neither)."""
-    try:
-        tree = ast.parse(code or "")
-    except SyntaxError:
-        return None
-    arg, per, lists = f"input{i}", False, False
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        f = node.func
-        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == arg:
-            if f.attr == "replace" and node.args and isinstance(node.args[0], ast.Constant) \
-                    and node.args[0].value == RANK:
-                per = True
-            if f.attr == "format" and any(k.arg == "rank" for k in node.keywords):
-                per = True
-        if isinstance(f, ast.Name) and f.id == "faasr_get_folder_list":
-            lists = True
-    return "rank" if per else "all" if lists else None
-
-
 def _parse_deliver(items) -> list[tuple[str, str | None]]:
     out = []
     for item in items or []:
@@ -137,6 +106,10 @@ def build_ir(spec: WorkflowSpec, name: str | None = None, image: str = DEFAULT_I
         ids[n.name] = nid
         if not n.code:
             problems.append(f"step {n.name} has no code; run curate-generate first")
+        elif not PC.is_plain(n.code):
+            problems.append(f"step {n.name} is not a plain main(inputs, outputs, params) function (the older "
+                            "FaaSr style): regenerate it, or migrate the catalog it came from "
+                            "(scripts/migrate_catalog.py)")
         if n.secrets:
             problems.append(f"step {n.name} reads secrets ({', '.join(n.secrets)}): the Pegasus target "
                             "cannot pass secrets yet; deploy to FaaSr instead")
@@ -151,7 +124,6 @@ def build_ir(spec: WorkflowSpec, name: str | None = None, image: str = DEFAULT_I
                 f"{e.condition}): Pegasus runs a fixed DAG in which every step runs, so it cannot honour "
                 "the condition. Remove the condition with a Gate 4 change request, or deploy to FaaSr.")
 
-    plain = {n.name: PC.is_plain(n.code) for n in nodes}
     producers: dict[str, str] = {}
     consumers: dict[str, list[tuple[str, int]]] = {}
     folders: dict[tuple[str, int], list[str]] = {}  # plain folder input -> the files it holds
@@ -161,7 +133,7 @@ def build_ir(spec: WorkflowSpec, name: str | None = None, image: str = DEFAULT_I
                 problems.append(f"file {o.name} is written by both {producers[o.name]} and {n.name}")
             producers.setdefault(o.name, n.name)
         for i, inp in enumerate(n.inputs, 1):
-            if inp.kind == "folder" and plain[n.name]:
+            if inp.kind == "folder":
                 folders[(n.name, i)] = PC.folder_matches(spec, n.name, inp.name)
                 if not folders[(n.name, i)]:
                     problems.append(
@@ -171,14 +143,9 @@ def build_ir(spec: WorkflowSpec, name: str | None = None, image: str = DEFAULT_I
             else:
                 consumers.setdefault(inp.name, []).append((n.name, i))
 
-    def read_of(c: str, i: int) -> str | None:
-        if plain[c]:
-            return PC.plain_read(spec, c, i)
-        return {"rank": "own", "all": "all"}.get(read_mode(by_name[c].code, i))
-
-    file_axis, mode, counted = PC.family_counts(spec, read_of)  # {rank} file -> number of copies
+    file_axis, mode, counted = PC.family_counts(spec)  # {rank} file -> number of copies
     problems += counted
-    problems += PC.folder_conflicts(spec, only={c for c, ok in plain.items() if ok})
+    problems += PC.folder_conflicts(spec)
 
     deliver = _parse_deliver(deliverables)
     for f, _ in deliver:
@@ -236,22 +203,13 @@ def build_ir(spec: WorkflowSpec, name: str | None = None, image: str = DEFAULT_I
             else:
                 ins[f"{MARKER_KEY}_after_{ids[a]}"] = ir_file(m)
         for i, out in enumerate(n.outputs, 1):
-            f = out.name
-            if f in file_axis and r <= 1 and not plain[n.name]:  # FaaSr-style: one output per copy
-                for v in range(1, file_axis[f] + 1):
-                    outs[f"output{i}_{v}"] = f.replace(RANK, str(v))
-            else:  # plain and unranked: the family's axis is not the node's, so a list of every copy
-                outs[f"output{i}"] = ir_file(f)
+            # an unranked writer of a {rank} family: the family's axis is not the node's, so the
+            # output is the list of every copy
+            outs[f"output{i}"] = ir_file(out.name)
         if n.name in markers:
             outs[MARKER_KEY] = ir_file(markers[n.name])
-        if plain[n.name]:
-            node = {"id": ids[n.name], "code": f"functions/{n.name}.py"}
-            params = {"rank": "{" + axis(r) + "}", "max_rank": r} if r > 1 else {}
-        else:
-            node = {"id": ids[n.name], "contract": "faasr", "code": f"functions/{n.name}.py",
-                    "entrypoint": n.name}
-            params = {"faasr": {"args": faasr_arguments(spec, n), "rank_axis": axis(r) if r > 1 else None,
-                                "max_rank": r}}
+        node = {"id": ids[n.name], "code": f"functions/{n.name}.py"}
+        params = {"rank": "{" + axis(r) + "}", "max_rank": r} if r > 1 else {}
         if r > 1:
             node["for_each"] = [axis(r)]
         node.update(inputs=ins, outputs=outs, params=params)

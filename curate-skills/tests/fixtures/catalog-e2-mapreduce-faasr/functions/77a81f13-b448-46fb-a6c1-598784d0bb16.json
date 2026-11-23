@@ -1,0 +1,32 @@
+{
+  "id": "77a81f13-b448-46fb-a6c1-598784d0bb16",
+  "function_spec": {
+    "name": "generate_text",
+    "description": "Entry step. Generate the benchmark input text of W=5000 total words. For the input text generation, use [cat, dog, bird, horse, pig], each distributed evenly and shuffled randomly (M=5 different words, 1000 occurrences each). Build a list with W/len(vocab) copies of each word, shuffle it with Python's random module, and write it as a single plain-text file of whitespace-separated words. W and the vocabulary should be overridable via function arguments with these defaults. This is the only vocabulary-specific step.",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "input_text.txt",
+        "type": "txt",
+        "description": "W whitespace-separated words, shuffled"
+      }
+    ],
+    "dependencies": [],
+    "secrets": [],
+    "rank": 1,
+    "source": "new",
+    "user_model_mode": null,
+    "code": "import os\nimport random\nimport tempfile\n\n# Benchmark parameters from the user request: W = 5000 total words over\n# M = 5 distinct words, each distributed evenly and shuffled randomly.\nTOTAL_WORDS = 5000\nVOCABULARY = [\"cat\", \"dog\", \"bird\", \"horse\", \"pig\"]\n\n\ndef generate_text(folder: str, output1: str) -> None:\n    total_words = TOTAL_WORDS\n    vocab = list(VOCABULARY)\n\n    if not vocab:\n        faasr_log(\"generate_text: vocabulary is empty\")\n        raise ValueError(\"vocabulary must not be empty\")\n    if total_words <= 0 or total_words % len(vocab) != 0:\n        msg = (f\"generate_text: total words W={total_words} must be a positive \"\n               f\"multiple of vocabulary size {len(vocab)} for an even distribution\")\n        faasr_log(msg)\n        raise ValueError(msg)\n\n    per_word = total_words // len(vocab)\n    words = []\n    for w in vocab:\n        words.extend([w] * per_word)\n    random.shuffle(words)\n\n    tmpdir = tempfile.mkdtemp()\n    local_path = os.path.join(tmpdir, \"input_text.txt\")\n    with open(local_path, \"w\") as f:\n        f.write(\" \".join(words))\n        f.write(\"\\n\")\n\n    faasr_put_file(local_file=local_path, remote_folder=folder, remote_file=output1)\n    faasr_log(f\"generate_text: wrote {len(words)} words ({per_word} each of \"\n              f\"{', '.join(vocab)}) to {folder}/{output1}\")\n"
+  },
+  "keywords": [
+    "generate",
+    "text",
+    "entry",
+    "step.",
+    "generate",
+    "the",
+    "benchmark"
+  ],
+  "provenance": "workflow:mapreduce_word_count",
+  "usage_count": 0
+}
