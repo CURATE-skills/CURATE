@@ -1,0 +1,6 @@
+# Run values for one execution (replace the tested defaults in workflow.yml).
+batches:
+  - {class: File, location: inputs/batch_1.txt}
+  - {class: File, location: inputs/batch_2.txt}
+  - {class: File, location: inputs/batch_3.txt}
+notes: {class: File, location: inputs/notes.txt}

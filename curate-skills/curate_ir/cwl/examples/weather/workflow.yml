@@ -1,0 +1,93 @@
+cwlVersion: v1.2
+class: Workflow
+$namespaces:
+  s: https://schema.org/
+  curate: https://github.com/CURATE-skills/CURATE/blob/main/docs/CWL_IR.md#
+label: Corvallis winter weather comparison
+doc: >
+  Compare winter 2025 weather in Corvallis, Oregon (GHCN-Daily station USC00351862)
+  with the previous 10-year daily average for PRCP, TMIN and TMAX.
+s:identifier: corvallis-winter-weather-v1
+s:version: "1"
+curate:content_hash: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+requirements:
+  ScatterFeatureRequirement: {}
+hints:
+  DockerRequirement: {dockerPull: "python:3.12-slim"}
+  ResourceRequirement: {coresMin: 1, ramMin: 2048}
+
+inputs:
+  rank3:                                  # the fan-out axis of process_weather_variable
+    type: int[]
+    default: [1, 2, 3]
+
+outputs:
+  comparisons:                            # File[]: one per rank3 value
+    type: File[]
+    outputSource: process_weather_variable/output1
+    curate:deliver_as: results/winter_comparison_{rank3}.csv
+  plot:
+    type: File
+    outputSource: plot_weather_comparison/output1
+    curate:deliver_as: results/corvallis_winter_comparison.png
+  summary:
+    type: File
+    outputSource: summarize_winter/output1
+    curate:deliver_as: results/winter_summary.json
+
+steps:
+  download_ghcn_station:
+    in: {}
+    out: [output1]
+    run:
+      class: Operation
+      inputs: {}
+      outputs: {output1: File}
+    hints:
+      curate:function: {code: functions/download_ghcn_station.py, entrypoint: main}
+      SoftwareRequirement:
+        packages: [{package: requests}]
+
+  process_weather_variable:               # fan-out: 3 copies
+    scatter: rank
+    in:
+      input1: download_ghcn_station/output1
+      rank: rank3
+      max_rank: {default: 3}
+    out: [output1]
+    run:
+      class: Operation
+      inputs: {input1: File, rank: int, max_rank: int}
+      outputs: {output1: File}
+    hints:
+      curate:function: {code: functions/process_weather_variable.py, entrypoint: main}
+      SoftwareRequirement:
+        packages: [{package: pandas}]
+
+  plot_weather_comparison:                # gather as a folder, own image
+    in:
+      input1:
+        source: process_weather_variable/output1
+        curate:folder: true
+    out: [output1]
+    run:
+      class: Operation
+      inputs: {input1: "File[]"}
+      outputs: {output1: File}
+    hints:
+      curate:function: {code: functions/plot_weather_comparison.py, entrypoint: main}
+      DockerRequirement: {dockerPull: "ghcr.io/example/python-plot:3.12"}
+      SoftwareRequirement:
+        packages: [{package: pandas}, {package: matplotlib}]
+
+  summarize_winter:                       # gather as a list of paths, rank order
+    in:
+      input1: process_weather_variable/output1
+    out: [output1]
+    run:
+      class: Operation
+      inputs: {input1: "File[]"}
+      outputs: {output1: File}
+    hints:
+      curate:function: {code: functions/summarize_winter.py, entrypoint: main}
