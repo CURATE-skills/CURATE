@@ -1,0 +1,10 @@
+# Test dependencies. Run the suite from curate-skills/:
+#   uv run --python 3.13 --with-requirements tests/requirements.txt python -m pytest tests -q -p no:cacheprovider
+pytest
+pydantic==2.11.7
+rank-bm25==0.2.2
+pyyaml==6.0.2
+boto3
+requests
+cwltool==3.3.20261106131234
+cwl-utils==0.47

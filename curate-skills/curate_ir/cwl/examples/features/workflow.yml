@@ -43,7 +43,11 @@ steps:
         linkMerge: merge_flattened
         curate:folder: true
     out: [output1]
-    run: {class: Operation, inputs: {input1: "File[]"}, outputs: {output1: "File[]"}}
+    run:
+      class: Operation
+      inputs: {input1: "File[]"}
+      outputs:
+        output1: {type: "File[]", curate:axis: rank5}   # one file per rank5 value
     hints:
       curate:function: {code: functions/shuffle.py, entrypoint: main}
 

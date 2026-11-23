@@ -118,18 +118,16 @@ Fan-out sizes come only from axes; nothing is counted at run time.
   `cwltool` also accepts the axes in the other order, but then the files land in the wrong
   groups; CURATE's validator refuses that. Two consumers that need different groupings of the
   same producer are refused too (plain CWL cannot regroup without JavaScript).
-- **One step writes the whole list:** an unscattered step whose output is `File[]` writes one
-  file per value of an axis, in axis order. **Open:** how the IR says which axis (and so how
-  many paths the function gets). Proposed: the length comes from the axis of the consumer
-  that pairs with it (`scatter: [rank, input1]`, `dotproduct`) or from a `{axis}` placeholder
-  in its `curate:deliver_as`, and the validator refuses a `File[]` output with no such axis or
-  with two different ones. The alternative is an explicit extension on the `Operation`
-  output.
+- **One step writes the whole list:** an unscattered step whose output is `File[]` names
+  the axis on that output, `outputs: {output1: {type: "File[]", curate:axis: rank5}}`. The
+  function gets one path per value of the axis, in axis order, and writes every one. A
+  consumer that pairs with the list (`dotproduct`) must scatter over the same axis; the
+  validator refuses a mismatch.
 
 ## Extensions
 
 Step-level extensions live in the step's `hints`, keyed by class, and each value is an
-object (`cwltool` refuses a list there).
+object (`cwltool` refuses a list there). `curate:axis` sits on the `Operation`'s output.
 
 | Field | Where | Shape | Meaning |
 |---|---|---|---|
@@ -139,6 +137,7 @@ object (`cwltool` refuses a list there).
 | `curate:after` | step `hints` | `{steps: [<step>, ...]}` | Control-only dependency: run after those steps (every copy of a scattered one) although no file passes between them. Builders turn it into a Pegasus job dependency or a FaaSr `InvokeNext`; no marker files. |
 | `curate:run_if` | step `hints` | `{step: <step>, result: true\|false}` | Run this step only if `step`'s `main` returned `result`. Implies `after: [step]`. The FaaSr builder emits a conditional `InvokeNext`; the Pegasus builder refuses the workflow with a clear message, and Gate 4 does not offer Pegasus for it. |
 | `curate:secrets` | step `hints` | `{names: [NAME, ...]}` | The secrets the step reads from its environment, by name (`UPPER_SNAKE`). Never values. Each builder maps the names to its own mechanism (FaaSr secrets, a Pegasus environment profile). |
+| `curate:axis` | `Operation` output of type `File[]` | `<axis input>` | The list has one file per value of that axis, in axis order. Required on every `File[]` output of an unscattered step. |
 
 ## Identity and versions
 
@@ -151,10 +150,16 @@ curate:content_hash: sha256:...
 
 - The **workflow ID** is `<name>-v<N>`, where `<name>` is a slug of the title (`[a-z0-9-]`),
   unique in the global catalog (`~/.curate/catalog`). Parse it with `^(.+)-v(\d+)$`.
-- A **new version** is made whenever `workflow.yml` or a function it uses changes; an
-  identical regeneration keeps its version. A version folder is never edited.
+- The **name** is asked for at the sketch and checked against the catalog then. It is stored
+  in the generation run's metadata.
+- **Every generation of an existing workflow is a new version**, numbered at emit. Which
+  workflow it belongs to comes from lineage (a reused catalog workflow, or `--from-run`) or
+  from the name; a name that is taken with no lineage makes CURATE ask: a new name, or a new
+  version of the existing workflow. A version folder is never edited.
 - **Content hash:** sha256 over the normalized `workflow.yml` with `label`, `doc`, every `s:`
-  field, `curate:content_hash` and every input `default` removed, plus the function files.
+  field, `curate:content_hash` and every input `default` removed, plus the function files. It
+  never decides the version; it only detects duplicates. A new version identical to an
+  existing one is reported, and the user keeps both or drops the new one.
 
 ## Run values: `inputs.yml`
 
@@ -199,7 +204,7 @@ Generation sessions keep their own folders, `.curate/runs/<run-id>/`.
 | `for_each: [a, b]` | `scatter: [a, b]`, `scatterMethod: nested_crossproduct` |
 | full gather (placeholder axis not in consumer's `for_each`) | consumer input takes the scattered output as `File[]` |
 | partial gather (consumer keeps some axes) | producer's `scatter` puts the kept axes outermost; consumer `scatter: [kept_axis, input]`, `dotproduct` |
-| output placeholder not in node's `for_each` (one step writes all files) | `Operation` output `File[]`, one per axis value, in axis order |
+| output placeholder not in node's `for_each` (one step writes all files) | `Operation` output `File[]` with `curate:axis: <axis>`, one file per axis value, in axis order |
 | axis value injected into `params`; renamed via `rank: "{rank3}"` | step input sourced from the axis input under the param's name |
 | `{folder: "part_{r}.csv"}` input | `File[]` input + `curate:folder: true` |
 | `{folder: [a, b]}` over several families | `source: [...]`, `linkMerge: merge_flattened`, `curate:folder: true` |
@@ -316,7 +321,7 @@ steps:
 ## Example: the other features
 
 Paired copies over an external file family, a secret, a folder gathered from two sources,
-one step writing a list that a fan-out reads one file per copy, a conditional step and a
+one step writing a list (`curate:axis`) that a fan-out reads one file per copy, a conditional step and a
 control-only dependency.
 
 <!-- example: curate-skills/curate_ir/cwl/examples/features/workflow.yml -->
@@ -366,7 +371,11 @@ steps:
         linkMerge: merge_flattened
         curate:folder: true
     out: [output1]
-    run: {class: Operation, inputs: {input1: "File[]"}, outputs: {output1: "File[]"}}
+    run:
+      class: Operation
+      inputs: {input1: "File[]"}
+      outputs:
+        output1: {type: "File[]", curate:axis: rank5}   # one file per rank5 value
     hints:
       curate:function: {code: functions/shuffle.py, entrypoint: main}
 

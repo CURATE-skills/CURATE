@@ -1,5 +1,5 @@
 """docs/CWL_IR.md: its examples are the checked-in example files, use the one namespace constant,
-and pass `cwltool --validate` (when cwltool is installed)."""
+and pass `cwltool --validate` (cwltool is a test dependency: tests/requirements.txt)."""
 import re
 import subprocess
 import sys
@@ -54,7 +54,6 @@ def test_doc_lists_exactly_the_extensions():
 
 @pytest.mark.parametrize("name", ["weather", "features"])
 def test_examples_pass_cwltool_validate(name):
-    pytest.importorskip("cwltool")
     wf = PLUGIN / "curate_ir/cwl/examples" / name / "workflow.yml"
     r = subprocess.run([sys.executable, "-m", "cwltool", "--validate", str(wf)],
                        capture_output=True, text=True, timeout=300)
