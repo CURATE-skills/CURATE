@@ -417,4 +417,13 @@ steps:
 `cwltool --validate workflow.yml` accepts both examples. It reports each `curate:` hint as
 "Unknown hint", and for some steps also "Field 'class' contains undefined reference to
 ...CWL_IR.md#function". Both are expected: only CURATE's builders read the extensions.
-CURATE's own validator (`curate_ir/cwl/validate.py`) enforces the profile above.
+CURATE's own validator enforces the profile above, with one line per problem:
+
+```
+uv run curate-skills/curate_ir/cwl/validate.py workflow.yml [--inputs inputs.yml]
+```
+
+It checks the raw document first (refused constructs), then loads it with `cwl-utils`
+(`curate_ir/cwl/load.py`) and checks functions, extension shapes, wiring and types through
+scatter and `merge_flattened`, fan-out sizes, dotproduct pairs (the partial-gather order and
+`curate:axis` lists), `deliver_as` placeholders, `after`/`run_if` targets and cycles.
