@@ -337,6 +337,9 @@ def plan(s: dict, st: dict) -> dict:
     if X.is_versioned(s) and s.get("run_dir"):  # built in memory from the draft or the approved version
         ex = s.get("execution") or {}
         name = run_ir_name(spec.name, ex.get("run_id") or s.get("run_id", ""))
+        peg_v = (s.get("validation") or {}).get("pegasus") or {}
+        if peg_v.get("ok") is False and not X.stale_draft(s):  # emit's validation already refused it
+            return {"ok": False, "name": name, "problems": peg_v.get("problems") or [peg_v.get("error")]}
         try:
             b = X.pegasus_built(s, s["run_dir"], name, st["image"])
         except X.ExecutionError as e:

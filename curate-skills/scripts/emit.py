@@ -623,7 +623,9 @@ def write_draft(spec: WorkflowSpec, run: Path, level: str = "auto") -> dict:
 
     `validation` is what Gate 4 checks: the draft passes the CWL validator, and the FaaSr workflow
     the builder makes of it (in memory) passes the same workflow.json validation emit's bundle had.
-    A draft FaaSr cannot take is still valid (Pegasus, or no deploy); approving FaaSr is refused."""
+    The Pegasus builder runs in memory too, and its result is recorded next to FaaSr's. A target
+    that refuses the draft does not fail validation (the other target, or no deploy, may still
+    take it); Gate 4 shows both results, and approving a refused target is refused."""
     import ids
     import spec_cwl
     target = ids.draft_dir(run)
@@ -647,13 +649,23 @@ def validate_draft(spec: WorkflowSpec, draft: Path, level: str = "auto") -> dict
     wf, errors, _ = cwl_validate(draft / "workflow.yml", draft / "inputs.yml")
     if errors:
         return {"ok": False, "level": "cwl", "error": "; ".join(errors), "source": "draft"}
+    import cwl_pegasus
     try:
         built = cwl_faasr.build(wf, spec.name, spec.folder, spec.compute_target, spec.data_store, level)
         faasr = {k: built["validation"][k] for k in ("ok", "level", "error")}
+        faasr["problems"] = [] if faasr["ok"] else [faasr["error"]]
     except cwl_faasr.BuildError as e:
-        faasr = {"ok": False, "level": None, "error": "; ".join(e.problems)}
-    return {"ok": True, "level": f"cwl + faasr {faasr['level'] or 'not built'}", "error": None, "source": "draft",
-            "faasr": faasr}
+        faasr = {"ok": False, "level": None, "error": "; ".join(e.problems), "problems": e.problems}
+    try:
+        cwl_pegasus.build(wf, "validate")
+        pegasus = {"ok": True, "error": None, "problems": []}
+    except cwl_pegasus.BuildError as e:
+        pegasus = {"ok": False, "error": "; ".join(e.problems), "problems": e.problems}
+
+    def word(t):
+        return (f"passed ({t['level']})" if t.get("level") else "passed") if t["ok"] else f"refused ({t['error']})"
+    return {"ok": True, "level": f"cwl: passed, faasr: {word(faasr)}, pegasus: {word(pegasus)}", "error": None,
+            "source": "draft", "faasr": faasr, "pegasus": pegasus}
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ published lives in `<project>/.curate/workflows/<name>-v<N>/`, and each executio
 | `skeleton_draft` | Gate 1 draft: `spec`, `last_good`, `parse_error`, `refinement` |
 | `spec`, `prior_spec`, `spec_is_seed` | approved WorkflowSpec; prior code-bearing spec for `[cached]` |
 | `enriched_spec`, `candidates`, `repairs` | MCA results and automatic repairs |
-| `mga`, `validation`, `bundle_dir`, `history` | generation, emit and decision history. `validation` comes from the draft for a versioned run (`source` `draft`: the CWL validator, then `faasr` = the FaaSr workflow built from it in memory); `bundle_dir` is emit's older FaaSr bundle, which only runs approved before versions deploy |
+| `mga`, `validation`, `bundle_dir`, `history` | generation, emit and decision history. `validation` comes from the draft for a versioned run (`source` `draft`: the CWL validator, then each target's builder in memory, `faasr` and `pegasus`, each `{ok, error, problems}`; a refusing target does not fail validation, and Gate 4's "where it can run" uses these results); `bundle_dir` is emit's older FaaSr bundle, which only runs approved before versions deploy |
 | `enriched_basis`, `spec_basis`, `mga[n].basis`, `validation.spec_hash` | input hashes: what each result was built from, so a later stage can tell it is out of date |
 
 ## Files you write in `work/`

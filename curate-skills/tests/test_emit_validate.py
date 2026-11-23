@@ -236,8 +236,10 @@ def test_cli_bundle_updates_run_state(tmp_path, capsys, structural_only):
     assert state["bundle_dir"] == out["bundle_dir"]
     v = state["validation"]  # from the draft and the FaaSr workflow built from it, not emit's bundle
     assert {k: v[k] for k in ("ok", "level", "error", "source")} == {
-        "ok": True, "level": "cwl + faasr structural", "error": None, "source": "draft"}
-    assert v["faasr"] == {"ok": True, "level": "structural", "error": None}
+        "ok": True, "level": "cwl: passed, faasr: passed (structural), pegasus: passed", "error": None,
+        "source": "draft"}
+    assert v["faasr"] == {"ok": True, "level": "structural", "error": None, "problems": []}
+    assert v["pegasus"] == {"ok": True, "error": None, "problems": []}
     assert out["bundle_validation"]["ok"] and state["draft_dir"] == str(run / "draft")
     assert v["spec_hash"] and state["draft_spec_hash"] == v["spec_hash"]  # which spec the draft was built from
     assert state["stage"] == "gate4"

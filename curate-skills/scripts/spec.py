@@ -2507,8 +2507,7 @@ def show_gate(s: dict, gate: int, detailed: bool = False) -> str:
                     f"- workflow draft: `{s.get('version_dir') or s.get('draft_dir')}`; approving publishes it as "
                     "the next version (each target's bundle is built from it afterwards)",
                     f"- workflow name: `{s.get('workflow_name') or '(not set: the spec name is used)'}`",
-                    f"- validation: {'passed' if v.get('ok') else 'FAILED'} (level `{v.get('level')}`)"
-                    + (f"; FaaSr build: {faasr_v.get('error')}" if faasr_v.get("ok") is False else "")]
+                    f"- validation: {'passed' if v.get('ok') else 'FAILED'} — {v.get('level')}"]
         else:
             out += ["", "```", *dag_lines(spec), "```", "", f"- bundle: `{s.get('bundle_dir')}`",
                     f"- validation: {'passed' if v.get('ok') else 'FAILED'} (level `{v.get('level')}`)"]
@@ -2643,10 +2642,14 @@ def faasr_lines(s: dict) -> list[str]:
     import execution as X
     advice = f"- deploying: {DEPLOY_ADVICE}"
     if run and X.is_versioned(s):  # built in memory from the draft (or the approved version)
+        faasr_v = (s.get("validation") or {}).get("faasr") or {}
+        if faasr_v.get("ok") is False and not X.stale_draft(s):  # emit's validation already refused it
+            return ["**FaaSr (cloud)**: **cannot run on FaaSr:**"] + [f"- {p}" for p in faasr_v.get("problems")
+                                                                        or [faasr_v.get("error")]]
         try:
             n_in = len(X.faasr_built(s, run)["external_inputs"])
         except X.ExecutionError as e:
-            return [f"**FaaSr (cloud)**: **cannot run on FaaSr:** {e}"]
+            return ["**FaaSr (cloud)**: **cannot run on FaaSr:**"] + [f"- {p}" for p in e.problems]
     else:
         n_in = len(external_inputs(spec_of(s["spec"]))) if s.get("spec") else 0
     inputs = "- input files you must provide in S3: " + (f"{n_in} (listed in the full review)" if n_in else "none")

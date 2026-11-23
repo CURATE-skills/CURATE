@@ -75,3 +75,32 @@ def test_gate4_review_lists_the_built_inputs_and_the_draft(source_run, capsys): 
     md = S.show_gate({**state(source_run), "run_dir": str(source_run)}, 4, detailed=True)
     assert f"- `{s["spec"]["folder"]}/seed.txt` — tested with `inputs/seed.txt`" in md
     assert "Files in the workflow draft (what Gate 4 approves):" in md and "workflow.yml" in md
+
+
+def test_emit_validates_both_targets_and_gate4_shows_them(source_run, capsys):  # noqa: F811
+    """A conditional step: FaaSr takes it, Pegasus refuses it. Validation passes (FaaSr can deploy it);
+    Gate 4 shows both results, and its "where it can run" summary uses the recorded Pegasus refusal."""
+    def conditional(s):
+        s["spec"]["edges"][0]["condition"] = "True"
+    s = at_gate4_with_draft(source_run, conditional)
+    v = s["validation"]
+    e = s["spec"]["edges"][0]
+    assert v["ok"] and v["faasr"]["ok"] and v["pegasus"]["ok"] is False
+    assert f"step {e['to_node']} runs only if {e['from_node']} returns True (curate:run_if)" in v["pegasus"]["error"]
+    assert v["level"].startswith("cwl: passed, faasr: passed (structural), pegasus: refused (step ")
+    md = ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)["markdown"]
+    assert f"- validation: passed — {v['level']}" in md
+    sec = where_section(md)
+    assert "**Pegasus** on this machine: **cannot run on Pegasus:**" in sec and "(curate:run_if)" in sec
+    assert "deploys as `" in sec  # FaaSr still can
+
+
+def test_gate4_uses_the_recorded_refusal_without_rebuilding(source_run, capsys, monkeypatch):  # noqa: F811
+    import execution as X
+
+    def conditional(s):
+        s["spec"]["edges"][0]["condition"] = "True"
+    at_gate4_with_draft(source_run, conditional)
+    monkeypatch.setattr(X, "pegasus_built", lambda *a, **k: (_ for _ in ()).throw(AssertionError("rebuilt")))
+    sec = where_section(ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)["markdown"])
+    assert "cannot run on Pegasus" in sec

@@ -90,9 +90,10 @@ def redraft(run, s: dict) -> dict:
     from curate_models import WorkflowSpec
     from spec import spec_hash
     from spec import VERSION_OUTPUTS
-    d = emit.write_draft(WorkflowSpec.model_validate(s["spec"]), Path(run))
+    d = emit.write_draft(WorkflowSpec.model_validate(s["spec"]), Path(run), "structural")
     assert d["ok"], d
-    s.update(draft_dir=d["dir"], draft_problems=None, draft_spec_hash=spec_hash(s["spec"]))
+    s.update(draft_dir=d["dir"], draft_problems=None, draft_spec_hash=spec_hash(s["spec"]),
+             validation={**d["validation"], "spec_hash": spec_hash(s["spec"])})
     for k in VERSION_OUTPUTS + ("execution",):  # as rewinding to emit clears an earlier approval's version
         s.pop(k, None)
     return s
