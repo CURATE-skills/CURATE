@@ -89,9 +89,14 @@ def _parse_deliver(items) -> list[tuple[str, str | None]]:
 
 
 def build_ir(spec: WorkflowSpec, name: str | None = None, image: str = DEFAULT_IMAGE,
-             deliverables=None) -> dict:
+             deliverables=None, pegasus: bool = True) -> dict:
     """{"ir", "functions": {relpath: code}, "inputs": [file names to provide], "warnings"}.
-    Raises MappingError with every problem found."""
+    Raises MappingError with every problem found.
+
+    pegasus=False builds the IR for the CWL workflow (scripts/spec_cwl.py) instead of for a Pegasus
+    run: secrets and conditional edges are not refused (the CWL carries them as curate:secrets
+    and curate:run_if; each target's builder judges them), and a conditional edge with no file
+    gets a marker like any other edge."""
     problems, warnings = [], []
     nodes = spec.nodes
     by_name = {n.name: n for n in nodes}
@@ -110,7 +115,7 @@ def build_ir(spec: WorkflowSpec, name: str | None = None, image: str = DEFAULT_I
             problems.append(f"step {n.name} is not a plain main(inputs, outputs, params) function (the older "
                             "FaaSr style): regenerate it, or migrate the catalog it came from "
                             "(scripts/migrate_catalog.py)")
-        if n.secrets:
+        if n.secrets and pegasus:
             problems.append(f"step {n.name} reads secrets ({', '.join(n.secrets)}): the Pegasus target "
                             "cannot pass secrets yet; deploy to FaaSr instead")
         deps = clean_dependencies(n.dependencies)
@@ -118,7 +123,7 @@ def build_ir(spec: WorkflowSpec, name: str | None = None, image: str = DEFAULT_I
             warnings.append(f"step {n.name} imports {', '.join(deps)}: these must already be in the image "
                             f"{image}; nothing is installed at run time")
     for e in spec.edges:
-        if e.condition is not None:
+        if e.condition is not None and pegasus:
             problems.append(
                 f"conditional edge {e.from_node} → {e.to_node} (taken only when {e.from_node} returns "
                 f"{e.condition}): Pegasus runs a fixed DAG in which every step runs, so it cannot honour "
