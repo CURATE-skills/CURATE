@@ -135,18 +135,40 @@ def legacy_entries(name: str, catalog) -> list:
     return sorted(hits, key=age)
 
 
+RESERVATIONS = "reservations.json"  # <catalog>/reservations.json: {name: {old entry id: version number}}
+
+
 def reserved_numbers(name: str, used, catalog) -> dict[int, str]:
     """Version numbers held for the catalog's old uuid entries of this name, so that numbers are
-    never renumbered: each old entry holds one of the lowest free numbers now (oldest entry first),
-    new versions are numbered after them, and the phase 8 migration gives each old entry exactly
-    the number it holds here. {number: entry id}."""
-    out, n = {}, 0
-    for e in legacy_entries(name, catalog):
-        n += 1
-        while n in used:
+    never renumbered: the first time an old entry is seen it is given the lowest free number (old
+    entries first seen together: oldest first), and that number is recorded in
+    <catalog>/reservations.json and always read back from there; new versions are numbered after
+    the held ones, and the phase 8 migration makes the recorded numbers official. A recorded
+    number stays held even if its entry is removed, so it is never given to anything else.
+    {number: entry id}."""
+    if catalog is None:
+        return {}
+    path = Path(catalog.root) / RESERVATIONS
+    try:
+        book = json.loads(path.read_text()) if path.is_file() else {}
+    except (OSError, ValueError) as e:
+        raise IdError(f"{path} is unreadable ({e}); fix it before publishing (it holds version numbers)") from e
+    held = {int(v): k for k, v in (book.get(name) or {}).items()}
+    new = [e for e in legacy_entries(name, catalog) if e.id not in held.values()]
+    if new:
+        taken = set(used) | set(held)
+        n = 0
+        for e in new:
             n += 1
-        out[n] = e.id
-    return out
+            while n in taken:
+                n += 1
+            held[n] = e.id
+            taken.add(n)
+        book[name] = {eid: v for v, eid in sorted(held.items())}
+        tmp = path.with_name(path.name + f".tmp-{secrets.token_hex(3)}")
+        tmp.write_text(json.dumps(book, indent=2, sort_keys=True) + "\n")
+        os.replace(tmp, path)
+    return dict(sorted(held.items()))
 
 
 def versions(name: str, project=None, catalog=None) -> dict[int, str | None]:

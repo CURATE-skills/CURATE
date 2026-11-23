@@ -179,3 +179,45 @@ def test_old_uuid_entries_hold_the_first_numbers_so_nothing_is_renumbered(tmp_pa
     cat = C.Catalog(tmp_path / "cat")
     held = ids.reserved_numbers("mapreduce-word-count", {3}, cat)
     assert 3 not in held and sorted(held) == [1, 2, 4]
+
+
+def test_held_numbers_are_recorded_and_never_shift(tmp_path):
+    """The first time an old entry is seen, its held number is written to <catalog>/reservations.json;
+    afterwards it is read back from there, so changing the entry's file time (or removing it) moves
+    nothing."""
+    import os
+    cat = C.Catalog(tmp_path / "cat")
+    a = C.WorkflowEntry(workflow_spec=e2())
+    b = C.WorkflowEntry(workflow_spec=e2())
+    cat.save_workflow(a)
+    cat.save_workflow(b)
+    os.utime(cat.wf_dir / f"{a.id}.json", (1, 1))
+    os.utime(cat.wf_dir / f"{b.id}.json", (2, 2))
+    cat = C.Catalog(tmp_path / "cat")
+    first = ids.reserved_numbers("mapreduce-word-count", set(), cat)
+    assert first == {1: a.id, 2: b.id}
+    book = json.loads((tmp_path / "cat" / ids.RESERVATIONS).read_text())
+    assert book == {"mapreduce-word-count": {a.id: 1, b.id: 2}}
+    # b is now "older" than a by file time: the recorded numbers do not move
+    os.utime(cat.wf_dir / f"{b.id}.json", (0, 0))
+    assert ids.reserved_numbers("mapreduce-word-count", set(), C.Catalog(tmp_path / "cat")) == first
+    # a new version is numbered after the held ones and published
+    project = tmp_path / "p"
+    d = draft(tmp_path / "r1")
+    plan = ids.plan_publish(d, "mapreduce-word-count", project, catalog=C.Catalog(tmp_path / "cat"))
+    assert plan["workflow_id"] == "mapreduce-word-count-v3"
+    ids.publish(d, "mapreduce-word-count", project, 3, plan["draft_hash"])
+    # a removed old entry keeps its number held; one first seen now gets the next free number,
+    # whatever its file time, and the next version comes after it
+    (cat.wf_dir / f"{a.id}.json").unlink()
+    c = C.WorkflowEntry(workflow_spec=e2())
+    cat = C.Catalog(tmp_path / "cat")
+    cat.save_workflow(c)
+    os.utime(cat.wf_dir / f"{c.id}.json", (0, 0))
+    changed = e2()
+    changed.nodes[2].code += "\n# changed\n"
+    plan = ids.plan_publish(draft(tmp_path / "r2", changed), "mapreduce-word-count", project,
+                            catalog=C.Catalog(tmp_path / "cat"))
+    assert plan["workflow_id"] == "mapreduce-word-count-v5"
+    assert json.loads((tmp_path / "cat" / ids.RESERVATIONS).read_text()) == {
+        "mapreduce-word-count": {a.id: 1, b.id: 2, c.id: 4}}

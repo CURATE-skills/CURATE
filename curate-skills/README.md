@@ -308,7 +308,8 @@ The plugin also declares Claude Code plugin settings (`catalog_dir`, `mga_retrie
   launch (`-2`, `-3`… for a later launch); never overwritten.
 - The catalog folder (`~/.curate/catalog` by default): `functions/<uuid>.json`; workflows as
   `workflows/<name>-v<N>.json` (each save is a new version; older entries keep `<uuid>.json`) and
-  their version folders in `versions/<name>-v<N>/`.
+  their version folders in `versions/<name>-v<N>/`; `reservations.json` records the version number
+  each older uuid entry holds (so new versions never take it).
 - `.curate/runs/<run_id>/pegasus/` (Pegasus runs approved before workflow versions): `ir/`,
   `work/`, `deploy-log.jsonl`, `monitor-report.md`, `result/` with an ssh host, and the host copy in
   `~/curate-runs/<run_id>/`. Newer runs keep these in their execution run (above).
