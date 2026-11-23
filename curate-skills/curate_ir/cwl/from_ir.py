@@ -296,11 +296,13 @@ def convert(ir: dict) -> dict:
             if key.startswith(MARKER):
                 continue
             E = [a for a in _dedup(template(pat)[1]) if a not in F]
+            # curate:name keeps the spec's file name (its extension above all: a function may rely on it,
+            # e.g. matplotlib's savefig picks the format from it); builders append it to generated names
             if E:
-                op_out[key] = {"type": "File[]", "curate:axis": E[0]}
+                op_out[key] = {"type": "File[]", "curate:axis": E[0], "curate:name": pat}
                 used_axes.add(E[0])
             else:
-                op_out[key] = "File"
+                op_out[key] = {"type": "File", "curate:name": pat}
             outs.append(key)
         hints = {"curate:function": {"code": n["code"], "entrypoint": n.get("entrypoint", "main")}}
         if n.get("image"):

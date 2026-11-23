@@ -20,7 +20,9 @@ ids of every copy it waits for); `run_if` and `secrets` are carried for the buil
 File names are made here, deterministically: a workflow input file keeps the name of its
 location (prefixed with the input id if two would clash); a step output is
 `<step>__<output>[__<values>]`, with `__<axis value>` added per file of a curate:axis list
-(the output before the values, so every output's files share their own prefix).
+(the output before the values, so every output's files share their own prefix), then
+`__<curate:name>` with its placeholders filled for that file, so the spec's file name and its
+extension are kept (`plot__output1__corvallis_winter_comparison.png`).
 """
 from __future__ import annotations
 
@@ -175,12 +177,14 @@ def expand_cwl(wf: Workflow) -> dict:
                     params[name] = v
             for name, port in s.op_outputs.items():
                 if port.axis:
-                    leaves = [Leaf(f"{sid}__{name}{vals}__{_safe(x)}", assign + ((port.axis, str(x)),))
+                    leaves = [Leaf(f"{sid}__{name}{vals}__{_safe(x)}"
+                                   + _named(port.name, dict(assign + ((port.axis, str(x)),))),
+                                   assign + ((port.axis, str(x)),))
                               for x in wf.inputs[port.axis].value]
                     out_vals[name] = leaves
                     outs[name] = [x.name for x in leaves]
                 else:
-                    leaf = Leaf(f"{sid}__{name}{vals}", assign)
+                    leaf = Leaf(f"{sid}__{name}{vals}" + _named(port.name, dict(assign)), assign)
                     out_vals[name] = leaf
                     outs[name] = leaf.name
             per_copy_out.append(out_vals)
@@ -228,6 +232,13 @@ def expand_cwl(wf: Workflow) -> dict:
     if wf.resources:
         exp["defaults"]["resources"] = _resources(wf.resources)
     return exp
+
+
+def _named(name, assign: dict) -> str:
+    """`__<curate:name>` with the file's axis values filled in, or "" without a curate:name."""
+    if not name:
+        return ""
+    return "__" + PLACEHOLDER.sub(lambda m: str(assign.get(m.group(1), m.group(0))), name)
 
 
 def _nest(flat: list, shape: list[int]):

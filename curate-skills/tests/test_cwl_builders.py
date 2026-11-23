@@ -132,11 +132,13 @@ def test_e2_faasr_bundles_write_the_same_objects(tmp_path):
     assert len(fa) == len(fb) == 17
 
     def role_of(name, roles):
+        import re
         for pattern, r in roles.items():
-            if "{rank}" in pattern:
-                pre, post = pattern.split("{rank}")
-                if name.startswith(pre) and name.endswith(post) and name[len(pre):len(name) - len(post)].isdigit():
-                    return r, int(name[len(pre):len(name) - len(post)])
+            if "{rank}" in pattern:  # every {rank} in the pattern is the same rank
+                rx = "^" + re.escape(pattern).replace(re.escape("{rank}"), r"(\d+)") + "$"
+                m = re.match(rx, name)
+                if m and len(set(m.groups())) == 1:
+                    return r, int(m.group(1))
             elif name == pattern:
                 return r, None
         raise KeyError(name)
@@ -172,7 +174,7 @@ def test_e2_pegasus_runs_give_the_same_files(tmp_path):
     fa = run_locally(old / "ir.yaml", tmp_path / "ja")
     fb = run_locally(new / "ir.yaml", tmp_path / "jb")
     for i in range(1, 6):
-        assert fa[f"word_count_{i}.json"].read_bytes() == fb[f"reduce__output1__{i}"].read_bytes()
+        assert fa[f"word_count_{i}.json"].read_bytes() == fb[f"reduce__output1__{i}__word_count_{i}.json"].read_bytes()
 
 
 # ── what each builder refuses or maps ────────────────────────────────────────
@@ -301,4 +303,5 @@ def test_backend_plans_the_e2_folder(tmp_path):
     wf = emitted(folder, tmp_path / "work")
     assert len(wf["jobs"]) == 11
     reduce3 = next(j for j in wf["jobs"] if j["id"] == "reduce__3")
-    assert {u["lfn"] for u in reduce3["uses"] if u["type"] == "input"} >= {"shuffle__output1__3"}
+    assert any(u["lfn"].startswith("shuffle__output1__3__") and u["lfn"].endswith(".json")
+               for u in reduce3["uses"] if u["type"] == "input")

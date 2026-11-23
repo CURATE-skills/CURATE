@@ -367,6 +367,16 @@ def check(wf: Workflow) -> tuple[list[str], list[str]]:
                               "workflow input)")
             elif _depth(p.type) > 1:
                 errors.append(f"{where}: output {name}: a step writes at most one list (File[]) per output")
+            if p.name is not None:
+                own = {src for e in s.scatter for src in (s.ins[e].sources if e in s.ins else []) if is_axis(wf, src)}
+                own |= {p.axis} if p.axis else set()
+                if not isinstance(p.name, str) or not p.name or "/" in p.name or p.name in (".", ".."):
+                    errors.append(f"{where}: output {name}: curate:name must be a plain file name")
+                else:
+                    extra = [a for a in PLACEHOLDER.findall(p.name) if a not in own]
+                    if extra:
+                        errors.append(f"{where}: output {name}: curate:name {p.name!r} names "
+                                      + ", ".join("{%s}" % a for a in extra) + ", which is not one of the output's axes")
             if name not in s.outs:
                 errors.append(f"{where}: Operation output {name} is missing from out")
         for name in s.outs:

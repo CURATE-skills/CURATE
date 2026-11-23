@@ -14,7 +14,7 @@ Branch: create `cwl-ir` from `decouple-faasr` (currently at `14bfad1` or later).
 
 ## IR spec (write this up in phase 1)
 
-CWL v1.2 restricted to a CURATE profile, plus seven `curate:` extensions in a `$namespaces` block. Pick one namespace URI, define it as a single constant, and use it everywhere.
+CWL v1.2 restricted to a CURATE profile, plus eight `curate:` extensions in a `$namespaces` block. Pick one namespace URI, define it as a single constant, and use it everywhere.
 
 **Allowed:** `Workflow` with inline `Operation` steps; `File`, `File[]`, `Directory` (workflow inputs only), `string`, `int`, `float`, `boolean`, arrays of these; `scatter` with `dotproduct` / `nested_crossproduct` / `flat_crossproduct`; `ScatterFeatureRequirement`; `DockerRequirement` (`dockerPull`) on workflow or step; `SoftwareRequirement`; `ResourceRequirement` (`coresMin`, `ramMin`); `default` on workflow inputs; `label`, `doc`. `MultipleInputFeatureRequirement` with `linkMerge: merge_flattened`, **only** on step inputs marked `curate:folder` (a folder gathering files from several sources).
 
@@ -31,6 +31,7 @@ CWL v1.2 restricted to a CURATE profile, plus seven `curate:` extensions in a `$
 | `curate:run_if: {step, result}` | step `hints` | Run this step only if `step`'s `main` returned `result` (`true`/`false`); implies `after: [step]`. Matches FaaSr's conditional `InvokeNext`, which the FaaSr builder emits. The Pegasus builder refuses it with a clear message, and Gate 4 hides Pegasus for such workflows (as today). |
 | `curate:secrets: [NAME, ...]` | step `hints` | Names of the secrets the step reads from its environment. Never values. Each builder maps names to its own mechanism (FaaSr secrets, a Pegasus env profile). |
 | `curate:axis: <axis input>` | `Operation` output of type `File[]` | The list has one file per value of that axis input (its length is the axis's length), in axis order. Required on every `File[]` output of an unscattered step. A consumer that pairs with the list (`dotproduct`) must scatter over the same axis; the validator refuses a mismatch. |
+| `curate:name: "<file name>"` | `Operation` output | The output's file name in the spec; builders append it (placeholders filled) to generated names, so a function gets the same file names and extensions as in its stub test. |
 
 **Mapping from IR v0.2:**
 

@@ -15,8 +15,9 @@ outputs.json: every S3 object the run writes ({action, file}) and the deliverabl
 
 It reads `scatter` directly: one ranked action per step (`InvokeNext: step(N)`), the rank
 filling `{rank}` in that step's file names and indexing its per-rank params. File names are
-generated: `<step>__<output>[__{rank}]` for step outputs, the location's name for a workflow
-input file, `<input>__{rank}<ext>` for a workflow input list; so a folder input's files are
+generated: `<step>__<output>[__{rank}]__<curate:name>` for step outputs (the spec's file name, its
+axis placeholders turned into `{rank}`, so the extension a function may rely on is kept), the
+location's name for a workflow input file, `<input>__{rank}<ext>` for a workflow input list; so a folder input's files are
 exactly those under its own prefix (`<step>__<output>__`), and any other name starting with that
 prefix is refused. curate:after becomes InvokeNext; curate:run_if a conditional InvokeNext
 ({"True": [...]}); curate:secrets the workflow's Secrets (names only).
@@ -29,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -106,16 +108,21 @@ def build(wf, name: str, folder: str, compute_target: str = "My_GitHub_Account",
             copies[sid] = length(s.ins[s.scatter[0]].sources[0]) or 1
         else:
             copies[sid] = 1
+        own_axes = {x for e in s.scatter for x in (s.ins[e].sources if e in s.ins else []) if x in axis_inputs}
         for out, port in s.op_outputs.items():
             src = f"{sid}/{out}"
             if port.axis and copies[sid] > 1:
                 problems.append(f"{where} is ranked and writes a list ({out}); FaaSr names one file per rank")
+            # the spec's file name, its axis placeholders as {rank} (FaaSr's wrapper fills {rank})
+            tail = ("__" + re.sub(r"\{([A-Za-z0-9_]+)\}",
+                                  lambda m: RANK if m.group(1) in own_axes | {port.axis} else m.group(0), port.name)
+                    if port.name else "")
             if port.axis:
-                names[src], count[src] = f"{sid}__{out}__{RANK}", len(wf.inputs[port.axis].value)
+                names[src], count[src] = f"{sid}__{out}__{RANK}{tail}", len(wf.inputs[port.axis].value)
             elif copies[sid] > 1:
-                names[src], count[src] = f"{sid}__{out}__{RANK}", copies[sid]
+                names[src], count[src] = f"{sid}__{out}__{RANK}{tail}", copies[sid]
             else:
-                names[src] = f"{sid}__{out}"
+                names[src] = f"{sid}__{out}{tail}"
 
     def concrete(src):
         p = names[src]

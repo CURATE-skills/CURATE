@@ -45,6 +45,7 @@ class Port:
     """An Operation input or output."""
     type: str
     axis: str | None = None  # curate:axis on a File[] output
+    name: str | None = None  # curate:name: the output's file name in the spec (placeholders: its axes)
 
 
 @dataclass
@@ -282,7 +283,7 @@ def load(path, inputs=None) -> Workflow:
             ins[last(e.id)] = In(srcs, NO_VALUE if e.default is None else _resolve_files(e.default, base),
                                  e.linkMerge, bool(_ext(e, "folder", False)))
         op_in = {last(p.id): Port(type_str(p.type_)) for p in getattr(run, "inputs", None) or []}
-        op_out = {last(p.id): Port(type_str(p.type_), _ext(p, "axis"))
+        op_out = {last(p.id): Port(type_str(p.type_), _ext(p, "axis"), _ext(p, "name"))
                   for p in getattr(run, "outputs", None) or []}
         scatter = s.scatter if isinstance(s.scatter, list) else [s.scatter] if s.scatter else []
         steps[sid] = Step(sid, ins, [last(o if isinstance(o, str) else o.id) for o in s.out or []],

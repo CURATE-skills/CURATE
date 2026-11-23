@@ -14,6 +14,7 @@ EXTENSIONS = {
     "run_if": "step hints",
     "secrets": "step hints",
     "axis": "Operation output",
+    "name": "Operation output",
 }
 # Workflow-level metadata fields in the curate namespace (not extensions of the dataflow).
 METADATA = ("content_hash",)
