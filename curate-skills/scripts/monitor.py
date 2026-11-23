@@ -159,7 +159,8 @@ def built_outputs(wf: dict, manifest: dict) -> list[dict]:
 def run_outputs(run_p: Path, s: dict, wf: dict) -> list[dict]:
     """The run's declared outputs: from the bundle's outputs.json when its builder wrote one, else
     from workflow.json's Arguments (bundles from emit.write_bundle)."""
-    bundle = s.get("bundle_dir")
+    ex = s.get("execution") or {}
+    bundle = ex.get("bundle_dir") if s.get("workflow_id") else s.get("bundle_dir")
     manifest = Path(bundle) / "outputs.json" if bundle else None
     if manifest and manifest.is_file():
         return built_outputs(wf, json.loads(manifest.read_text()))
@@ -718,7 +719,7 @@ def download_outputs(run: str, to: str, s3_factory=None) -> dict:
 
 
 def status(run: str) -> dict:
-    s, _ = D.load_run(run)
+    s = D.load_state_only(run)  # needs no bundle
     mon = s.get("monitor") or {}
     return {"ok": True, "stage": s.get("stage"), "result": mon.get("result"), "accepted": mon.get("accepted"),
             "minutes_used": round(float(mon.get("seconds_used") or 0) / 60, 2), "settings": mon.get("settings"),

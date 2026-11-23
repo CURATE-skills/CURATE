@@ -1147,14 +1147,18 @@ def cmd_approve(args) -> dict:
         choice = getattr(args, "deploy", None) or "no"
         bundle = Path(s["bundle_dir"]) if s.get("bundle_dir") else None
         has_bundle = bool(bundle and (bundle / "workflow.json").is_file())
-        if choice == "yes" and not has_bundle:
-            raise InputError(f"the bundle {bundle} is missing, so it cannot be deployed; run "
-                             f"/{PLUGIN}:curate-emit --run {s['run_id']} again")
         image = getattr(args, "image", None)
         if image and choice != "pegasus":
             raise InputError("--image only applies to --deploy pegasus")
         peg_rec = pegasus_choice(s, image, IMAGE_FROM_GATE4) if choice == "pegasus" else None
+        import execution as X
+        if choice == "yes":  # refuse before publishing anything if FaaSr cannot take it
+            try:
+                X.faasr_built(s, run)
+            except X.ExecutionError as e:
+                raise InputError(f"{e}; choose another target") from e
         s.update(publish_version(s, run, getattr(args, "on_duplicate", None)))
+        s["execution"] = _start_execution(s, run, choice)
         # The approved bundle's hash: curate-deploy refuses to deploy a bundle that changed since.
         s.update(feedback=None, bundle_hash=tree_hash(bundle) if has_bundle else None,
                  deploy_choice=choice, deploy=None,
@@ -1198,8 +1202,11 @@ def publish_version(s: dict, run: Path, on_duplicate: Optional[str]) -> dict:
     """Gate 4 approval: publish the run's draft as the workflow's next version (ids.publish), and
     return the state fields that record it. Nothing is published when the approval is refused."""
     import ids
-    draft = Path(s.get("draft_dir") or ids.draft_dir(run))
-    if not (draft / "workflow.yml").is_file():
+    draft = Path(s["draft_dir"]) if s.get("draft_dir") else None  # only the draft emit recorded
+    import execution as X
+    if (why := X.stale_draft(s)):
+        raise InputError(why)
+    if draft is None or not (draft / "workflow.yml").is_file():
         problems = s.get("draft_problems") or []
         raise InputError("there is no workflow draft to approve"
                          + (": " + "; ".join(problems) if problems else
@@ -1223,9 +1230,18 @@ def publish_version(s: dict, run: Path, on_duplicate: Optional[str]) -> dict:
     if plan["duplicates"] and on_duplicate == "drop":
         wid = plan["duplicates"][-1]
         vdir = ids.version_dir(_project(s, run), wid)
-        if not (vdir / "workflow.yml").is_file():
-            raise InputError(f"the identical version {wid} is not in this project (only in the catalog), so it "
-                             "cannot be used here: keep both (--on-duplicate keep)")
+        if not (vdir / "workflow.yml").is_file():  # only in the catalog: bring that exact version here
+            import tempfile
+            entry = next((e for e in cat.workflows.values() if e.workflow_id == wid), None)
+            with tempfile.TemporaryDirectory() as tmp:
+                src = catalog_mod.version_source(cat, wid, Path(tmp))
+                if src is None or entry is None:
+                    raise InputError(f"the identical version {wid} cannot be copied from the catalog; keep both "
+                                     "(--on-duplicate keep)")
+                try:
+                    ids.copy_version(src, _project(s, run), wid, entry.content_hash or plan["content_hash"])
+                except ids.IdError as e:
+                    raise InputError(f"{e}; keep both (--on-duplicate keep)") from e
         return {"workflow_name": name, "workflow_id": wid, "workflow_version": ids.parse_workflow_id(wid)[1],
                 "draft_hash": approved, "version_dir": str(vdir), "version_reused": True,
                 "version_hash": ids.tree_hash(vdir, skip=("runs",)), "workflow_content_hash": plan["content_hash"]}
@@ -1246,6 +1262,20 @@ def _lineage_name(lineage: Optional[dict], s: dict) -> Optional[str]:
     if wid:
         return ids.parse_workflow_id(wid)[0]
     return s.get("workflow_name")
+
+
+def _start_execution(s: dict, run: Path, target: str) -> Optional[dict]:
+    """After Gate 4 (or "Start this run?") chose a target: FaaSr's bundle is built now, from the
+    approved version; a Pegasus execution is opened (pegasus_deploy.py prepare builds its folder)."""
+    import execution as X
+    try:
+        if target == "yes":
+            return X.build_faasr(s, run)
+        if target == "pegasus":
+            return X.new_execution(s, run, "pegasus")
+    except X.ExecutionError as e:
+        raise InputError(str(e)) from e
+    return None
 
 
 def cmd_set_name(args) -> dict:
@@ -1367,6 +1397,8 @@ def cmd_confirm_start(args) -> dict:
         raise InputError("--image only applies to --deploy pegasus")
     if target == "pegasus":
         s["pegasus"] = pegasus_choice(s, image, IMAGE_FROM_START)
+    if s.get("workflow_id"):  # a versioned run: the target's bundle comes from the approved version
+        s["execution"] = _start_execution(s, run, target)
     s["deploy_choice"] = target
     where = " (run on Pegasus)" if target == "pegasus" else ""
     _record(s, 4, "deploy-confirmed",
@@ -1634,9 +1666,11 @@ START_COPY = {
     "resolve": ("enriched_spec", "enriched_basis", "spec_basis", "candidates"),
     "generate": ("enriched_spec", "spec_basis"),
     "emit": ("enriched_spec", "spec_basis", "mga"),
-    "deploy": ("enriched_spec", "spec_basis", "mga", "validation", "bundle_dir", "bundle_hash", "draft_dir")
+    "deploy": ("enriched_spec", "spec_basis", "mga", "validation", "bundle_dir", "bundle_hash", "draft_dir",
+               "draft_spec_hash")
               + VERSION_OUTPUTS,
-    "finalize": ("enriched_spec", "spec_basis", "mga", "validation", "bundle_dir", "draft_dir") + VERSION_OUTPUTS,
+    "finalize": ("enriched_spec", "spec_basis", "mga", "validation", "bundle_dir", "draft_dir", "draft_spec_hash")
+                + VERSION_OUTPUTS,
 }
 INIT_FLAGS = ("user_model", "context_file", "catalog_dir", "config_catalog_dir", "mga_retries",
               "config_mga_retries", "stubtest_mode", "config_stubtest_mode", "project_dir")
@@ -1993,21 +2027,21 @@ def start_summary(at: str, p: dict) -> str:
 # ── stages: next / require / begin / end ─────────────────────────────────────
 
 # Fields a stage (and everything after it) produces; cleared on a fresh entry.
-DEPLOY_OUTPUTS = ("bundle_hash", "deploy_choice", "deploy", "monitor", "pegasus") + VERSION_OUTPUTS
+DEPLOY_OUTPUTS = ("bundle_hash", "deploy_choice", "deploy", "monitor", "pegasus", "execution") + VERSION_OUTPUTS
 STAGE_OUTPUTS = {
     "skeleton": ("enriched_spec", "enriched_basis", "spec_basis", "candidates", "mga",
-                 "validation", "bundle_dir", "draft_dir", "draft_problems") + DEPLOY_OUTPUTS,
+                 "validation", "bundle_dir", "draft_dir", "draft_problems", "draft_spec_hash") + DEPLOY_OUTPUTS,
     "reuse": ("enriched_spec", "enriched_basis", "spec_basis", "candidates", "mga",
-              "validation", "bundle_dir", "draft_dir", "draft_problems") + DEPLOY_OUTPUTS,
-    "resolve": ("spec_basis", "mga", "validation", "bundle_dir", "draft_dir", "draft_problems") + DEPLOY_OUTPUTS,
-    "generate": ("mga", "validation", "bundle_dir", "draft_dir", "draft_problems") + DEPLOY_OUTPUTS,
-    "emit": ("validation", "bundle_dir", "draft_dir", "draft_problems") + DEPLOY_OUTPUTS,
+              "validation", "bundle_dir", "draft_dir", "draft_problems", "draft_spec_hash") + DEPLOY_OUTPUTS,
+    "resolve": ("spec_basis", "mga", "validation", "bundle_dir", "draft_dir", "draft_problems", "draft_spec_hash") + DEPLOY_OUTPUTS,
+    "generate": ("mga", "validation", "bundle_dir", "draft_dir", "draft_problems", "draft_spec_hash") + DEPLOY_OUTPUTS,
+    "emit": ("validation", "bundle_dir", "draft_dir", "draft_problems", "draft_spec_hash") + DEPLOY_OUTPUTS,
     "deploy": ("monitor",),  # what was deployed stays recorded (the deploy log is in <run>/deploy/)
     "monitor": (),
     "finalize": (),
 }
 _EMPTY = {"mga": {}, "candidates": []}
-OPTIONAL_OUTPUTS = ("pegasus", "draft_dir", "draft_problems") + VERSION_OUTPUTS  # pegasus: Pegasus target only;
+OPTIONAL_OUTPUTS = ("pegasus", "draft_dir", "draft_problems", "draft_spec_hash", "execution") + VERSION_OUTPUTS  # pegasus: Pegasus target only;
 # the draft and version fields are absent in runs made before workflow versions
 
 
@@ -2439,13 +2473,27 @@ def show_gate(s: dict, gate: int, detailed: bool = False) -> str:
             out.append(f"- functions whose stub test failed: {', '.join(failed)}")
         out += ["", "### Where it can run", "", *faasr_lines(s), "", *pegasus_lines(s)]
         if detailed:  # the review file: every file, as each target's preflight will list it
-            ext = external_inputs(spec)
+            import execution as X
+            if X.is_versioned(s) and s.get("run_dir"):  # from the FaaSr build of the draft, not spec names
+                try:
+                    base = "file://" + str(X.source_dir(s, s["run_dir"]).resolve()) + "/"
+                    ext = [{"s3_path": e["s3_path"],
+                            "description": f"tested with `{e['location'].removeprefix(base)}`"}
+                           for e in X.faasr_built(s, s["run_dir"])["external_inputs"]]
+                except X.ExecutionError as e:
+                    ext = [{"s3_path": "(cannot be built for FaaSr)", "description": str(e)}]
+            else:
+                ext = external_inputs(spec)
             out += ["", "## Full details", "", "Input files you must provide in S3 (none = nothing to do):"] + (
                 [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
             out += ["", "### Deploy would write", "", f"If you choose **{FAASR_OPTION}** (nothing is written now; "
                     "the deploy asks before each step):", ""] + deploy_plan(s)
             out += ["", "### Pegasus run would write", ""] + pegasus_lines(s, detailed=True)
-            out += ["", "Files in the bundle:"] + (bundle_files(s.get("bundle_dir")) or ["- none yet"])
+            if X.is_versioned(s):  # Gate 4 approves the draft; each target's bundle is built from it afterwards
+                out += ["", "Files in the workflow draft (what Gate 4 approves):"] + (
+                    bundle_files(s.get("version_dir") or s.get("draft_dir")) or ["- none yet"])
+            else:
+                out += ["", "Files in the bundle:"] + (bundle_files(s.get("bundle_dir")) or ["- none yet"])
         return "\n".join(out)
     if gate == 5:
         return "\n".join([summary_md(s), "", *save_preview(s)])
@@ -2543,10 +2591,17 @@ def pegasus_lines(s: dict, detailed: bool = False) -> list[str]:
 def faasr_lines(s: dict) -> list[str]:
     """Gate 4's FaaSr summary: repo, branch, deploy name, inputs to provide (a count). Local only."""
     run = s.get("run_dir")
-    n_in = len(external_inputs(spec_of(s["spec"]))) if s.get("spec") else 0
-    inputs = "- input files you must provide in S3: " + (f"{n_in} (listed in the full review)" if n_in else "none")
+    import execution as X
     advice = f"- deploying: {DEPLOY_ADVICE}"
-    if not run or not s.get("bundle_dir"):
+    if run and X.is_versioned(s):  # built in memory from the draft (or the approved version)
+        try:
+            n_in = len(X.faasr_built(s, run)["external_inputs"])
+        except X.ExecutionError as e:
+            return [f"**FaaSr (cloud)**: **cannot run on FaaSr:** {e}"]
+    else:
+        n_in = len(external_inputs(spec_of(s["spec"]))) if s.get("spec") else 0
+    inputs = "- input files you must provide in S3: " + (f"{n_in} (listed in the full review)" if n_in else "none")
+    if not run or not (s.get("bundle_dir") or X.is_versioned(s)):
         return ["**FaaSr (cloud)**: (no bundle yet)", inputs, advice]
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))

@@ -81,3 +81,18 @@ def ok(module, argv, capsys):
     code, out = call(module, argv, capsys)
     assert code == 0, out
     return out
+
+
+def redraft(run, s: dict) -> dict:
+    """What re-running emit does to the workflow draft after a test changed the spec in state `s`
+    (a dict, saved by the caller): a new draft and the spec hash it was built from."""
+    import emit
+    from curate_models import WorkflowSpec
+    from spec import spec_hash
+    from spec import VERSION_OUTPUTS
+    d = emit.write_draft(WorkflowSpec.model_validate(s["spec"]), Path(run))
+    assert d["ok"], d
+    s.update(draft_dir=d["dir"], draft_problems=None, draft_spec_hash=spec_hash(s["spec"]))
+    for k in VERSION_OUTPUTS + ("execution",):  # as rewinding to emit clears an earlier approval's version
+        s.pop(k, None)
+    return s

@@ -31,6 +31,7 @@ import argparse
 import json
 import os
 import sys
+import shutil
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -264,8 +265,37 @@ def _content_hash(spec: WorkflowSpec) -> Optional[str]:
         return None
 
 
+def _store_version_folder(cat: Catalog, wid: str, version_dir) -> Optional[str]:
+    """<catalog>/versions/<workflow-id>/: the published folder (workflow.yml, inputs.yml,
+    functions/; never runs/), so another project can use this exact version."""
+    if not version_dir or not (Path(version_dir) / "workflow.yml").is_file():
+        return None
+    dest = cat.root / "versions" / wid
+    if not dest.exists():
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        src = Path(version_dir)
+        shutil.copytree(src, dest, ignore=lambda d, names: ["runs"] if Path(d) == src else [])
+    return str(dest)
+
+
+def version_source(cat: Catalog, wid: str, tmp: Path) -> Optional[Path]:
+    """The catalog's folder of a version; for an entry saved without one, the folder rebuilt from its
+    spec (spec_cwl) into `tmp` (the caller checks it against the entry's content hash)."""
+    stored = cat.root / "versions" / wid
+    if (stored / "workflow.yml").is_file():
+        return stored
+    entry = next((e for e in cat.workflows.values() if e.workflow_id == wid), None)
+    if entry is None:
+        return None
+    import spec_cwl
+    try:
+        return spec_cwl.write(spec_cwl.build(entry.workflow_spec), tmp / wid)
+    except Exception:  # noqa: BLE001 — a spec CWL cannot express has no folder
+        return None
+
+
 def save_workflow(cat: Catalog, spec: WorkflowSpec, dry_run: bool = False, workflow_id: Optional[str] = None,
-                  content_hash: Optional[str] = None) -> dict:
+                  content_hash: Optional[str] = None, version_dir=None) -> dict:
     """Store the version Gate 4 published (`workflow_id`, <name>-v<N>, from the run's state), so the
     catalog entry and the version folder always have the same ID and version: the catalog never
     numbers a workflow itself, and a version is never updated in place. The duplicate question was
@@ -289,6 +319,8 @@ def save_workflow(cat: Catalog, spec: WorkflowSpec, dry_run: bool = False, workf
                                    if ch and e.content_hash == ch and e.workflow_id != workflow_id)}
     if there is not None:
         if ch and there.content_hash == ch:
+            if not dry_run:
+                _store_version_folder(cat, workflow_id, version_dir)
             return {"ok": True, "dry_run": dry_run, "stored": False, "already_in_catalog": True, **result}
         return {"ok": False, **result,
                 "error": f"{workflow_id} is already in the catalog with other content; a version is never updated"}
@@ -299,7 +331,8 @@ def save_workflow(cat: Catalog, spec: WorkflowSpec, dry_run: bool = False, workf
         keywords=spec.name.replace("-", " ").split() + spec.description.lower().split()[:5],
         provenance="user request", usage_count=0)
     cat.save_workflow(entry)
-    return {"ok": True, "stored": True, "id": entry.id, **result}
+    folder = _store_version_folder(cat, workflow_id, version_dir)
+    return {"ok": True, "stored": True, "id": entry.id, "version_folder": folder, **result}
 
 
 # ── import / export ──────────────────────────────────────────────────────────
@@ -478,7 +511,7 @@ def run_command(args, root: Path) -> dict:
         spec, state = load_run(args.run, args.spec)
         state = state or {}
         return save_workflow(cat, spec, args.dry_run, args.workflow_id or state.get("workflow_id"),
-                             state.get("workflow_content_hash"))
+                             state.get("workflow_content_hash"), state.get("version_dir"))
     if cmd == "import":
         return import_entries(cat, args.paths, args.dedupe_code, args.overwrite)
     if cmd == "export":

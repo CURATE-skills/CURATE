@@ -94,8 +94,15 @@ def with_conditional_edge(run):
     s["spec"]["edges"][0]["condition"] = "True"
     s["validation"]["spec_hash"] = S.spec_hash(s["spec"])
     s["stage"] = "gate4"
+    from conftest import redraft
+    redraft(run, s)  # emit again after the spec changed: the draft carries curate:run_if
     save(run, s)
     return s["spec"]["edges"][0]
+
+
+def run_if_refusal(e) -> str:
+    return (f"step {e['to_node']} runs only if {e['from_node']} returns True (curate:run_if): Pegasus runs a fixed "
+            "DAG in which every step runs, so it cannot honour the condition. Deploy to FaaSr instead.")
 
 
 def test_gate4_says_why_it_cannot_run_and_drops_the_image_option(source_run, capsys):
@@ -103,7 +110,7 @@ def test_gate4_says_why_it_cannot_run_and_drops_the_image_option(source_run, cap
     out = ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)
     sec = where_section(out["markdown"])
     assert "**Pegasus** on this machine: **cannot run on Pegasus:**" in sec
-    assert f"- conditional edge {e['from_node']} → {e['to_node']} (taken only when {e['from_node']} returns True)" in sec
+    assert f"- {run_if_refusal(e)}" in sec
     # not available: no "different image" option; Stop is a button again
     assert out["options"] == ["Approve & deploy to FaaSr (cloud)", f"Approve & run on Pegasus (this machine · {DEFAULT_IMG})",
                               "Approve, no deploy", "Stop here"]
@@ -122,9 +129,9 @@ def test_approve_pegasus_goes_to_deploy(source_run, capsys):
 
 
 def test_approve_pegasus_refused_when_it_cannot_run(source_run, capsys):
-    with_conditional_edge(source_run)
+    e = with_conditional_edge(source_run)
     code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
-    assert code == 2 and out["error"].startswith("this workflow cannot run on Pegasus: conditional edge")
+    assert code == 2 and out["error"].startswith(f"this workflow cannot run on Pegasus: {run_if_refusal(e)}")
     assert state(source_run)["stage"] == "gate4"
 
 
@@ -271,13 +278,13 @@ def test_start_at_deploy_offers_both_targets_and_runs_on_pegasus(source_run, cap
 
 def test_start_at_deploy_pegasus_refused_when_it_cannot_run(source_run, capsys):
     from test_start import start
-    with_conditional_edge(source_run)
+    e = with_conditional_edge(source_run)
     ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep"], capsys)
     code, out = start(capsys, source_run, "deploy", "--from-run", state(source_run)["run_id"])
     assert code == 0, out
     new = Path(out["run"])
     code, res = call(S, ["confirm-start", "--run", str(new), "--deploy", "pegasus"], capsys)
-    assert code == 2 and res["error"].startswith("this workflow cannot run on Pegasus: conditional edge")
+    assert code == 2 and res["error"].startswith(f"this workflow cannot run on Pegasus: {run_if_refusal(e)}")
     assert state(new)["deploy_choice"] is None
     assert ok(S, ["confirm-start", "--run", str(new)], capsys)["deploy_choice"] == "yes"  # FaaSr still possible
 

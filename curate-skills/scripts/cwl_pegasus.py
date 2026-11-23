@@ -48,8 +48,10 @@ def build(wf, name: str, image: str | None = None) -> dict:
                             "(curate:run_if): Pegasus runs a fixed DAG in which every step runs, so it cannot "
                             "honour the condition. Deploy to FaaSr instead.")
         if s.packages:
-            warnings.append(f"step {sid} imports {', '.join(s.packages)}: these must already be in the image; "
-                            "nothing is installed at run time")
+            used = image or (s.image and ("docker:///" + s.image if "://" not in s.image else s.image)) \
+                or (wf.image and ("docker:///" + wf.image if "://" not in wf.image else wf.image))
+            warnings.append(f"step {sid} imports {', '.join(s.packages)}: these must already be in the image "
+                            f"{used}; nothing is installed at run time")
     if problems:
         raise BuildError(problems)
     exp = expand_cwl(wf)

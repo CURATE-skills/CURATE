@@ -85,7 +85,8 @@ def _where(rec: dict) -> dict:
     """Paths on the Pegasus host for the backend's status/collect."""
     if rec.get("host"):
         root = rec["remote_dir"]
-        return {"host": rec["host"], "ir": f"{root}/ir/ir.yaml", "work": rec["work_dir"],
+        folder = Path(rec.get("ir_dir") or "ir").name  # "ir", or "bundle" for a versioned run
+        return {"host": rec["host"], "ir": f"{root}/{folder}/ir.yaml", "work": rec["work_dir"],
                 "backend": f"{root}/curate_ir/backends/pegasus_backend.py"}
     return {"host": None, "ir": str(Path(rec["ir_dir"]) / "ir.yaml"), "work": rec["work_dir"],
             "backend": str(IR_TOOLS / "backends" / "pegasus_backend.py")}
@@ -101,9 +102,18 @@ def _backend(w: dict, cmd: str, timeout=300) -> dict:
                          f"(exit {code}): {hostcmd.tail(err or out, 4)}")
 
 
-def _fetch(run: Path, w: dict) -> Path:
-    """An ssh host's run-report.json and deliver/ -> <run>/pegasus/result/ (this run's own folder)."""
-    dest = run / "pegasus" / "result"
+def local_dir(run: Path, s: dict) -> Path:
+    """Where this run keeps its Pegasus results and report: the execution run's folder for a
+    versioned run (<workflow-id>/runs/<run-id>/), else <run>/pegasus/."""
+    ex = s.get("execution") or {}
+    if s.get("workflow_id") and ex.get("target") == "pegasus" and ex.get("dir"):
+        return Path(ex["dir"])
+    return Path(run) / "pegasus"
+
+
+def _fetch(run: Path, w: dict, s: dict | None = None) -> Path:
+    """An ssh host's run-report.json and deliver/ -> <local>/result/ (this run's own folder)."""
+    dest = local_dir(run, s or {}) / "result"
     dest.mkdir(parents=True, exist_ok=True)
     for src in (f"{w['work']}/run-report.json", f"{w['work']}/deliver"):
         code, _, err = RUN(["scp", "-r", "-q", *hostcmd.SSH_OPTS, f"{w['host']}:{src}", str(dest) + "/"], timeout=600)
@@ -272,7 +282,7 @@ def poll(run: str, chunk=None, report_only=False, minutes=None, interval=None, c
     else:
         report = _backend(w, "collect")
         if w["host"]:
-            dest = _fetch(run_p, w)
+            dest = _fetch(run_p, w, s)
             deliver = str(dest / "deliver")
             report_file = str(dest / "run-report.json")
         else:
@@ -306,7 +316,7 @@ def poll(run: str, chunk=None, report_only=False, minutes=None, interval=None, c
         out["report"] = report_md(rec, result, st, report, deliver, used / 60, out_dir)
         return out
 
-    details = run_p / "pegasus" / "monitor-report.md"
+    details = local_dir(run_p, s) / "monitor-report.md"
     details.parent.mkdir(parents=True, exist_ok=True)
     details.write_text(report_md(rec, result, st, report, deliver, used / 60, out_dir) + "\n")
     out["details"] = str(details)

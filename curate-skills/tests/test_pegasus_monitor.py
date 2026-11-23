@@ -114,7 +114,7 @@ def test_running_then_success(launched, monkeypatch, capsys):
     assert mon["output_dir"] == outdir
     assert len(mon["delivered"]) == 5 and mon["missing"] == [] and mon["dagman_exit"] == 0
     assert s["history"][-1]["gate"] == "monitor" and s["history"][-1]["decision"] == "succeeded"
-    assert (launched.resolve() / "pegasus" / "monitor-report.md").is_file()
+    assert (Path(state(launched)["execution"]["dir"]) / "monitor-report.md").is_file()
     # the backend ran with the plugin's backend and the run's own IR and work folders, here
     (first,) = host.calls[:1]
     assert first[:2] == ["sh", "-c"] and f"{PM.IR_TOOLS}/backends/pegasus_backend.py status" in first[2]
@@ -151,7 +151,7 @@ def test_failure_stops_and_blocks_finalize(launched, monkeypatch):
     s = state(launched)
     assert out["recheck_command"] == f"/curate-skills:curate-monitor --run {s['run_id']}"
     assert s["stopped_from"] == "monitor" and s["monitor"]["failed"] == ["shuffle"]
-    assert "pegasus-analyzer" in (launched.resolve() / "pegasus" / "monitor-report.md").read_text()
+    assert "pegasus-analyzer" in (Path(state(launched)["execution"]["dir"]) / "monitor-report.md").read_text()
     s["stage"] = "finalize"
     assert S.require_problems(s, "finalize")[0].startswith("the Pegasus run has not been confirmed to work (monitor result failure)")
     assert catalog.deployed_run_problem(s).startswith("the Pegasus run has not been confirmed")
@@ -191,14 +191,14 @@ def test_remote_status_collect_and_fetch(peg_run, monkeypatch, tmp_path):  # noq
     rec = state(peg_run)["pegasus"]
     host = Host([ALL], collect=report())
     out = poll(peg_run, host, monkeypatch)
-    res = peg_run.resolve() / "pegasus" / "result"
     s = state(peg_run)
+    res = Path(s["execution"]["dir"]) / "result"  # the execution run's folder holds its results
     outdir = Path(s["project_dir"]) / "pegasus_output" / f"mapreduce_word_count-{s['run_id']}"
     assert out["result"] == "success" and out["lines"][-1].endswith(f"results in {outdir})")
     assert (outdir / "results" / "word_count_1.json").is_file() and (outdir / "run-report.json").is_file()
     ssh = [c for c in host.calls if c[0] == "ssh"]
     assert ssh and all(c[1:6] == ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "maxwell"] for c in ssh)
-    assert f"{rec['remote_dir']}/curate_ir/backends/pegasus_backend.py status {rec['remote_dir']}/ir/ir.yaml" in ssh[0][-1]
+    assert f"{rec['remote_dir']}/curate_ir/backends/pegasus_backend.py status {rec['remote_dir']}/bundle/ir.yaml" in ssh[0][-1]
     scp = [c for c in host.calls if c[0] == "scp"]
     assert [c[-2] for c in scp] == [f"maxwell:{rec['work_dir']}/run-report.json", f"maxwell:{rec['work_dir']}/deliver"]
     assert (res / "run-report.json").is_file() and (res / "deliver" / "results" / "word_count_1.json").is_file()
@@ -216,7 +216,8 @@ def test_monitor_cli_dispatches_without_github(launched, monkeypatch, capsys):
     out = json.loads(capsys.readouterr().out)
     assert code == 0 and out["result"] == "success"
     st_ = ok(monitor, ["status", "--run", str(launched)], capsys)
-    assert st_["result"] == "success" and st_["deliver_dir"].endswith("/pegasus/work/deliver")
+    ex = state(launched)["execution"]
+    assert st_["result"] == "success" and st_["deliver_dir"] == f"{ex['dir']}/work/deliver"
     code, out = call(monitor, ["download-outputs", "--run", str(launched), "--to", "/tmp/x"], capsys)
     assert code == 2 and "already on disk" in out["error"]
 

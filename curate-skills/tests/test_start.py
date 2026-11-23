@@ -303,12 +303,36 @@ def test_deploy_requires_the_deploy_choice(source_run, capsys):
     assert code == 1 and "--start-at deploy --from-run" in out["problems"][0]
 
 
-def test_approve_and_deploy_needs_the_bundle(source_run, capsys):
+def test_approve_and_deploy_builds_the_faasr_bundle_from_the_version(source_run, capsys):
+    """Approve & deploy builds the FaaSr bundle after Gate 4, from the published version, into the
+    execution run's folder, with its manifest (emit's bundle is not what gets deployed)."""
+    import ids
     s = state(source_run)
     s.update(stage="gate4", bundle_dir=str(source_run / "nowhere"))
     (source_run / "state.json").write_text(json.dumps(s))
+    out = ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
+    s = state(source_run)
+    ex = s["execution"]
+    assert out["stage"] == "deploy" and ex["target"] == "faasr" and ex["reference"].startswith(s["workflow_id"] + "/")
+    assert Path(ex["bundle_dir"]) == Path(s["version_dir"]) / "runs" / ex["run_id"] / "bundle"
+    assert (Path(ex["bundle_dir"]) / "workflow.json").is_file() and (Path(ex["bundle_dir"]) / "outputs.json").is_file()
+    m = ids.check_manifest(ex["dir"], s["version_hash"])
+    assert m["target"] == "faasr" and m["bundle_hash"] == ex["bundle_hash"]
+
+
+def test_approve_and_deploy_refused_before_publishing_when_faasr_cannot_build(source_run, capsys, monkeypatch):
+    import execution as X
+    s = state(source_run)
+    s.update(stage="gate4")
+    (source_run / "state.json").write_text(json.dumps(s))
+    versions = sorted(p.name for p in (Path(s["project_dir"]) / ".curate" / "workflows").iterdir())
+
+    def cannot(*a, **kw):
+        raise X.ExecutionError("cannot be built for FaaSr: step x scatters over several axes")
+    monkeypatch.setattr(X, "faasr_built", cannot)
     code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
-    assert code == 2 and "cannot be deployed" in out["error"]
+    assert code == 2 and "cannot be built for FaaSr" in out["error"] and "choose another target" in out["error"]
+    assert sorted(p.name for p in (Path(s["project_dir"]) / ".curate" / "workflows").iterdir()) == versions
 
 
 def test_start_at_deploy_copies_the_approved_bundle_and_its_hash(source_run, capsys):
@@ -501,9 +525,13 @@ def test_start_at_deploy_end_to_end_with_fakes(source_run, capsys, monkeypatch):
     assert all(p.startswith(f"functions/{name}/") for p, _ in fake.puts)
     assert len(fake.puts) == 2 * len(state(source_run)["spec"]["nodes"])  # each step: wrapper + _main
 
-    # the carried-over approval only counts while the bundle matches its hash
-    bundle = Path(state(Path(new))["bundle_dir"])
-    (bundle / "README.md").write_text("edited after approval\n")
+    # this deploy-only run built its own FaaSr bundle from the carried-over approved version
+    s_new = state(Path(new))
+    assert s_new["workflow_id"] == state(source_run)["workflow_id"]
+    assert s_new["execution"]["reference"].startswith(s_new["workflow_id"] + "/")
+    # the manifest check replaces the bundle hash: a bundle edited after it was built is refused
+    bundle = Path(s_new["execution"]["bundle_dir"])
+    (bundle / "README.md").write_text("edited after it was built\n")
     code = D.main(["upload", "--run", new, "--confirmed"], opener=fake, s3_factory=FakeS3())
     res = json.loads(capsys.readouterr().out)
-    assert code == 1 and any("no longer matches the Gate 4 approval carried over" in p for p in res["problems"])
+    assert code == 1 and any("the bundle changed after it was built" in p for p in res["problems"])

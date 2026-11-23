@@ -2,6 +2,7 @@
 import base64
 import io
 import json
+import shutil
 import sys
 import types
 import urllib.error
@@ -741,19 +742,29 @@ def test_steps_go_in_order_and_a_finished_step_is_skipped(deploying, env, capsys
     ("actions_env", "GITHUB_REPOSITORY is set here"),
     ("version_changed", "approved version w-v1 changed after it was published"),
     ("version_missing", "approved version w-v1 is missing"),
+    ("built_bundle_changed", "the bundle changed after it was built"),
 ])
 def test_steps_refuse_before_writing(deploying, env, capsys, monkeypatch, case, needle):
     s = json.loads((deploying / "state.json").read_text())
-    if case.startswith("version"):  # the version Gate 4 published must be the one deployed
+    if case.startswith("version") or case == "built_bundle_changed":
+        # a versioned run: the version Gate 4 published, and the bundle built from it with a manifest
         import ids
         vdir = deploying / "w-v1"
         vdir.mkdir()
         (vdir / "workflow.yml").write_text("class: Workflow\n")
-        s.update(workflow_id="w-v1", version_dir=str(vdir), version_hash=ids.tree_hash(vdir, skip=("runs",)))
+        vhash = ids.tree_hash(vdir, skip=("runs",))
+        exdir = vdir / "runs" / "20261122-010101-abcd"
+        shutil.copytree(s["bundle_dir"], exdir / "bundle")
+        ids.write_manifest(exdir, vhash, "faasr")
+        s.update(workflow_id="w-v1", version_dir=str(vdir), version_hash=vhash,
+                 execution={"run_id": "20261122-010101-abcd", "reference": "w-v1/20261122-010101-abcd",
+                            "dir": str(exdir), "target": "faasr", "bundle_dir": str(exdir / "bundle")})
         if case == "version_changed":
             (vdir / "workflow.yml").write_text("class: Workflow\nedited: true\n")
-        else:
+        elif case == "version_missing":
             s["version_dir"] = str(deploying / "gone")
+        else:
+            (exdir / "bundle" / "README.md").write_text("edited after it was built\n")
     if case == "changed":
         (Path(s["bundle_dir"]) / "functions" / "plot_weather.py").write_text("def plot_weather(): return 1\n")
     if case == "no_hash":

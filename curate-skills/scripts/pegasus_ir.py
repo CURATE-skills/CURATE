@@ -333,6 +333,17 @@ def plan(s: dict, st: dict) -> dict:
     """What the Pegasus target would do for this run, without writing anything: the IR name,
     job count, inputs and deliverables; or the problems that make it impossible."""
     spec = WorkflowSpec.model_validate(s["spec"])
+    import execution as X
+    if X.is_versioned(s) and s.get("run_dir"):  # built in memory from the draft or the approved version
+        ex = s.get("execution") or {}
+        name = run_ir_name(spec.name, ex.get("run_id") or s.get("run_id", ""))
+        try:
+            b = X.pegasus_built(s, s["run_dir"], name, st["image"])
+        except X.ExecutionError as e:
+            return {"ok": False, "name": name, "problems": e.problems}
+        return {"ok": True, "name": name, "jobs": len(b["ir"]["nodes"]), "functions": len(b["functions"]),
+                "inputs": b["needed"], "deliverables": [o["deliver_as"] for o in b["ir"]["outputs"]],
+                "deliverable_files": len(b["ir"]["outputs"]), "warnings": b["warnings"]}
     name = run_ir_name(spec.name, s.get("run_id", ""))
     try:
         built = build_ir(spec, name=name, image=st["image"])

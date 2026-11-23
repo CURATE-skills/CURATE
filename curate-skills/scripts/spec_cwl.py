@@ -113,6 +113,8 @@ def content_hash(workflow: dict, functions: dict[str, str]) -> str:
     for k in list(doc):
         if k in ("label", "doc", "curate:content_hash") or k.startswith("s:"):
             del doc[k]
+    if isinstance(doc.get("$namespaces"), dict):  # the s: namespace only serves the identity fields
+        doc["$namespaces"] = {k: v for k, v in doc["$namespaces"].items() if k != "s"}
     for i in (doc.get("inputs") or {}).values():
         if isinstance(i, dict):
             i.pop("default", None)

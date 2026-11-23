@@ -137,15 +137,21 @@ def _changed(s: dict) -> dict | None:
 
 def _layout(run: Path, s: dict, st: dict) -> dict:
     rec = s.get("pegasus") or {}
-    local = run / "pegasus"
-    out = {"local": local, "ir_dir": local / "ir", "where": st["host"] or "local"}
+    ex = s.get("execution") or {}
+    if s.get("workflow_id") and ex.get("target") == "pegasus":
+        # a versioned run: the folder is the execution run's bundle, and the host path its full reference
+        local, ir_dir, ref = Path(ex["dir"]), Path(ex["bundle_dir"]), ex["reference"]
+    else:
+        local, ref = run / "pegasus", s["run_id"]
+        ir_dir = local / "ir"
+    out = {"local": local, "ir_dir": ir_dir, "where": st["host"] or "local", "reference": ref}
     if st["host"]:
         remote = rec.get("remote_dir")  # absolute, known after copy
-        shown = remote or f"~/{REMOTE_ROOT}/{s['run_id']}"
-        out.update(remote_dir=remote, shown_remote=shown, ir_on_host=f"{shown}/ir/ir.yaml",
+        shown = remote or f"~/{REMOTE_ROOT}/{ref}"
+        out.update(remote_dir=remote, shown_remote=shown, ir_on_host=f"{shown}/{ir_dir.name}/ir.yaml",
                    work=f"{shown}/work", backend=f"{shown}/curate_ir/backends/pegasus_backend.py")
     else:
-        out.update(remote_dir=None, ir_on_host=str(local / "ir" / "ir.yaml"), work=str(local / "work"),
+        out.update(remote_dir=None, ir_on_host=str(ir_dir / "ir.yaml"), work=str(local / "work"),
                    backend=str(IR_TOOLS / "backends" / "pegasus_backend.py"))
     return out
 
@@ -227,10 +233,10 @@ def preflight(run: str, inputs_dir=None) -> dict:
         if "copy" in done:
             lines.append(f"- `{st['host']}:{lay['shown_remote']}/`: written by this run (copied)")
         else:
-            code, _, _ = _on(st["host"], f"test -e ~/{REMOTE_ROOT}/{q(s['run_id'])}", timeout=60)
+            code, _, _ = _on(st["host"], f"test -e ~/{REMOTE_ROOT}/{q(lay['reference'])}", timeout=60)
             if code == 0:
                 problems.append(f"{st['host']}:{lay['shown_remote']} already exists; nothing is overwritten")
-            lines.append(f"- copies to `{st['host']}:{lay['shown_remote']}/` (ir/, curate_ir/): "
+            lines.append(f"- copies to `{st['host']}:{lay['shown_remote']}/` ({lay['ir_dir'].name}/, curate_ir/): "
                          + ("exists — refused" if code == 0 else "new"))
     if "launch" not in done:
         exists = Path(lay["work"]).exists() if not st["host"] else False
@@ -253,7 +259,7 @@ def _plan(step: str, run_p: Path, s: dict, st: dict, lay: dict) -> dict:
     if step == "prepare":
         paths = [f"{lay['ir_dir']}/ir.yaml", f"{lay['ir_dir']}/functions/", f"{lay['ir_dir']}/inputs/"]
     elif step == "copy":
-        paths = [f"{st['host']}:{lay['shown_remote']}/ir/", f"{st['host']}:{lay['shown_remote']}/curate_ir/"]
+        paths = [f"{st['host']}:{lay['shown_remote']}/{lay['ir_dir'].name}/", f"{st['host']}:{lay['shown_remote']}/curate_ir/"]
     else:
         paths = [f"{lay['work']}/ (Pegasus work folder, submit/ run folder)"]
     return {"step": step, "what": STEP_WHAT[step], "where": where, "paths": paths}
@@ -285,6 +291,7 @@ def step(run: str, name: str, confirmed=False, overwrite_own=False, inputs_dir=N
         _update(run_p, lambda x: _set_step(x, name, False, str(e)))
         return {**base, "ok": False, "error": str(e), "retry_with": "--overwrite-own"}
     s = _update(run_p, lambda x: (_set_step(x, name, True, None), x["pegasus"].update(result.get("record", {})),
+                                  x.update(execution=result["execution"]) if result.get("execution") else None,
                                   x.update(stage="monitor", begun=None) if name == "launch" else None))
     done = _done(s)
     out = {**base, "ok": True, "progress": " · ".join(STEP_DONE[k] for k in steps_for(st["host"]) if k in done),
@@ -308,6 +315,8 @@ def _prepare(run_p, s, st, lay, overwrite_own, inputs_dir) -> dict:
                             + ("" if overwrite_own else " (if this run's prepare wrote it, retry with --overwrite-own)"))
         shutil.rmtree(ir_dir)
     spec = WorkflowSpec.model_validate(s["spec"])
+    if s.get("workflow_id"):
+        return _prepare_versioned(run_p, s, st, lay, inputs_dir, spec)
     name = P.run_ir_name(spec.name, s["run_id"])
     try:
         built = P.build_ir(spec, name=name, image=st["image"])
@@ -330,12 +339,41 @@ def _prepare(run_p, s, st, lay, overwrite_own, inputs_dir) -> dict:
             "message": f"wrote {ir_dir} ({v['jobs']} jobs); validated"}
 
 
+def _prepare_versioned(run_p, s, st, lay, inputs_dir, spec) -> dict:
+    """Build the Pegasus folder from the approved version (cwl_pegasus), copy the input files into it,
+    then write the execution's manifest (execution.finish_pegasus)."""
+    import cwl_pegasus
+    import execution as X
+    ex = s["execution"]
+    ir_dir = lay["ir_dir"]
+    name = P.run_ir_name(spec.name, ex["run_id"])
+    try:
+        built = X.pegasus_built(s, run_p, name, st["image"])
+    except X.ExecutionError as e:
+        raise StepError(str(e))
+    missing = _inputs(built["needed"], inputs_dir)
+    if missing:
+        raise StepError(missing[0])
+    _log(run_p, "prepare", "local", ir_dir)
+    cwl_pegasus.write_folder(ir_dir, built)
+    for f in built["needed"]:
+        shutil.copy2(Path(inputs_dir) / f, ir_dir / "inputs" / f)
+    v = cwl_pegasus.validate_folder(ir_dir)
+    if v["errors"]:
+        raise StepError("the IR did not validate: " + " | ".join(v["errors"]))
+    return {"execution": X.finish_pegasus(s, ex), "record": {"name": name, "host": st["host"], "runtime": st["runtime"], "image": st["image"],
+                       "image_source": st["image_source"], "reference": ex["reference"],
+                       "ir_dir": str(ir_dir), "inputs_from": str(Path(inputs_dir).resolve()) if inputs_dir else None,
+                       "jobs": v["jobs"]},
+            "message": f"wrote {ir_dir} ({v['jobs']} jobs, {ex['reference']}); validated"}
+
+
 def _copy(run_p, s, st, lay, overwrite_own, inputs_dir) -> dict:
     host = st["host"]
     code, out, err = _on(host, "cd && pwd", timeout=60)
     if code != 0 or not out.strip().startswith("/"):
         raise StepError(f"could not reach {host} ({_tail(err, 2)})")
-    remote = f"{out.strip()}/{REMOTE_ROOT}/{s['run_id']}"
+    remote = f"{out.strip()}/{REMOTE_ROOT}/{lay['reference']}"
     code, _, _ = _on(host, f"test -e {q(remote)}", timeout=60)
     if code == 0:
         if not (overwrite_own and _own(run_p, "copy", host, remote)):

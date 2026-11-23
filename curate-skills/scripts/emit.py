@@ -599,7 +599,8 @@ def main(argv=None) -> int:
         if args.run:
             draft = write_draft(spec, Path(args.run))
             result["draft"] = draft
-            fields.update(draft_dir=draft.get("dir"), draft_problems=draft.get("problems") or None)
+            fields.update(draft_dir=draft.get("dir"), draft_problems=draft.get("problems") or None,
+                          draft_spec_hash=spec_hash(spec.model_dump(mode="json")) if draft["ok"] else None)
             if not draft["ok"]:
                 result["ok"] = False
         update_state(args.run, **fields)

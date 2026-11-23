@@ -59,6 +59,7 @@ def test_publish_only_the_approved_draft_atomically_and_read_only(tmp_path):
     doc = yaml.safe_load((dest / "workflow.yml").read_text())
     assert doc["s:identifier"] == "mapreduce-v1" and doc["s:version"] == "1"
     assert doc["curate:content_hash"] == plan["content_hash"] and doc["$namespaces"]["s"] == "https://schema.org/"
+    assert ids.draft_content_hash(dest) == plan["content_hash"]  # the published folder hashes like its draft
     assert list(doc)[:3] == ["cwlVersion", "class", "$namespaces"]
     assert not (dest / "functions" / "map.py").stat().st_mode & 0o222
     assert not any(p.name.startswith(".mapreduce-v1.tmp") for p in dest.parent.iterdir())

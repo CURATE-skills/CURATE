@@ -102,6 +102,12 @@ def run_steps(run, *names, **kw):
     return out
 
 
+def ex(run):
+    """The execution run Gate 4 opened for this versioned run: its bundle folder and work folder."""
+    e = state(run)["execution"]
+    return Path(e["bundle_dir"]), Path(e["dir"]) / "work", e["reference"]
+
+
 # ── local ──
 
 def test_preflight_local(peg_run, fake):
@@ -112,19 +118,24 @@ def test_preflight_local(peg_run, fake):
     assert out["summary"].startswith(f"Pegasus run `mapreduce-word-count-{s['run_id'][4:8]}-{s['run_id'][9:13]}` "
                                      "on this machine: 11 jobs, image `docker:///python:3.12-slim` (the built-in default), "
                                      "runtime docker")
-    assert f"- writes `{peg_run.resolve()}/pegasus/ir/` (ir.yaml, functions/ 5 files, inputs/): new" in out["summary"]
+    ir, _, ref = ex(peg_run)
+    assert ir.parent.parent.parent.name == state(peg_run)["workflow_id"] and ref.startswith(state(peg_run)["workflow_id"] + "/")
+    assert f"- writes `{ir}/` (ir.yaml, functions/ 5 files, inputs/): new" in out["summary"]
     assert "- input files: none" in out["summary"]
-    assert not (peg_run / "pegasus").exists()  # read-only
+    assert not ir.parent.exists()  # read-only
 
 
 def test_each_step_asks_first_then_runs(peg_run, fake):
     out = PD.step(str(peg_run), "prepare")
     assert out["needs_confirmation"] and out["plan"]["what"].startswith("write the Pegasus workflow folder")
-    assert not (peg_run / "pegasus").exists()
+    ir, work_p, _ = ex(peg_run)
+    assert not ir.parent.exists()
     out = PD.step(str(peg_run), "prepare", confirmed=True)
     assert out["ok"] and out["progress"] == "prepared" and out["next_step"] == "launch"
-    ir = peg_run.resolve() / "pegasus" / "ir"
     assert (ir / "ir.yaml").is_file() and len(list((ir / "functions").iterdir())) == 5
+    assert (ir.parent / "manifest.json").is_file()  # built from the approved version, then the manifest
+    import ids
+    assert ids.check_manifest(ir.parent, state(peg_run)["version_hash"])["target"] == "pegasus"
     assert PD.step(str(peg_run), "launch")["needs_confirmation"]
     assert not any(" submit " in c[-1] for c in fake.calls)
     out = PD.step(str(peg_run), "launch", confirmed=True)
@@ -132,7 +143,7 @@ def test_each_step_asks_first_then_runs(peg_run, fake):
     assert "DAGMan cluster 412" in out["message"]
     s = state(peg_run)
     rec = s["pegasus"]
-    work = str(peg_run.resolve() / "pegasus" / "work")
+    work = str(work_p)
     assert rec["host"] is None and rec["runtime"] == "docker" and rec["jobs"] == 11
     assert rec["run_dir"] == f"{work}/submit/u/pegasus/wf/run0001" and rec["work_dir"] == work
     assert rec["submitted_at"] and rec["dagman_cluster"] == 412
@@ -155,7 +166,7 @@ def test_steps_in_order_and_once(peg_run, fake):
 
 
 def test_nothing_overwritten_and_overwrite_own(peg_run, fake):
-    ir = peg_run.resolve() / "pegasus" / "ir"
+    ir, _, _ = ex(peg_run)
     ir.mkdir(parents=True)
     (ir / "mine.txt").write_text("not CURATE's")
     pf = PD.preflight(str(peg_run))
@@ -173,7 +184,7 @@ def test_failed_launch_retry_with_overwrite_own(peg_run, fake, monkeypatch, tmp_
     assert not out["ok"] and "pegasus-plan failed" in out["error"]
     s = state(peg_run)
     assert s["stage"] == "deploy" and s["pegasus"]["steps"]["launch"]["ok"] is False
-    work = peg_run.resolve() / "pegasus" / "work"
+    _, work, _ = ex(peg_run)
     work.mkdir()  # what the failed submit left behind
     fake.submit_ok = True
     assert "already exists" in PD.step(str(peg_run), "launch", confirmed=True)["error"]
@@ -182,14 +193,15 @@ def test_failed_launch_retry_with_overwrite_own(peg_run, fake, monkeypatch, tmp_
 
 
 def test_inputs_from_a_folder(peg_run, fake, monkeypatch, tmp_path):
+    import execution as X
     import pegasus_ir as P
-    real = P.build_ir
+    real = X.pegasus_built
 
-    def with_input(spec, **kw):
-        b = real(spec, **kw)
-        b["inputs"] = ["seed.txt"]
+    def with_input(*a, **kw):
+        b = real(*a, **kw)
+        b["needed"] = ["seed.txt"]
         return b
-    monkeypatch.setattr(P, "build_ir", with_input)
+    monkeypatch.setattr(X, "pegasus_built", with_input)
     monkeypatch.setattr(P, "plan", lambda s, st: {"ok": True, "name": "n", "jobs": 11, "functions": 5,
                                                    "inputs": ["seed.txt"], "deliverables": [], "warnings": []})
     pf = PD.preflight(str(peg_run))
@@ -200,7 +212,7 @@ def test_inputs_from_a_folder(peg_run, fake, monkeypatch, tmp_path):
     (d / "seed.txt").write_text("hello")
     assert PD.preflight(str(peg_run), str(d))["ok"]
     run_steps(peg_run, "prepare", inputs_dir=str(d))
-    assert (peg_run.resolve() / "pegasus" / "ir" / "inputs" / "seed.txt").read_text() == "hello"
+    assert (ex(peg_run)[0] / "inputs" / "seed.txt").read_text() == "hello"
     assert state(peg_run)["pegasus"]["inputs_from"] == str(d.resolve())
 
 
@@ -223,15 +235,15 @@ def test_settings_pinned_after_prepare(peg_run, fake, monkeypatch):
 def test_remote_host_copy_and_launch(peg_run, fake, monkeypatch):
     monkeypatch.setenv("CURATE_PEGASUS_HOST", "maxwell")
     pf = PD.preflight(str(peg_run))
-    rid = state(peg_run)["run_id"]
+    rid = ex(peg_run)[2]  # the full reference: <workflow-id>/<run-id>
     assert pf["ok"] and pf["steps"] == ["prepare", "copy", "launch"]
-    assert f"- copies to `maxwell:~/curate-runs/{rid}/` (ir/, curate_ir/): new" in pf["summary"]
+    assert f"- copies to `maxwell:~/curate-runs/{rid}/` (bundle/, curate_ir/): new" in pf["summary"]
     run_steps(peg_run, "prepare")
     plan = PD.step(str(peg_run), "copy")["plan"]
-    assert plan["paths"] == [f"maxwell:~/curate-runs/{rid}/ir/", f"maxwell:~/curate-runs/{rid}/curate_ir/"]
+    assert plan["paths"] == [f"maxwell:~/curate-runs/{rid}/bundle/", f"maxwell:~/curate-runs/{rid}/curate_ir/"]
     run_steps(peg_run, "copy")
     remote = fake.home / "curate-runs" / rid
-    assert (remote / "ir" / "ir.yaml").is_file() and (remote / "curate_ir" / "backends" / "pegasus_backend.py").is_file()
+    assert (remote / "bundle" / "ir.yaml").is_file() and (remote / "curate_ir" / "backends" / "pegasus_backend.py").is_file()
     out = run_steps(peg_run, "launch")
     assert out["progress"] == "prepared · copied · launched"
     rec = state(peg_run)["pegasus"]
@@ -246,7 +258,7 @@ def test_remote_host_copy_and_launch(peg_run, fake, monkeypatch):
 
 def test_remote_folder_that_exists_is_refused(peg_run, fake, monkeypatch):
     monkeypatch.setenv("CURATE_PEGASUS_HOST", "maxwell")
-    rid = state(peg_run)["run_id"]
+    rid = ex(peg_run)[2]
     (fake.home / "curate-runs" / rid).mkdir(parents=True)
     pf = PD.preflight(str(peg_run))
     assert not pf["ok"] and f"maxwell:~/curate-runs/{rid} already exists; nothing is overwritten" in pf["problems"]

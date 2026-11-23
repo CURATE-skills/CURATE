@@ -201,6 +201,30 @@ def publish(draft, name: str, project, version: int, approved_hash: str) -> dict
             "draft_hash": approved_hash, "version_hash": tree_hash(dest, skip=("runs",))}
 
 
+def copy_version(src, project, wid: str, expected_content_hash: str) -> dict:
+    """Bring an existing version into this project (Gate 4's "drop the new one" when the identical
+    version is only in the catalog): workflow.yml, inputs.yml and functions/ (never runs/), same
+    workflow ID, read-only, refused unless its content hash is the catalog's."""
+    src = Path(src)
+    dest = version_dir(project, wid)
+    if dest.exists():
+        raise IdError(f"{wid} already exists in this project; nothing was copied")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.parent / f".{wid}.tmp-{secrets.token_hex(3)}"
+    shutil.copytree(src, tmp, ignore=lambda d, names: ["runs"] if Path(d) == src else [])
+    got = draft_content_hash(tmp)
+    if got != expected_content_hash:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise IdError(f"the catalog's copy of {wid} does not match its content hash; nothing was copied")
+    try:
+        os.rename(tmp, dest)
+    except OSError:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise IdError(f"{wid} appeared while copying; nothing was overwritten")
+    _read_only(dest)
+    return {"dir": str(dest), "version_hash": tree_hash(dest, skip=("runs",)), "content_hash": got}
+
+
 def _read_only(folder: Path) -> None:
     for p in folder.rglob("*"):
         if p.is_file():

@@ -113,6 +113,8 @@ def test_pegasus_image_summary_shows_package_warnings(source_run, capsys):  # no
     s = state(source_run)
     s["spec"]["nodes"][1]["dependencies"] = ["numpy"]
     s["validation"]["spec_hash"] = S.spec_hash(s["spec"])
+    from conftest import redraft
+    redraft(source_run, s)  # emit again after the spec changed
     (source_run / "state.json").write_text(json.dumps(s))
     out = ok(S, ["pegasus-image", "--run", str(source_run), "--image", "docker:///me/tools:2"], capsys)
     name = s["spec"]["nodes"][1]["name"]
@@ -170,7 +172,7 @@ def test_prepare_pins_the_chosen_image(chosen, monkeypatch):
     run_steps(chosen, "prepare")
     rec = state(chosen)["pegasus"]
     assert rec["image"] == "docker:///me/tools:2" and rec["image_source"] == "chosen at Gate 4, this run only"
-    ir = yaml.safe_load((chosen.resolve() / "pegasus" / "ir" / "ir.yaml").read_text())
+    ir = yaml.safe_load((Path(state(chosen)["execution"]["bundle_dir"]) / "ir.yaml").read_text())
     assert ir["defaults"]["image"] == "docker:///me/tools:2"
     # CURATE_PEGASUS_IMAGE does not matter for a run with its own image; the runtime still does
     monkeypatch.setenv("CURATE_PEGASUS_IMAGE", "docker:///something/else:9")

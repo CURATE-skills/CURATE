@@ -165,7 +165,7 @@ def test_save_workflow_stores_the_published_version_never_its_own(tmp_path):
     assert reloaded.workflow_by_name(e2.name).workflow_id == "mapreduce-word-count-v2"
 
 
-def _approved_run(tmp_path, name, spec, on_duplicate=None, new_version_of=None):
+def _approved_run(tmp_path, name, spec, on_duplicate=None, new_version_of=None, catalog_dir=None):
     """A generation run at Gate 4 with a draft, approved through spec.publish_version (what Gate 4
     approval does); returns the run folder with state.json written."""
     import emit
@@ -173,7 +173,7 @@ def _approved_run(tmp_path, name, spec, on_duplicate=None, new_version_of=None):
     project = tmp_path / "project"
     run = project / ".curate" / "runs" / name
     run.mkdir(parents=True)
-    s = {"run_id": name, "project_dir": str(project), "catalog_dir": str(tmp_path / "cat"),
+    s = {"run_id": name, "project_dir": str(project), "catalog_dir": str(catalog_dir or tmp_path / "cat"),
          "spec": json.loads(spec.model_dump_json()), "draft_dir": emit.write_draft(spec, run)["dir"]}
     if new_version_of:  # what spec.py set-name NAME --new-version records
         s.update(workflow_name=new_version_of, workflow_lineage={"new_version_of": new_version_of})
@@ -384,3 +384,48 @@ def test_only_plain_code_is_saved(tmp_path):
     res = catalog.save_workflow(cat, spec)
     assert res["ok"] is False and "split_words are not plain functions" in res["error"]
     assert catalog.Catalog(tmp_path / "cat").workflows == {}
+
+
+@pytest.mark.parametrize("stored_folder", [True, False], ids=["catalog-folder", "rebuilt-from-spec"])
+def test_dropping_a_duplicate_only_in_the_catalog_copies_that_version(tmp_path, capsys, stored_folder):
+    """Gate 4's "drop the new one" when the identical version is only in the global catalog: that
+    version (workflow.yml, inputs.yml, functions/; not runs/) is copied into this project with the same
+    ID, read-only, checked against the catalog's content hash."""
+    import ids
+    cat_dir = tmp_path / "cat"
+    run1, s1 = _approved_run(tmp_path / "a", "r1", _e2())
+    if stored_folder:
+        (Path(s1["version_dir"]) / "runs" / "x").mkdir(parents=True)
+        assert catalog.main(["save-workflow", "--run", str(run1), "--catalog-dir", str(cat_dir)]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert Path(out["version_folder"]) == cat_dir / "versions" / "mapreduce-word-count-v1"
+        assert not (cat_dir / "versions" / "mapreduce-word-count-v1" / "runs").exists()
+    else:  # an entry saved without its folder: rebuilt from the stored spec
+        catalog.save_workflow(catalog.Catalog(cat_dir), _e2(), workflow_id="mapreduce-word-count-v1")
+        assert not (cat_dir / "versions").exists()
+    # another project, same global catalog: an identical generation, dropped
+    other = tmp_path / "b"
+    run2, s2 = _approved_run(other, "r2", _e2(), on_duplicate="drop", new_version_of="mapreduce-word-count",
+                             catalog_dir=cat_dir)
+    vdir = Path(s2["version_dir"])
+    assert s2["workflow_id"] == "mapreduce-word-count-v1" and s2["version_reused"]
+    assert vdir == other / "project" / ".curate" / "workflows" / "mapreduce-word-count-v1"
+    assert sorted(p.name for p in vdir.iterdir()) == ["functions", "inputs.yml", "workflow.yml"]
+    assert not (vdir / "functions" / "map.py").stat().st_mode & 0o222
+    assert ids.draft_content_hash(vdir) == s1["workflow_content_hash"]
+    assert s2["version_hash"] == ids.tree_hash(vdir, skip=("runs",))
+
+
+def test_a_tampered_catalog_copy_is_not_used(tmp_path, capsys):
+    import spec as S
+    cat_dir = tmp_path / "cat"
+    run1, _ = _approved_run(tmp_path / "a", "r1", _e2())
+    assert catalog.main(["save-workflow", "--run", str(run1), "--catalog-dir", str(cat_dir)]) == 0
+    capsys.readouterr()
+    f = cat_dir / "versions" / "mapreduce-word-count-v1" / "functions" / "map.py"
+    f.chmod(0o644)
+    f.write_text(f.read_text() + "\n# tampered\n")
+    with pytest.raises(S.InputError, match="does not match its content hash"):
+        _approved_run(tmp_path / "b", "r2", _e2(), on_duplicate="drop", new_version_of="mapreduce-word-count",
+                      catalog_dir=cat_dir)
+    assert not (tmp_path / "b" / "project" / ".curate" / "workflows" / "mapreduce-word-count-v1").exists()
