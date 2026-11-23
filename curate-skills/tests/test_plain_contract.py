@@ -117,3 +117,29 @@ def test_folder_matches_by_prefix_and_not_own_outputs():
 def test_resolve():
     assert PC.resolve("p_{rank}.txt", 2) == "p_2.txt"
     assert PC.resolve("p.txt", 2) == "p.txt" and PC.resolve("p_{rank}", None) == "p_{rank}"
+
+
+# ── a folder input holds only its own files ──
+
+def folder_spec(*extra_outputs, reader_out="total.json", other_input=None):
+    nodes = [{"name": "count", "rank": 3, "outputs": [{"name": "count_{rank}.json"}, *[{"name": o} for o in extra_outputs]]},
+             {"name": "sum", "inputs": [{"name": "count_{rank}.json", "kind": "folder"}],
+              "outputs": [{"name": reader_out}]}]
+    if other_input:
+        nodes.append({"name": "side", "inputs": [{"name": other_input}], "outputs": [{"name": "side.txt"}]})
+    return WorkflowSpec.model_validate({"name": "f", "nodes": nodes})
+
+
+def test_folder_conflicts():
+    assert PC.folder_conflicts(folder_spec()) == []  # only the folder's own family
+    (msg,) = PC.folder_conflicts(folder_spec("count_summary.json"))
+    assert msg == ("step sum's folder input input1 (count_{rank}.json) holds every file starting with 'count_', "
+                   "so count_summary.json (written by count) would land in it too; rename count_summary.json so "
+                   "it does not start with 'count_'")
+    assert "count_total.json (written by sum)" in PC.folder_conflicts(folder_spec(reader_out="count_total.json"))[0]
+    assert "count_extra.csv (read by side)" in PC.folder_conflicts(folder_spec(other_input="count_extra.csv"))[0]
+    assert PC.folder_conflicts(folder_spec("count_summary.json"), only={"count"}) == []  # sum not checked
+    bare = WorkflowSpec.model_validate({"name": "b", "nodes": [
+        {"name": "w", "rank": 2, "outputs": [{"name": "{rank}.json"}]},
+        {"name": "r", "inputs": [{"name": "{rank}.json", "kind": "folder"}], "outputs": [{"name": "o"}]}]})
+    assert "has no name before {rank}" in PC.folder_conflicts(bare)[0]

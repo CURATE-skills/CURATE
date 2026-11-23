@@ -34,3 +34,11 @@ def test_the_mga_preloads_the_plain_reference():
 def test_resolve_prompt_explains_folder_and_read_all():
     resolve = (PLUGIN / "references" / "prompts" / "wca-resolve.md").read_text()
     assert '"kind": "folder"' in resolve and '"read": "all"' in resolve
+
+
+def test_empty_fan_in_is_an_error_everywhere_the_agents_read():
+    ref = (PLUGIN / "skills" / "function-reference" / "SKILL.md").read_text()
+    assert "**A fan-in with no files is an error.**" in ref and "don't filter it by file name" in ref
+    resolve = (PLUGIN / "references" / "prompts" / "wca-resolve.md").read_text()
+    assert 'NEVER design\n    "no files at all" as a valid case' in resolve
+    assert "no other file in the\n    workflow may start with that prefix" in resolve

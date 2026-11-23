@@ -288,3 +288,29 @@ def test_real_faasr_py_loader_finds_the_wrapper(tmp_path):
         pytest.skip("FaaSr_py not installable here")
     assert p.returncode == 0, p.stderr[-2000:]
     assert p.stdout.split()[-1] == "step_a.py"
+
+
+def test_bundle_refuses_a_file_that_would_land_in_a_folder_input(tmp_path):
+    code = "def main(inputs, outputs, params):\n    pass\n"
+    spec = small([{"name": "count", "rank": 2, "code": code,
+                   "outputs": [{"name": "count_{rank}.json"}, {"name": "count_summary.json"}]},
+                  {"name": "sum", "code": code, "inputs": [{"name": "count_{rank}.json", "kind": "folder"}],
+                   "outputs": [{"name": "total.json"}]}])
+    res = emit.write_bundle(spec, tmp_path / "out", level="structural")
+    assert res["ok"] is False and not (tmp_path / "out").exists()
+    assert any("count_summary.json (written by count) would land in it too" in p for p in res["problems"])
+
+
+def test_empty_folder_input_raises_before_main(tmp_path):
+    code = ("def main(inputs, outputs, params):\n"
+            "    raise AssertionError('main must not run on an empty fan-in')\n")
+    spec = small([{"name": "use", "inputs": [{"name": "part_{rank}.csv", "kind": "folder"}],
+                   "outputs": [{"name": "o.txt"}], "code": code}])
+    fn = find_function(_one_step(tmp_path, spec), "use")
+    fake = FakeFaaSr(tmp_path / "s3")
+    (tmp_path / "s3" / "d").mkdir(parents=True)
+    (tmp_path / "s3" / "d" / "other.csv").write_text("x")  # not under the prefix
+    fn.__globals__.update(fake.api())
+    with pytest.raises(FileNotFoundError, match=r"use: folder input input1 \(part_\{rank\}.csv\) is empty: "
+                                                r"no file starting with 'part_' in d"):
+        fn(folder="d", input1="part_{rank}.csv", output1="o.txt")

@@ -132,6 +132,17 @@ expansion the value is `{folder: [file, …]}`. The files are ordinary dataflow 
 needs a producer or a workflow input), so the backend stages them like any input;
 the runner (`curate_run.py --in-dir name=file`) links them into one directory.
 
+Two rules keep a folder input honest, because its function lists the directory and
+must not filter it by name:
+- **It holds only its own files.** When CURATE builds a workflow from a spec (the FaaSr
+  bundle and the Pegasus IR), it refuses one where any other file (another step's output,
+  or a file another step reads) starts with a folder input's prefix (the text before
+  `{rank}`), e.g. `count_summary.json` next to a `count_{rank}.json` folder input. On FaaSr
+  such a file would sit under the same S3 prefix and be downloaded into the folder.
+- **An empty folder is an error.** The validator refuses a folder input with no files; the
+  FaaSr wrapper raises before calling `main` when the prefix holds no objects; and the
+  function itself must raise rather than return an empty or zero result.
+
 ### The runner's command line (`curate-skills/curate_ir/runner/curate_run.py`)
 
 `--in name=file` (a path), `--in-list name=file` (a gather), `--in-dir name=file`

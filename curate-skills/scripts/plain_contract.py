@@ -177,6 +177,38 @@ def family_counts(spec, read_of=None) -> tuple[dict[str, int], dict[tuple[str, i
     return counts, mode, problems
 
 
+def folder_conflicts(spec, only=None) -> list[str]:
+    """A folder input must only ever hold its own files (the family its name gives), because its
+    function lists the folder without filtering by name. So any OTHER workflow file — a step's
+    output, or a file another step reads — whose name starts with the folder's prefix is refused:
+    on FaaSr it would land in the same S3 prefix and be downloaded into the folder. `only`: the
+    steps to check (the plain ones)."""
+    files: dict[str, str] = {}
+    for n in spec.nodes:
+        for o in n.outputs:
+            files.setdefault(o.name, f"written by {n.name}")
+        for i in n.inputs:
+            if i.kind != "folder":
+                files.setdefault(i.name, f"read by {n.name}")
+    problems = []
+    for n in spec.nodes:
+        if only is not None and n.name not in only:
+            continue
+        for idx, i in enumerate(n.inputs, 1):
+            if i.kind != "folder":
+                continue
+            pre = prefix(i.name)
+            if not pre:
+                problems.append(f"step {n.name}'s folder input input{idx} ({i.name}) has no name before "
+                                f"{RANK}, so it would hold every file; give the files a common prefix")
+                continue
+            for f in sorted(f for f in files if f != i.name and f.startswith(pre)):
+                problems.append(f"step {n.name}'s folder input input{idx} ({i.name}) holds every file starting "
+                                f"with {pre!r}, so {f} ({files[f]}) would land in it too; rename {f} so it "
+                                f"does not start with {pre!r}")
+    return problems
+
+
 def folder_matches(spec, node_name: str, name: str) -> list[str]:
     """The workflow files (spec names, {rank} kept) a folder input of `node_name` holds: every
     file some step writes or reads whose name starts with prefix(name), except the step's own

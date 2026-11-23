@@ -192,6 +192,9 @@ def test_spec_md_describes_the_plain_slots(make_run, capsys):
     assert ('a FOLDER: a directory holding every file whose name starts with "map_counts_"; list it with '
             "os.listdir") in md["shuffle"]
     assert "Fan-in from ranked predecessor `map` (×3)" in md["shuffle"]
+    assert ("don't filter by name, it holds only these files). If it is EMPTY, raise: no files means "
+            "the steps before this one wrote nothing") in md["shuffle"]
+    assert "If that input holds NO files, raise an error naming it" in md["shuffle"]
     assert "a LIST of 5 paths in rank order: write EVERY one (path i is read by rank i of reduce)" in md["shuffle"]
     assert "a LIST of 3 paths in rank order" in md["split"]
     ctx = (run / "CONTEXT.md").read_text()

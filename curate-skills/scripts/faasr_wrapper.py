@@ -10,7 +10,8 @@ loads <fn>_main.py from its own folder and, per invocation:
 
   1. faasr_rank() if the step is ranked; fills {rank} into the file names
   2. faasr_get_file each input into a temp folder (a list: every copy; a folder input: every
-     object faasr_get_folder_list returns under the input's prefix)
+     object faasr_get_folder_list returns under the input's prefix; an EMPTY folder input is
+     an error, raised before main runs)
   3. main(inputs, outputs, params), with each non-blank stdout line forwarded to faasr_log
   4. checks every output exists, then faasr_put_file each one
   5. returns main's value (True/False drives a conditional InvokeNext)
@@ -58,6 +59,7 @@ def bundle_problems(spec) -> list[str]:
     if plain:
         layout, counted = PC.io_layout(spec)
         problems += counted
+        problems += PC.folder_conflicts(spec, only={n.name for n in plain})
         for n in plain:
             for s in layout[n.name]["inputs"] + layout[n.name]["outputs"]:
                 if s["kind"] == "list" and not s.get("copies"):
@@ -161,10 +163,16 @@ def _curate_run(folder, args):
             d = os.path.join(work, "dir_" + slot)
             os.makedirs(d)
             prefix = name.split("{{rank}}", 1)[0]
+            got = 0
             for key in faasr_get_folder_list(prefix=f"{{folder}}/{{prefix}}" if folder else prefix):
                 base = str(key).rstrip("/").rsplit("/", 1)[-1]
                 if base.startswith(prefix) and not str(key).endswith("/"):
                     _get(folder, base, os.path.join(d, base))
+                    got += 1
+            if not got:  # a fan-in with nothing to read means the steps before it wrote nothing
+                raise FileNotFoundError(f"{{_STEP}}: folder input {{slot}} ({{name}}) is empty: no file starting "
+                                        f"with {{prefix!r}} in {{folder or 'the bucket'}}; the steps that write it "
+                                        "produced nothing")
             inputs[slot] = d
     outputs, uploads = {{}}, []
     for slot, kind, copies in _OUTPUTS:

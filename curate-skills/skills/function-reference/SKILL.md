@@ -44,6 +44,10 @@ def main(inputs: dict, outputs: dict, params: dict) -> None:   # -> bool for a c
 - `boto3` or any other direct S3 / cloud-storage access: the workflow system moves the files.
 - File names or paths written into the code: use the paths you are given. (A file name may
   appear in a log message.) Never build a path from `{rank}`: the paths are already resolved.
+  That includes name filters on a folder input (`startswith("count_")`, `endswith(".json")`):
+  if a file is ever renamed, the filter silently matches nothing.
+- A branch that treats a missing input or an empty fan-in as "nothing to do" and still writes a
+  result. Raise instead.
 
 ## Ranks (parallel instances)
 
@@ -56,6 +60,11 @@ def main(inputs: dict, outputs: dict, params: dict) -> None:   # -> bool for a c
 - **Fan-in** (a function after a ranked step): you run once, after every instance finished. The
   input holding their outputs is a list of paths or a folder, as `spec.md` says. Never assume a
   fixed count.
+- **A fan-in with no files is an error.** If a list or folder input of upstream outputs holds no
+  files, raise, naming the input. Never return a zero or empty result for "no inputs":
+  "whatever files exist" means some copies may be missing, never that none at all is fine.
+- A folder input always exists and holds exactly the files meant for it. Don't check that it
+  exists, and don't filter it by file name: read every file in it.
 
 ## Logging and errors
 

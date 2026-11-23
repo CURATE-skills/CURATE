@@ -178,6 +178,7 @@ def build_ir(spec: WorkflowSpec, name: str | None = None, image: str = DEFAULT_I
 
     file_axis, mode, counted = PC.family_counts(spec, read_of)  # {rank} file -> number of copies
     problems += counted
+    problems += PC.folder_conflicts(spec, only={c for c, ok in plain.items() if ok})
 
     deliver = _parse_deliver(deliverables)
     for f, _ in deliver:

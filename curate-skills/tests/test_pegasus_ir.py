@@ -465,3 +465,12 @@ def test_plain_n_to_m_handoff_still_refused():
     with pytest.raises(P.MappingError) as e:
         P.build_ir(spec)
     assert e.value.problems[0].startswith("N→M ranked handoff: ranked step a (×3) provides 3 copies")
+
+
+def test_pegasus_refuses_a_file_that_would_land_in_a_folder_input():
+    spec = spec_of([node("a", PLAIN_WRITE_RANK, outputs=["p_{rank}.txt"], rank=2),
+                    node("b", PLAIN_READ, [], ["p_total.txt"])])
+    spec.nodes[1].inputs = [IOSpec(name="p_{rank}.txt", kind="folder")]
+    with pytest.raises(P.MappingError) as e:
+        P.build_ir(spec)
+    assert any("so p_total.txt (written by b) would land in it too" in p for p in e.value.problems)

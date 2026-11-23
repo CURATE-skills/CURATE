@@ -120,6 +120,13 @@ Rules:
   - `"read": "all"` — only for a RANKED step that needs EVERY copy of a "{rank}" file (not just
     its own), e.g. each instance compares its share with all the others. Without it, a ranked
     step reads only its own copy.
+  - A step that reads "whatever files exist" may find some copies missing, but NEVER design
+    "no files at all" as a valid case with an empty or zero result: no files means the earlier
+    steps failed, and the step must raise. Do not write such a reading as an assumption.
+  - A folder input holds EVERY file whose name starts with its prefix, so no other file in the
+    workflow may start with that prefix (e.g. no `counts_summary.json` next to a
+    `counts_{rank}.json` folder input): name the step's own output differently
+    (`total_counts.json`). The build refuses such a workflow.
 - EXACTLY ONE entry node: `entry` names the single node with no incoming edge. Every OTHER node
   MUST be reachable from `entry` via `edges`. A source/entry node MAY have inputs that no upstream
   node produces — these are EXTERNAL inputs the user places in S3 before the run; they need no

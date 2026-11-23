@@ -233,21 +233,31 @@ def test_plain_list_output_then_ranked_reader_and_gather(make_run):
 
 def test_plain_folder_input_collects_by_prefix_first_folder_wins(make_run):
     node = FunctionSpec(name="sum", inputs=[IOSpec(name="cnt_{rank}.json", kind="folder")],
-                        outputs=[IOSpec(name="cnt_total.json")])
+                        outputs=[IOSpec(name="total.json")])
     run = plain(make_run, [node])
     d = run / "functions" / "sum"
     (d / "test_data" / "cnt_1.json").write_text("data-1")
     (d / "test_data" / "cnt_2.json").write_text("data-2")
-    (d / "test_data" / "other.json").write_text("x")
+    (d / "test_data" / "other.json").write_text("x")  # not under the prefix: left out
     _write(run, "sum", "import os\n\ndef main(inputs, outputs, params):\n    d = inputs['input1']\n"
                        "    names = sorted(os.listdir(d))\n"
                        "    open(outputs['output1'], 'w').write(','.join(open(os.path.join(d, n)).read() for n in names))\n")
     res = stubtest.run_stubtest(run, "sum")
     assert res["ok"], res["tail"]
-    # cnt_total.json is the step's own output: never fed back into its own folder input
-    assert (d / "test_output" / "cnt_total.json").read_text() == "data-1,data-2"
-    res = stubtest.run_stubtest(run, "sum", mode="parity")  # test_output kept: own output still excluded
-    assert res["ok"] and (d / "test_output" / "cnt_total.json").read_text() == "data-1,data-2"
+    assert (d / "test_output" / "total.json").read_text() == "data-1,data-2"
+    res = stubtest.run_stubtest(run, "sum", mode="parity")
+    assert res["ok"] and (d / "test_output" / "total.json").read_text() == "data-1,data-2"
+
+
+def test_empty_folder_of_upstream_outputs_fails_strict(make_run):
+    count = FunctionSpec(name="count", rank=2, outputs=[IOSpec(name="cnt_{rank}.json")])
+    total = FunctionSpec(name="sum", inputs=[IOSpec(name="cnt_{rank}.json", kind="folder")],
+                         outputs=[IOSpec(name="total.json")])
+    run = plain(make_run, [count, total], [{"from_node": "count", "to_node": "sum"}])
+    _write(run, "sum", "def main(inputs, outputs, params):\n    open(outputs['output1'], 'w').write('0')\n")
+    res = stubtest.run_stubtest(run, "sum")  # count's stub test never ran: its files are missing
+    assert not res["ok"]
+    assert res["missing_inputs"] == ["folder input1: no file starting with 'cnt_' (written by count)"]
 
 
 def test_plain_missing_output_fails_strict_only(make_run):

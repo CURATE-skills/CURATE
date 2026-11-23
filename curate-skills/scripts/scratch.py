@@ -162,7 +162,9 @@ def slot_lines(spec: FunctionSpec, wf: WorkflowSpec) -> tuple[str, str]:
     for s, io in zip(lay["inputs"], spec.inputs):
         if s["kind"] == "folder":
             what = (f'a FOLDER: a directory holding every file whose name starts with "{s["prefix"]}"; '
-                    "list it with os.listdir (never assume how many there are)")
+                    "list it with os.listdir and read every file in it (never assume how many there are; "
+                    "don't filter by name, it holds only these files). If it is EMPTY, raise: no files means "
+                    "the steps before this one wrote nothing")
         elif s["kind"] == "list":
             what = f"a LIST of {s['copies']} paths, every copy in rank order 1..{s['copies']}"
         elif ranked and PC.RANK in s["file"]:
@@ -333,7 +335,9 @@ def node_spec_md(run: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: str,
                 f"\n## Fan-in from ranked predecessor `{p}` (×{n})\n"
                 f"You run ONCE after all {n} instances of `{p}` finish. Read ALL of their outputs "
                 "through the input that holds them (a LIST of paths, or a FOLDER you list with "
-                "os.listdir, as Inputs above says). Never assume a fixed count.\n")
+                "os.listdir, as Inputs above says). Never assume a fixed count. If that input holds NO "
+                "files, raise an error naming it: never return a zero or empty result for \"no inputs\" "
+                "(\"whatever files exist\" means some copies may be missing, never that none is fine).\n")
 
     feedback_block = (f"\n## Feedback from Code Review\n{feedback}\n"
                       "\nAddress all points above in your implementation.\n") if feedback else ""
