@@ -108,8 +108,8 @@ def test_name_status_against_the_global_catalog(tmp_path):
     assert st["taken"] and st["versions"] == [1]
     legacy = C.WorkflowEntry(workflow_spec=e2().model_copy(update={"name": "Old Weather"}))
     cat.save_workflow(legacy)
-    assert ids.name_status("old-weather", cat) == {"name": "old-weather", "taken": True, "versions": [],
-                                                   "legacy_entries": [legacy.id]}
+    assert ids.name_status("old-weather", cat) == {"name": "old-weather", "taken": True, "versions": [1],
+                                                   "legacy_entries": [legacy.id]}  # v1 is held for it
 
 
 def test_bundle_manifest_and_deploys_check(tmp_path):
@@ -150,3 +150,32 @@ def test_set_name_checks_the_catalog_and_records_lineage(make_run, capsys):
     assert st["workflow_name"] == "fresh-name" and st["workflow_lineage"] is None  # the lineage was about another name
     code, out = call(S, ["set-name", "--run", str(run), "mapreduce-word-count"], capsys)
     assert code == 1 and out["needs_choice"]
+
+
+def test_old_uuid_entries_hold_the_first_numbers_so_nothing_is_renumbered(tmp_path):
+    """A name that exists only as old uuid catalog entries: each holds one of the lowest free numbers
+    (oldest first), a new version is numbered after them, and the migration (phase 8) gives each old
+    entry the number it holds. Numbers already published are never moved."""
+    import os
+    cat = C.Catalog(tmp_path / "cat")
+    older = C.WorkflowEntry(workflow_spec=e2().model_copy(update={"name": "Mapreduce Word Count"}))
+    newer = C.WorkflowEntry(workflow_spec=e2())
+    cat.save_workflow(older)
+    cat.save_workflow(newer)
+    os.utime(cat.wf_dir / f"{older.id}.json", (1, 1))  # saved earlier
+    cat = C.Catalog(tmp_path / "cat")
+    assert ids.reserved_numbers("mapreduce-word-count", set(), cat) == {1: older.id, 2: newer.id}
+    project = tmp_path / "p"
+    d = draft(tmp_path / "r1")
+    plan = ids.plan_publish(d, "mapreduce-word-count", project, catalog=cat)
+    assert plan["workflow_id"] == "mapreduce-word-count-v3"  # after the two old entries
+    assert plan["duplicates"] == []  # old entries are not offered as duplicates (no content hash)
+    ids.publish(d, "mapreduce-word-count", project, plan["version"], plan["draft_hash"])
+    # still the same numbers for the old entries once v3 exists
+    assert ids.reserved_numbers("mapreduce-word-count", {3}, cat) == {1: older.id, 2: newer.id}
+    # an old entry that turns up later (e.g. imported) takes a free number, never a published one
+    late = C.WorkflowEntry(workflow_spec=e2())
+    cat.save_workflow(late)
+    cat = C.Catalog(tmp_path / "cat")
+    held = ids.reserved_numbers("mapreduce-word-count", {3}, cat)
+    assert 3 not in held and sorted(held) == [1, 2, 4]

@@ -121,9 +121,38 @@ def draft_content_hash(draft) -> str:
 
 # ── versions ─────────────────────────────────────────────────────────────────
 
+def legacy_entries(name: str, catalog) -> list:
+    """Catalog workflow entries saved before workflow IDs (uuid only) whose spec name slugs to
+    `name`, oldest first (by their file's modification time, then id)."""
+    if catalog is None:
+        return []
+    hits = [e for e in catalog.workflows.values()
+            if not getattr(e, "workflow_id", None) and slug(e.workflow_spec.name) == name]
+
+    def age(e):
+        f = Path(catalog.wf_dir) / f"{e.id}.json"
+        return (f.stat().st_mtime if f.is_file() else 0.0, e.id)
+    return sorted(hits, key=age)
+
+
+def reserved_numbers(name: str, used, catalog) -> dict[int, str]:
+    """Version numbers held for the catalog's old uuid entries of this name, so that numbers are
+    never renumbered: each old entry holds one of the lowest free numbers now (oldest entry first),
+    new versions are numbered after them, and the phase 8 migration gives each old entry exactly
+    the number it holds here. {number: entry id}."""
+    out, n = {}, 0
+    for e in legacy_entries(name, catalog):
+        n += 1
+        while n in used:
+            n += 1
+        out[n] = e.id
+    return out
+
+
 def versions(name: str, project=None, catalog=None) -> dict[int, str | None]:
     """{version number: content hash or None} of a workflow name, from the project's published
-    folders and the catalog's entries (Catalog from catalog.py)."""
+    folders and the catalog's entries (Catalog from catalog.py), plus the numbers the catalog's old
+    uuid entries hold (reserved_numbers; no content hash: they are not offered as duplicates)."""
     out: dict[int, str | None] = {}
     if project is not None and workflows_root(project).is_dir():
         import yaml
@@ -138,6 +167,8 @@ def versions(name: str, project=None, catalog=None) -> dict[int, str | None]:
                 n, v = parse_workflow_id(e.workflow_id)
                 if n == name:
                     out[v] = out.get(v) or getattr(e, "content_hash", None)
+        for v in reserved_numbers(name, set(out), catalog):
+            out.setdefault(v, None)
     return out
 
 
@@ -146,8 +177,7 @@ def name_status(name: str, catalog) -> dict:
     older entry whose spec has a name with the same slug)?"""
     check_name(name)
     vs = versions(name, catalog=catalog)
-    legacy = sorted(e.id for e in catalog.workflows.values()
-                    if not getattr(e, "workflow_id", None) and slug(e.workflow_spec.name) == name)
+    legacy = [e.id for e in legacy_entries(name, catalog)]
     return {"name": name, "taken": bool(vs or legacy), "versions": sorted(vs), "legacy_entries": legacy}
 
 

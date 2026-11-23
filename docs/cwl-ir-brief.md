@@ -172,6 +172,7 @@ steps:
 ### 8. Migrate and clean up (only after phase 7 passes)
 
 - Migrate the catalog from uuid keys to workflow ID + version (dry run first, same style as the phase 4 catalog migration in step 1; the uuid stays as an alias). The catalog stores WorkflowSpecs, not IR v0.2, so there is no IR to convert.
+- **Version numbers are never renumbered.** Since phase 6, each old uuid entry already holds a number (`ids.reserved_numbers`: the lowest free numbers, oldest entry first), and new versions are numbered after them. The migration gives each old entry exactly the number it holds at that point; it never moves a published version. (Old entries that appear only later, e.g. imported, hold the next free numbers.)
 - Remove the IR v0.2 reader, `expand.py`, and old-format emit. Keep `from_ir.py` for one release to convert old runs.
 - Update `docs/IR_FAASR_GAPS.md` and the README.
 

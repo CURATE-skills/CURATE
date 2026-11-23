@@ -159,6 +159,10 @@ curate:content_hash: sha256:...
   workflow it belongs to comes from lineage (a reused catalog workflow, or `--from-run`) or
   from the name; a name that is taken with no lineage makes CURATE ask: a new name, or a new
   version of the existing workflow. A version folder is never edited.
+- **Old catalog entries keep their place.** A workflow saved before IDs (a uuid-only catalog entry)
+  holds one of the lowest free version numbers of its name, oldest entry first; new versions are
+  numbered after them, and the catalog migration gives each old entry the number it holds. A
+  published number is never changed.
 - **Content hash:** sha256 over the normalized `workflow.yml` with `label`, `doc`, every `s:`
   field, `curate:content_hash` and every input `default` removed, plus the function files. It
   never decides the version; it only detects duplicates. A new version identical to an
