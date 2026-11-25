@@ -1,6 +1,8 @@
 """Phase 6d: Gate 4 previews the targets by building them in memory from the draft; a draft older
-than the spec is refused with what to do; runs approved before versions keep the old path."""
+than the spec is refused with what to do; runs approved before versions are refused (phase 8)."""
 import json
+
+import pytest
 from pathlib import Path
 
 import spec as S
@@ -50,17 +52,20 @@ def test_a_draft_older_than_the_spec_is_refused_with_what_to_do(source_run, caps
     assert "built from an earlier version of the spec" in sec
 
 
-def test_a_run_approved_before_versions_deploys_its_emit_bundle(source_run, capsys):  # noqa: F811
-    """A run with no draft and no workflow ID (approved before 6c): deploy reads the bundle emit wrote,
-    checked by its Gate 4 bundle hash, as before (removed with the old IR in phase 8)."""
+def test_a_run_approved_before_versions_is_no_longer_deployed(source_run, capsys):  # noqa: F811
+    """A run with no draft and no workflow ID (approved before 6c, with the old emit's bundle): since phase 8
+    deploy refuses it and says how to get a version (start a new run from it at emit)."""
     import deploy as D
     s = state(source_run)
     for k in ("draft_dir", "draft_spec_hash", "workflow_id", "workflow_version", "draft_hash", "version_dir",
               "version_hash", "version_reused", "workflow_content_hash", "execution"):
         s.pop(k, None)
+    s["bundle_dir"] = str(source_run / "old-bundle")
     (source_run / "state.json").write_text(json.dumps(s))
-    st, bundle = D.load_run(str(source_run))
-    assert bundle == Path(s["bundle_dir"]) and (bundle / "workflow.json").is_file()
+    with pytest.raises(D.InputError) as e:
+        D.load_run(str(source_run))
+    assert "approved before workflow versions" in str(e.value)
+    assert f"--start-at emit --from-run {s['run_id']}" in str(e.value)
     # approving Gate 4 again needs a draft: the refusal says to run emit again
     s["stage"] = "gate4"
     (source_run / "state.json").write_text(json.dumps(s))

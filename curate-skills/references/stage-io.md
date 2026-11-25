@@ -16,7 +16,7 @@ produces it.
 | emit | code for every function, generated for the current spec | curate-generate |
 | deploy | Gate 4 approved with Approve & deploy to FaaSr or Approve & run on Pegasus; the published version (unchanged) and, for FaaSr, the bundle built from it with its manifest (runs approved before versions: a validated bundle and its recorded hash) | curate-emit |
 | monitor | the deploy stage started the workflow (FaaSr: InvocationID recorded; Pegasus: the launch step done) | curate-deploy |
-| finalize | a validated workflow draft (or, for runs approved before versions, bundle) built from the current spec; after a FaaSr deploy, a monitor result of success (or success with an unconfirmed match); after a Pegasus run, success | curate-emit, curate-monitor |
+| finalize | a validated workflow draft built from the current spec, published as a version at Gate 4; after a FaaSr deploy, a monitor result of success (or success with an unconfirmed match); after a Pegasus run, success | curate-emit, curate-monitor |
 
 ## Start points (`/curate --start-at <stage>`)
 

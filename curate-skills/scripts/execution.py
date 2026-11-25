@@ -9,8 +9,8 @@ bundle is built when Gate 4 (or "Start this run?") chooses FaaSr; the Pegasus fo
 pegasus_deploy.py prepare (it needs the input files). Before approval, Gate 4 previews both targets
 by building them in memory from the draft.
 
-Runs approved before versions (no draft) keep the old path: the bundle emit wrote, checked by its
-Gate 4 bundle hash. That path is removed with the old IR (CWL IR brief, phase 8).
+Runs approved before versions (no draft; their bundle came from the old emit) are no longer
+deployed (phase 8): PRE_VERSION says what to do instead.
 """
 from __future__ import annotations
 
@@ -21,6 +21,15 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 sys.path.insert(0, str(SCRIPT_DIR.parent / "curate_ir"))
 import ids  # noqa: E402
+
+
+PRE_VERSION = ("this run was approved before workflow versions (its bundle came from the old emit, removed "
+               "in phase 8), so it cannot be deployed; start a new run from it with --start-at emit --from-run "
+               "{run_id} and approve Gate 4 again")
+
+
+def pre_version(s: dict) -> str:
+    return PRE_VERSION.format(run_id=s.get("run_id") or "<run_id>")
 
 
 class ExecutionError(Exception):

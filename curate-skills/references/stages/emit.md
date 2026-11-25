@@ -9,8 +9,7 @@ Precondition: `spec.py begin --run <run> --stage emit` returned `ok` (it checked
 function has code generated for the current spec). If the run is already at `gate4`, skip to
 step 3.
 
-1. `emit.py bundle --run <run> --out <project>/faasr_output` (`<project>` = the run's
-   `project_dir` from `spec.py status`). It writes the **workflow draft**, `<run>/draft/`
+1. `emit.py bundle --run <run>`. It writes the **workflow draft**, `<run>/draft/`
    (`workflow.yml` in CWL, `inputs.yml`, `functions/`), built from the approved spec by code; never
    write or edit CWL yourself. It validates the draft: the CWL validator, then each target's builder
    in memory (the FaaSr workflow, checked like a FaaSr bundle; the Pegasus workflow), recorded
@@ -18,9 +17,7 @@ step 3.
    that refuses the draft does not fail validation (the other one, or no deploy, may still take
    it); Gate 4 shows both results. It records `draft_dir` and the validation with the spec's hash,
    and moves the run to `gate4`. It refuses to write anything if a secret
-   value would leak. It also still writes the older FaaSr bundle under `faasr_output/`
-   (`bundle_dir`), which only runs approved before workflow versions use; nothing from Gate 4 on
-   depends on it, and its `bundle_note`, if any, needs no action.
+   value would leak.
    If `draft.problems` is not empty, the spec cannot be expressed as a workflow (each problem says
    why, e.g. a step that depends on two steps' results): show them at Gate 4 and ask for a change.
 2. If `validation.ok` is false and `spec.py status` shows `auto_emit_retries` = 0:

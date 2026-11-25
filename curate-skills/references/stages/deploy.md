@@ -7,8 +7,8 @@ Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`:
 Precondition: `spec.py begin --run <run> --stage deploy` returned `ok` (Gate 4 was approved with
 **Approve & deploy to FaaSr (cloud)**, and the bundle was built then from the published version,
 into `<project>/.curate/workflows/<workflow-id>/runs/<run-id>/bundle/` with its `manifest.json`;
-every step checks that the bundle comes from the approved version and has not changed since. For a
-run approved before versions, the bundle is emit's and its hash was recorded at Gate 4).
+every step checks that the bundle comes from the approved version and has not changed since. A run
+approved before workflow versions is refused, with what to do: start a new run from it at emit).
 
 **Pegasus runs:** if `spec.py status --run <run>` shows `deploy_choice` `pegasus`, this file does
 not apply (and `deploy.py` refuses the run): follow `<plugin>/references/stages/deploy-pegasus.md`

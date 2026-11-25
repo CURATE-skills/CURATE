@@ -1,12 +1,8 @@
-"""Phase 5: the FaaSr and Pegasus builders read workflow.yml, and their bundles match today's
-(emit.write_bundle; pegasus_deploy's prepare = pegasus_ir.build_ir + write_folder) for the e2
-MapReduce and weather specs, with file names replaced by their roles.
-
-FaaSr: workflow.json (every field; Arguments by role), each wrapper's tables (slot kinds, list
-sizes, ranked, params), the shipped functions and deps files, the external inputs; and, for e2,
-both bundles run through the FaaSr stand-in from test_faasr_wrapper and every object they write
-is byte-identical. Pegasus: the expanded jobs (test_cwl_parity's comparison), and the e2 run
-through ir_local gives byte-identical files."""
+"""What each builder (scripts/cwl_faasr.py, scripts/cwl_pegasus.py) refuses or maps, on the features
+example (curate_ir/cwl/examples/features): curate:run_if, curate:after, curate:secrets, folder inputs,
+and the Pegasus backend planning a built folder. The builders' output for every reference workflow is
+fixed in tests/test_cwl_reference.py and tests/test_real_versions.py (until phase 8 this file also
+compared them with the old spec-to-bundle path, emit.write_bundle and pegasus_ir.build_ir)."""
 import ast
 import json
 import sys
@@ -20,161 +16,17 @@ sys.path.insert(0, str(PLUGIN / "curate_ir"))
 sys.path.insert(0, str(PLUGIN / "tests"))
 import cwl_faasr as CF  # noqa: E402
 import cwl_pegasus as CP  # noqa: E402
-import emit  # noqa: E402
-import pegasus_ir as P  # noqa: E402
-import validate as V0  # noqa: E402
-from curate_models import WorkflowSpec  # noqa: E402
-from cwl.from_ir import convert, write  # noqa: E402
+import validate as V0  # noqa: E402  (reads the Pegasus folder's expanded ir.yaml until phase 8, commit 4)
 from cwl.validate import validate  # noqa: E402
-from ir_local import run_locally  # noqa: E402
-from test_cwl_from_ir import FIXTURES, spec_ir  # noqa: E402
-from test_cwl_parity import canon  # noqa: E402
-from test_faasr_wrapper import run_bundle  # noqa: E402
 
 IMAGE = "docker:///python:3.12-slim"
+REF = PLUGIN / "tests" / "fixtures" / "cwl-ref"
 
 
-def e2_spec():
-    return json.loads((FIXTURES / "e2-stages" / "spec-with-code.json").read_text())
-
-
-def weather_spec():
-    return json.loads((FIXTURES / "weather-spec.json").read_text())
-
-
-SPECS = [(e2_spec, "e2"), (weather_spec, "weather")]
-
-
-def cwl_of(spec_json, tmp_path):
-    folder = write(convert(V0.load(spec_ir(spec_json, tmp_path))), tmp_path / "cwl")
-    wf, errors, _ = validate(folder / "workflow.yml", folder / "inputs.yml")
+def e2_wf():
+    wf, errors, _ = validate(REF / "e2-stages" / "workflow.yml", REF / "e2-stages" / "inputs.yml")
     assert errors == []
     return wf
-
-
-def bundles(spec_json, tmp_path):
-    spec = WorkflowSpec.model_validate(spec_json)
-    res = emit.write_bundle(spec, tmp_path / "old", level="structural")
-    assert res["ok"], res
-    built = CF.build(cwl_of(spec_json, tmp_path), spec.name, spec.folder, spec.compute_target, spec.data_store)
-    return spec, Path(res["bundle_dir"]), built, CF.write(built, tmp_path / "new")
-
-
-def old_roles(spec):
-    """Spec file name -> role: (step, output slot) for a step's output; ("ext", consumer, slot) else."""
-    roles = {}
-    for n in spec.nodes:
-        for k, o in enumerate(n.outputs, 1):
-            roles[o.name] = (n.name, f"output{k}")
-    for n in spec.nodes:
-        for k, i in enumerate(n.inputs, 1):
-            roles.setdefault(i.name, ("ext", n.name, f"input{k}"))
-    return roles
-
-
-def new_roles(wf, built):
-    roles = {}
-    for src, pattern in built["names"].items():
-        if "/" in src:
-            roles[pattern] = tuple(src.split("/", 1))
-    for sid, s in wf.steps.items():
-        for slot, e in s.ins.items():
-            for src in e.sources:
-                if "/" not in src and src in built["names"]:
-                    roles.setdefault(built["names"][src], ("ext", sid, slot))
-    return roles
-
-
-def wrapper_tables(path: Path) -> dict:
-    tree = ast.parse(path.read_text())
-    return {t.targets[0].id: ast.literal_eval(t.value) for t in tree.body
-            if isinstance(t, ast.Assign) and isinstance(t.targets[0], ast.Name) and t.targets[0].id.startswith("_")
-            and t.targets[0].id in ("_STEP", "_MAIN_FILE", "_MAIN_SHA256", "_RANKED", "_INPUTS", "_OUTPUTS", "_PARAMS")}
-
-
-@pytest.mark.parametrize("spec_of,label", SPECS, ids=[s[1] for s in SPECS])
-def test_faasr_bundle_matches_todays(tmp_path, spec_of, label):
-    spec, old, built, new = bundles(spec_of(), tmp_path)
-    wf = cwl_of(spec_of(), tmp_path / "again")
-    a = json.loads((old / "workflow.json").read_text())
-    b = json.loads((new / "workflow.json").read_text())
-    ra, rb = old_roles(spec), new_roles(wf, built)
-    for key in set(a) | set(b):
-        if key != "ActionList":
-            assert a.get(key) == b.get(key), key
-    assert list(a["ActionList"]) == list(b["ActionList"])
-    for action, x in a["ActionList"].items():
-        y = b["ActionList"][action]
-        assert {k: v for k, v in x.items() if k != "Arguments"} == {k: v for k, v in y.items() if k != "Arguments"}
-        assert list(x["Arguments"]) == list(y["Arguments"]) and x["Arguments"]["folder"] == y["Arguments"]["folder"]
-        for slot in x["Arguments"]:
-            if slot != "folder":
-                assert ra[x["Arguments"][slot]] == rb[y["Arguments"][slot]], (action, slot)
-    for n in spec.nodes:
-        assert (new / "functions" / f"{n.name}_main.py").read_bytes() == n.code.encode()
-        assert (new / "functions" / f"{n.name}.deps.txt").read_text() == \
-            (old / "functions" / f"{n.name}.deps.txt").read_text()
-        assert wrapper_tables(new / "functions" / f"{n.name}.py") == wrapper_tables(old / "functions" / f"{n.name}.py")
-    olde = json.loads((old / "external_inputs.json").read_text())
-    assert sorted(ra[e["file"]] for e in olde) == sorted(rb[e["file"]] for e in built["external_inputs"])
-
-
-def test_e2_faasr_bundles_write_the_same_objects(tmp_path):
-    spec, old, built, new = bundles(e2_spec(), tmp_path)
-    import random
-    random.seed(20261123)  # generate_text shuffles with the global random: the same seed, the same text
-    run_bundle(tmp_path / "a", old, tmp_path / "s3a")
-    random.seed(20261123)
-    run_bundle(tmp_path / "b", new, tmp_path / "s3b")
-    ra, rb = old_roles(spec), new_roles(cwl_of(e2_spec(), tmp_path / "again"), built)
-    fa = {p.name: p for p in (tmp_path / "s3a" / spec.folder).iterdir()}
-    fb = {p.name: p for p in (tmp_path / "s3b" / spec.folder).iterdir()}
-    assert len(fa) == len(fb) == 17
-
-    def role_of(name, roles):
-        import re
-        for pattern, r in roles.items():
-            if "{rank}" in pattern:  # every {rank} in the pattern is the same rank
-                rx = "^" + re.escape(pattern).replace(re.escape("{rank}"), r"(\d+)") + "$"
-                m = re.match(rx, name)
-                if m and len(set(m.groups())) == 1:
-                    return r, int(m.group(1))
-            elif name == pattern:
-                return r, None
-        raise KeyError(name)
-
-    by_a = {role_of(n, ra): p.read_bytes() for n, p in fa.items()}
-    by_b = {role_of(n, rb): p.read_bytes() for n, p in fb.items()}
-    assert by_a == by_b
-    # the deliverables manifest names what download-outputs fetches
-    assert [d["deliver_as"] for d in built["outputs"]["deliverables"]] == \
-        [f"results/word_count_{i}.json" for i in range(1, 6)]
-    assert {f["file"] for f in built["outputs"]["files"]} == set(fb)
-
-
-@pytest.mark.parametrize("spec_of,label", SPECS, ids=[s[1] for s in SPECS])
-def test_pegasus_folder_matches_todays(tmp_path, spec_of, label):
-    spec = WorkflowSpec.model_validate(spec_of())
-    old = P.write_folder(tmp_path / "old", P.build_ir(spec, name="t-flow", image=IMAGE))
-    built = CP.build(cwl_of(spec_of(), tmp_path), "t-flow", image=IMAGE)
-    new = CP.write_folder(tmp_path / "new", built)
-    assert CP.validate_folder(new)["errors"] == []
-    a, _, _, _ = V0.prepare(V0.load(old / "ir.yaml"))
-    b, _, _, _ = V0.prepare(V0.load(new / "ir.yaml"))
-    assert canon(a) == canon(b)
-    assert sorted(p.name for p in (new / "functions").iterdir()) == sorted(p.name for p in (old / "functions").iterdir())
-    for p in (old / "functions").iterdir():
-        assert (new / "functions" / p.name).read_bytes() == p.read_bytes()
-
-
-def test_e2_pegasus_runs_give_the_same_files(tmp_path):
-    spec = WorkflowSpec.model_validate(e2_spec())
-    old = P.write_folder(tmp_path / "old", P.build_ir(spec, name="t-flow", image=IMAGE))
-    new = CP.write_folder(tmp_path / "new", CP.build(cwl_of(e2_spec(), tmp_path), "t-flow", image=IMAGE))
-    fa = run_locally(old / "ir.yaml", tmp_path / "ja")
-    fb = run_locally(new / "ir.yaml", tmp_path / "jb")
-    for i in range(1, 6):
-        assert fa[f"word_count_{i}.json"].read_bytes() == fb[f"reduce__output1__{i}__word_count_{i}.json"].read_bytes()
 
 
 # ── what each builder refuses or maps ────────────────────────────────────────
@@ -271,7 +123,7 @@ def test_download_outputs_reads_the_builders_manifest(tmp_path):
     assert M.built_outputs(wf, manifest) == [{"action": "reduce", "key": "wc-0101/reduce__output1__1"}]
     (tmp_path / "b").mkdir()
     (tmp_path / "b" / "outputs.json").write_text(json.dumps(manifest))
-    assert M.run_outputs(tmp_path, {"bundle_dir": str(tmp_path / "b")}, wf) == \
+    assert M.run_outputs(tmp_path, {"execution": {"bundle_dir": str(tmp_path / "b")}}, wf) == \
         [{"action": "reduce", "key": "wc-0101/reduce__output1__1"}]
 
 
@@ -299,7 +151,7 @@ def test_backend_turns_after_into_dependencies_and_secrets_into_getenv(tmp_path)
 
 
 def test_backend_plans_the_e2_folder(tmp_path):
-    folder = CP.write_folder(tmp_path / "pegasus", CP.build(cwl_of(e2_spec(), tmp_path), "t-flow", image=IMAGE))
+    folder = CP.write_folder(tmp_path / "pegasus", CP.build(e2_wf(), "t-flow", image=IMAGE))
     wf = emitted(folder, tmp_path / "work")
     assert len(wf["jobs"]) == 11
     reduce3 = next(j for j in wf["jobs"] if j["id"] == "reduce__3")

@@ -111,10 +111,11 @@ def test_the_mapreduce_reference_in_detail():
 
 
 def test_the_e2_runs_match_the_reference(tmp_path):
-    """Both bundles run: FaaSr through test_faasr_wrapper's stand-in, Pegasus through ir_local (the
-    runner shim, job by job). runs.json records every file each target writes and the sha256 of the
-    five word counts (the rest depends on generate_text's unseeded shuffle)."""
+    """Both bundles run: FaaSr through test_faasr_wrapper's stand-in (in-process, with generate_text's
+    random seeded: every object's sha256 is recorded), Pegasus through ir_local (the runner shim, one
+    subprocess per job, unseeded: every file, and the five word counts' sha256, the same as FaaSr's)."""
     import hashlib
+    import random
     sys.path.insert(0, str(PLUGIN / "tests"))
     from ir_local import run_locally
     from test_faasr_wrapper import run_bundle
@@ -125,12 +126,35 @@ def test_the_e2_runs_match_the_reference(tmp_path):
     sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()  # noqa: E731
 
     bundle = CF.write(CF.build(wf, spec.name, spec.folder, spec.compute_target, spec.data_store), tmp_path / "bundle")
+    random.seed(20261123)  # as tests/tools/genfix.py E2_SEED
     run_bundle(tmp_path / "faasr", bundle, tmp_path / "s3")
     objects = {p.relative_to(tmp_path / "s3").as_posix(): p for p in (tmp_path / "s3").rglob("*") if p.is_file()}
-    assert sorted(objects) == want["faasr_objects"]
+    assert {k: sha(p) for k, p in sorted(objects.items())} == want["faasr_objects"]
     assert {k.split("/", 1)[1]: sha(p) for k, p in objects.items() if "word_count_" in k} == want["results_sha256"]
 
     folder = CP.write_folder(tmp_path / "pegasus", CP.build(wf, "t-flow"))
     files = run_locally(folder / "ir.yaml", tmp_path / "jobs")
     assert sorted(files) == want["pegasus_files"]
     assert {k: sha(p) for k, p in files.items() if "word_count_" in k} == want["results_sha256"]
+
+
+def test_diamond_and_fanout_give_the_same_result(tmp_path):
+    """The two shapes of the ice-phenology example (a diamond of steps, and a fan-out over winters with a
+    gather) run on the Pegasus build through ir_local and deliver the same file."""
+    sys.path.insert(0, str(PLUGIN / "tests"))
+    from ir_local import run_locally
+    got = {}
+    for case in ("diamond", "fanout"):
+        _, wf, _ = load(case)
+        folder = CP.write_folder(tmp_path / case, CP.build(wf, case))
+        files = run_locally(folder / "ir.yaml", tmp_path / f"{case}-jobs")
+        (got[case],) = [p.read_bytes() for k, p in files.items() if k.endswith("__ice_phenology_result.json")]
+    assert got["diamond"] and got["diamond"] == got["fanout"]
+
+
+def test_no_fixture_names_a_home_folder():
+    for root in (REF, PLUGIN / "tests" / "fixtures" / "real"):
+        for f in root.rglob("*"):
+            if f.is_file():
+                text = f.read_text(errors="replace")
+                assert "/home/" not in text and "/Users/" not in text and "/private/" not in text, f

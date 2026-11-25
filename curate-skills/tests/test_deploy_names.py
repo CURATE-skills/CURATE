@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 import deploy as D
+from versioned import versioned_bundle
 from test_deploy import FAKE, FakeGitHub, env, workflow  # noqa: F401  (env is a fixture)
 
 A = "20261105-093012-weather"   # approved Gate 4 at 09:30 on 5 Nov
@@ -20,25 +21,26 @@ def plain(env, monkeypatch):
     return monkeypatch
 
 
+BUNDLE = {"workflow.json": json.dumps(workflow(), indent=2), "functions/plot_weather.py": "def plot_weather(): pass\n",
+          "functions/download_station.py": "def download_station(): pass\n"}
+
+
 @pytest.fixture
 def project(tmp_path):
-    bundle = tmp_path / "faasr_output" / "weather"
-    (bundle / "functions").mkdir(parents=True)
-    (bundle / "workflow.json").write_text(json.dumps(workflow(), indent=2))
-    (bundle / "functions" / "plot_weather.py").write_text("def plot_weather(): pass\n")
-    (bundle / "functions" / "download_station.py").write_text("def download_station(): pass\n")
+    versioned_bundle(tmp_path, BUNDLE)
     return tmp_path
 
 
 def make_run(project, run_id, copied_from=None, deploy=None, stage="deploy", log=None):
-    bundle = project / "faasr_output" / "weather"
-    h = D.tree_hash(bundle)
+    """A run of weather-v1 whose execution built the shared bundle (tests/versioned.py)."""
+    fields, _ = versioned_bundle(project, BUNDLE)
+    h = fields["execution"]["bundle_hash"]
     r = project / ".curate" / "runs" / run_id
     (r / "deploy").mkdir(parents=True)
-    hist = [{"gate": 4, "decision": "copied", "from_run": copied_from, "bundle_hash": h,
+    hist = [{"gate": 4, "decision": "copied", "from_run": copied_from,
              "snapshot": "005-gate4-approve.json"}] if copied_from \
         else [{"gate": 4, "decision": "approve"}]
-    st = {"schema_version": 2, "run_id": run_id, "stage": stage, "bundle_dir": str(bundle), "bundle_hash": h,
+    st = {"schema_version": 2, "run_id": run_id, "stage": stage, **fields,
           "deploy_choice": "yes", "history": hist}
     if deploy:
         st["deploy"] = {"repo": "alice/faasr-actions", "branch": "main", "bundle_hash": h, **deploy}

@@ -405,7 +405,11 @@ WEATHER = {"name": "weather", "description": "compare winter weather",
 def test_show_returns_a_short_question_options_and_the_marker(make_run, capsys, gate):
     spec = coded_spec()
     run = make_run(skeleton_draft={"spec": spec}, spec=spec, mga={"map": {"status": "reused"}},
-                   validation={"ok": True, "level": "faasr_py"}, bundle_dir="/b")
+                   validation={"ok": True, "level": "faasr_py"})
+    if gate == 4:  # Gate 4 shows the workflow draft emit writes
+        import emit
+        emit.main(["bundle", "--run", str(run), "--level", "structural"])
+        capsys.readouterr()
     out = ok(S, ["show", "--run", str(run), "--gate", str(gate)], capsys)
     assert out["header"] == f"Gate {gate}" and out["question"].endswith('(Type in "Other" to request changes.)')
     assert out["markdown"].startswith(f"## Gate {gate}") and "compact" not in out

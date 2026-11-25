@@ -78,9 +78,14 @@ def expected_of(folder: Path) -> dict:
     return exp
 
 
+E2_SEED = 20261123  # generate_text shuffles with the global random; the FaaSr stand-in runs in-process
+
+
 def e2_runs() -> dict:
-    """Run both e2 bundles (FaaSr stand-in, ir_local); every file written, and the word counts' sha256
-    (the other outputs depend on generate_text's unseeded shuffle)."""
+    """Run both e2 bundles. FaaSr (the stand-in, in-process, random seeded): every object and its
+    sha256. Pegasus (ir_local, one subprocess per job, so unseeded): every file, and the word counts'
+    sha256, which match FaaSr's."""
+    import random
     import cwl_faasr as CF
     import cwl_pegasus as CP
     from curate_models import WorkflowSpec
@@ -92,6 +97,7 @@ def e2_runs() -> dict:
     sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()  # noqa: E731
     t = Path(tempfile.mkdtemp())
     b = CF.write(CF.build(wf, spec.name, spec.folder, spec.compute_target, spec.data_store), t / "bundle")
+    random.seed(E2_SEED)
     run_bundle(t / "faasr", b, t / "s3")
     faasr = {p.relative_to(t / "s3").as_posix(): sha(p) for p in (t / "s3").rglob("*") if p.is_file()}
     files = run_locally(CP.write_folder(t / "peg", CP.build(wf, "t-flow")) / "ir.yaml", t / "jobs")
@@ -99,7 +105,7 @@ def e2_runs() -> dict:
     det = {k: v for k, v in sorted(peg.items()) if "word_count_" in k}
     if {k.split("/", 1)[1]: v for k, v in faasr.items() if "word_count_" in k} != det:
         raise SystemExit("the e2 word counts differ between FaaSr and Pegasus; not recording them")
-    return {"faasr_objects": sorted(faasr), "pegasus_files": sorted(peg), "results_sha256": det}
+    return {"faasr_objects": dict(sorted(faasr.items())), "pegasus_files": sorted(peg), "results_sha256": det}
 
 
 def spec_cwl_files(folder: Path) -> dict[str, bytes]:

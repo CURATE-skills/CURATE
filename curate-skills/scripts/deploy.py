@@ -163,23 +163,20 @@ def load_run(run: str) -> tuple[dict, Path]:
     s = json.loads(path.read_text())
     if s.get("schema_version", 1) < 2:
         raise InputError("this run was made by curate-skills v1, which does not deploy")
-    if s.get("workflow_id"):  # a versioned run deploys only the bundle built from its approved version
-        if s.get("deploy_choice") == "pegasus":
-            raise InputError(PEGASUS_REFUSAL)
-        ex = s.get("execution") or {}
-        if ex.get("target") != "faasr" or not ex.get("bundle_dir"):
-            raise InputError(f"this run has no FaaSr bundle for its approved version {s['workflow_id']} (it is built "
-                             "when Gate 4 or \"Start this run?\" chooses Approve & deploy); approve Gate 4 again "
-                             "with --deploy yes")
-        bundle = Path(ex["bundle_dir"])
-        if not (bundle / "workflow.json").is_file():
-            raise InputError(f"{bundle}/workflow.json not found; approve Gate 4 again to rebuild the bundle")
-        return s, bundle
-    if not s.get("bundle_dir"):
-        raise InputError("this run has no bundle yet — run curate-emit and approve Gate 4 first")
-    bundle = Path(s["bundle_dir"])
+    if not s.get("workflow_id"):  # only the bundle built from an approved version is deployed
+        import execution as X
+        raise InputError(X.pre_version(s) if s.get("bundle_dir") else
+                         "this run has no approved workflow version yet — run curate-emit and approve Gate 4 first")
+    if s.get("deploy_choice") == "pegasus":
+        raise InputError(PEGASUS_REFUSAL)
+    ex = s.get("execution") or {}
+    if ex.get("target") != "faasr" or not ex.get("bundle_dir"):
+        raise InputError(f"this run has no FaaSr bundle for its approved version {s['workflow_id']} (it is built "
+                         "when Gate 4 or \"Start this run?\" chooses Approve & deploy); approve Gate 4 again "
+                         "with --deploy yes")
+    bundle = Path(ex["bundle_dir"])
     if not (bundle / "workflow.json").is_file():
-        raise InputError(f"{bundle}/workflow.json not found")
+        raise InputError(f"{bundle}/workflow.json not found; approve Gate 4 again to rebuild the bundle")
     return s, bundle
 
 
@@ -187,10 +184,10 @@ PEGASUS_REFUSAL = ("Gate 4 chose the Pegasus target for this run; the FaaSr depl
                    "(nothing is written to GitHub or S3)")
 
 
-def gate4_problem(s: dict, bundle_hash: str | None = None) -> str | None:
-    """None if the bundle is Gate 4-approved: approved in this run, or carried over from another
-    run's approval by `start --at deploy|finalize --from-run` — then only if the hash recorded with
-    the carried-over approval matches the bundle as it is now."""
+def gate4_problem(s: dict) -> str | None:
+    """None if the run's version is Gate 4-approved: approved in this run, or carried over from another
+    run's approval by `start --at deploy|finalize --from-run` (the version is then checked by its
+    hash, and the bundle by its manifest)."""
     if s.get("deploy_choice") == "pegasus":
         return PEGASUS_REFUSAL
     hist = s.get("history") or []
@@ -198,16 +195,6 @@ def gate4_problem(s: dict, bundle_hash: str | None = None) -> str | None:
                  if h.get("gate") == 4 and h.get("decision") in ("approve", "copied")]
     if not approvals:
         return "Gate 4 was never approved in this run; only an approved bundle can be deployed"
-    last = hist[approvals[-1]]
-    if last["decision"] == "copied" and s.get("workflow_id"):
-        pass  # a versioned run: the carried-over version is checked by its hash and the bundle by its manifest
-    elif last["decision"] == "copied":
-        if not (last.get("from_run") and last.get("snapshot") and last.get("bundle_hash")):
-            return ("this run's Gate 4 approval was carried over from another run without a bundle hash; "
-                    "start again with --start-at deploy --from-run <run_id>")
-        if bundle_hash is not None and last["bundle_hash"] != bundle_hash:
-            return (f"the bundle no longer matches the Gate 4 approval carried over from run "
-                    f"{last['from_run']} ({last['snapshot']}); it cannot be deployed")
     for h in hist[approvals[-1] + 1:]:
         if h.get("decision") in ("revise", "rewind"):
             return (f"the last Gate 4 approval was superseded by a later {h['decision']} "
@@ -643,40 +630,28 @@ def _owner_of(gh: GitHub, user: str, repo: str, branch: str, t: dict, new: str) 
 
 def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str = "none",
               s3_factory=boto3_s3, overwrite_own: bool = False, done_steps=(),
-              require_hash: bool = False, reuse_from: dict | None = None, name_source: str | None = None) -> dict:
+              reuse_from: dict | None = None, name_source: str | None = None) -> dict:
     """Read-only. done_steps: deploy steps this run already finished; their paths must exist,
     carry curate-skills' mark and be in this run's deploy log (they are not written again).
     reuse_from ({run_id, run_dir}): the deployment was made by that run and is reused (invoke only);
-    its deploy log counts too, and the S3 prefixes it recorded may be rewritten by the new invocation.
-    require_hash: refuse without a bundle hash recorded at Gate 4 (every deploy step does)."""
+    its deploy log counts too, and the S3 prefixes it recorded may be rewritten by the new invocation."""
     if not suffix or not SUFFIX_RX.match(suffix):
         raise InputError(f"deploy name suffix {suffix!r} must be non-empty letters, digits, '-' or '_'")
     s, bundle = load_run(run)
     wf = json.loads((bundle / "workflow.json").read_text())
     problems, warnings = [], []
     bhash = tree_hash(bundle)
-    versioned = bool(s.get("workflow_id"))
-    if (p := gate4_problem(s, None if versioned else bhash)):
+    if (p := gate4_problem(s)):
         problems.append(p)
-    if versioned:  # the manifest check replaces the Gate 4 bundle hash
-        import execution as X
-        if (p := X.check(s)):
-            problems.append(p)
-    elif s.get("bundle_hash") and s["bundle_hash"] != bhash:
-        problems.append("the bundle folder changed after Gate 4 approval; re-run curate-emit")
-    elif require_hash and not s.get("bundle_hash"):
-        problems.append("no bundle hash was recorded when Gate 4 was approved, so a changed bundle could "
-                        "not be detected; approve Gate 4 again")
-    elif not s.get("bundle_hash"):
-        warnings.append("this run has no recorded bundle hash (approved before deploy existed); "
-                        "the bundle is checked as it is now")
-    if s.get("workflow_id"):  # the version Gate 4 published must be the one deployed
-        import ids
-        vdir = Path(s.get("version_dir") or "")
-        if not vdir.is_dir():
-            problems.append(f"the approved version {s['workflow_id']} is missing ({vdir})")
-        elif ids.tree_hash(vdir, skip=("runs",)) != s.get("version_hash"):
-            problems.append(f"the approved version {s['workflow_id']} changed after it was published")
+    import execution as X
+    if (p := X.check(s)):  # the bundle: built from the approved version, unchanged since (its manifest)
+        problems.append(p)
+    import ids  # the version Gate 4 published must be the one deployed
+    vdir = Path(s.get("version_dir") or "")
+    if not vdir.is_dir():
+        problems.append(f"the approved version {s['workflow_id']} is missing ({vdir})")
+    elif ids.tree_hash(vdir, skip=("runs",)) != s.get("version_hash"):
+        problems.append(f"the approved version {s['workflow_id']} changed after it was published")
     filled_wf, filled, unset = fill_placeholders(wf)
     if unset:
         problems.append(f"the bundle's placeholders cannot be filled in the deploy copy: {', '.join(unset)} "
@@ -975,7 +950,7 @@ def _gate4_target(run: str) -> dict:
     envfile.load()
     import execution as X
     s = json.loads((Path(run) / "state.json").read_text())
-    if X.is_versioned(s) and not (s.get("execution") or {}).get("bundle_hash"):
+    if not (s.get("execution") or {}).get("bundle_hash"):
         wf = X.faasr_built(s, run)["workflow"]  # Gate 4's preview: built in memory from the draft
         name = resolve_suffix(run, os.environ.get("CURATE_DEPLOY_NAME_SUFFIX") or None, None, wf["WorkflowName"])
     else:
@@ -1214,7 +1189,7 @@ def deploy_step(run: str, step: str, suffix: str, gh: GitHub | None, token: str 
         reused = reuse_source(run, s) if rec.get("reused_from") else None
     except StepError as e:
         return {**base, "ok": False, "error": str(e)}
-    pf = preflight(run, suffix, gh, token_source, s3_factory, overwrite_own, done_steps=done, require_hash=True,
+    pf = preflight(run, suffix, gh, token_source, s3_factory, overwrite_own, done_steps=done,
                    reuse_from=reused)
     copy_wf = pf.pop("_copy_wf")
     user, repo, branch = (os.environ.get("FAASR_GH_USERNAME", "").strip(),
@@ -1356,7 +1331,7 @@ def reuse_source(run: str, s: dict) -> dict:
     missing = [x for x in STEPS if not (dep.get("steps") or {}).get(x, {}).get("ok")]
     if missing:
         raise StepError(f"run {src_id} did not finish deploying (missing: {', '.join(missing)}); nothing to reuse")
-    if dep.get("bundle_hash") != s.get("bundle_hash"):
+    if dep.get("bundle_hash") != (s.get("execution") or {}).get("bundle_hash"):
         raise StepError(f"run {src_id} deployed a different bundle (hash) than the one approved here")
     if dep.get("teardown"):
         raise StepError(f"run {src_id}'s deployment was torn down ({dep['teardown'].get('ts')}); nothing to reuse")
@@ -1417,7 +1392,7 @@ def reuse(run: str, suffix: str, gh: GitHub | None, token: str | None, token_sou
     except StepError as e:
         return {**base, "ok": False, "error": str(e)}
     done = ("publish", "upload", "register")
-    pf = preflight(run, suffix, gh, token_source, s3_factory, done_steps=done, require_hash=True, reuse_from=src)
+    pf = preflight(run, suffix, gh, token_source, s3_factory, done_steps=done, reuse_from=src)
     copy_wf = pf.pop("_copy_wf")
     new = copy_wf["WorkflowName"]
     user, repo, branch = (os.environ.get("FAASR_GH_USERNAME", "").strip(),

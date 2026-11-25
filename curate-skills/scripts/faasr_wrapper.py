@@ -3,9 +3,9 @@
 A plain step (scripts/plain_contract.py) ships to FaaSr as two files, side by side:
 
   functions/<fn>_main.py   the step's function, byte-identical to the approved code
-  functions/<fn>.py        this wrapper (render()), which FaaSr calls as <fn>(**Arguments)
+  functions/<fn>.py        this wrapper (render_step()), which FaaSr calls as <fn>(**Arguments)
 
-FaaSr's FunctionGitRepo lists both (emit.py), so both land in the same folder. The wrapper
+FaaSr's FunctionGitRepo lists both (emit.function_repo_paths), so both land in the same folder. The wrapper
 loads <fn>_main.py from its own folder and, per invocation:
 
   1. faasr_rank() if the step is ranked; fills {rank} into the file names
@@ -16,15 +16,13 @@ loads <fn>_main.py from its own folder and, per invocation:
   4. checks every output exists, then faasr_put_file each one
   5. returns main's value (True/False drives a conditional InvokeNext)
 
-The Arguments are the ones FaaSr always had (emit.faasr_arguments): folder, input1.., output1..
-with {rank} left in, so workflow.json is unchanged. Standard library only.
+The Arguments are folder, input1.., output1.. (the file names scripts/cwl_faasr.py generates,
+with {rank} left in). Standard library only.
 """
 from __future__ import annotations
 
 import ast
 import hashlib
-
-import plain_contract as PC
 
 MAIN_SUFFIX = "_main"
 
@@ -35,30 +33,6 @@ def main_file(fn: str) -> str:
 
 def sha256(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
-
-
-def bundle_problems(spec) -> list[str]:
-    """Why the steps of `spec` cannot be wrapped for FaaSr; empty if they can. Every step with
-    code must be a plain function (a step without code is reported by write_bundle)."""
-    problems = []
-    names = {n.name for n in spec.nodes}
-    plain = [n for n in spec.nodes if PC.is_plain(n.code)]
-    for n in spec.nodes:
-        if n.code and not PC.is_plain(n.code):
-            problems.append(f"step {n.name} is not a plain main(inputs, outputs, params) function (the older "
-                            "FaaSr style): regenerate it, or migrate the catalog it came from "
-                            "(scripts/migrate_catalog.py)")
-    for n in plain:
-        problems += code_problems(n.name, n.code, names)
-    if plain:
-        layout, counted = PC.io_layout(spec)
-        problems += counted
-        problems += PC.folder_conflicts(spec, only={n.name for n in plain})
-        for n in plain:
-            for s in layout[n.name]["inputs"] + layout[n.name]["outputs"]:
-                if s["kind"] == "list" and not s.get("copies"):
-                    problems.append(f"step {n.name}: {s['slot']} ({s['file']}) has no known number of copies")
-    return problems
 
 
 def code_problems(name: str, code: str, names) -> list[str]:
@@ -219,21 +193,9 @@ def _curate_run(folder, args):
 '''
 
 
-def render(spec, node) -> str:
-    """The wrapper file for one plain step of `spec`."""
-    layout, _ = PC.io_layout(spec)
-    lay = layout[node.name]
-    n = lay["rank"]
-    params = [("rank", None, list(range(1, n + 1))), ("max_rank", n, None)] if n > 1 else []
-    return render_step(node.name, node.code, n > 1,
-                       [(s["slot"], s["kind"], s.get("copies")) for s in lay["inputs"]],
-                       [(s["slot"], s["kind"], s.get("copies")) for s in lay["outputs"]], params)
-
-
 def render_step(name: str, code: str, ranked: bool, inputs: list, outputs: list, params: list) -> str:
     """The wrapper for one step, from its tables: inputs/outputs as (slot, kind, copies), params as
-    (name, constant, per-rank values or None). Shared by the spec bundle (render) and the CWL
-    FaaSr builder (scripts/cwl_faasr.py)."""
+    (name, constant, per-rank values or None). For the CWL FaaSr builder (scripts/cwl_faasr.py)."""
     slots = [s for s, _, _ in inputs] + [s for s, _, _ in outputs]
     return TEMPLATE.format(
         name=name, main_file=main_file(name), sha=sha256(code), ranked=ranked,

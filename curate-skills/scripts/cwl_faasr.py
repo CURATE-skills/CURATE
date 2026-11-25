@@ -7,7 +7,7 @@
   cwl_faasr.py build workflow.yml [--inputs inputs.yml] --out DIR --name NAME --folder F
                [--compute-target T] [--data-store S]
 
-The bundle has the same files as emit.write_bundle's: workflow.json, functions/<step>.py (the
+The bundle: workflow.json, functions/<step>.py (the
 generated wrapper, faasr_wrapper.render_step), functions/<step>_main.py (the function,
 byte-identical), functions/<step>.deps.txt, external_inputs.json and README.md, plus
 outputs.json: every S3 object the run writes ({action, file}) and the deliverables

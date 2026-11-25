@@ -138,12 +138,13 @@ def _changed(s: dict) -> dict | None:
 def _layout(run: Path, s: dict, st: dict) -> dict:
     rec = s.get("pegasus") or {}
     ex = s.get("execution") or {}
-    if s.get("workflow_id") and ex.get("target") == "pegasus":
-        # a versioned run: the folder is the execution run's bundle, and the host path its full reference
-        local, ir_dir, ref = Path(ex["dir"]), Path(ex["bundle_dir"]), ex["reference"]
-    else:
-        local, ref = run / "pegasus", s["run_id"]
-        ir_dir = local / "ir"
+    if not (s.get("workflow_id") and ex.get("target") == "pegasus" and ex.get("dir")):
+        import execution as X
+        raise StepError(X.pre_version(s) if not s.get("workflow_id") else
+                        "this run has no Pegasus execution run (it is opened when Gate 4 or \"Start this run?\" "
+                        "chooses Pegasus); approve Gate 4 again with --deploy pegasus")
+    # the folder is the execution run's bundle, and the host path its full reference
+    local, ir_dir, ref = Path(ex["dir"]), Path(ex["bundle_dir"]), ex["reference"]
     out = {"local": local, "ir_dir": ir_dir, "where": st["host"] or "local", "reference": ref}
     if st["host"]:
         remote = rec.get("remote_dir")  # absolute, known after copy
@@ -163,6 +164,9 @@ def _check_run(run: Path) -> tuple[dict, list[str]]:
         problems.append("Gate 4 did not choose the Pegasus target for this run")
     elif s.get("stage") != "deploy":
         problems.append(f"the run is at stage {s.get('stage')!r}, not deploy")
+    elif not s.get("workflow_id"):
+        import execution as X
+        problems.append(X.pre_version(s))
     else:
         problems += S.require_problems(s, "deploy")
     return s, problems
@@ -314,29 +318,7 @@ def _prepare(run_p, s, st, lay, overwrite_own, inputs_dir) -> dict:
             raise StepError(f"{ir_dir} already exists; nothing is overwritten"
                             + ("" if overwrite_own else " (if this run's prepare wrote it, retry with --overwrite-own)"))
         shutil.rmtree(ir_dir)
-    spec = WorkflowSpec.model_validate(s["spec"])
-    if s.get("workflow_id"):
-        return _prepare_versioned(run_p, s, st, lay, inputs_dir, spec)
-    name = P.run_ir_name(spec.name, s["run_id"])
-    try:
-        built = P.build_ir(spec, name=name, image=st["image"])
-    except P.MappingError as e:
-        raise StepError("cannot run on Pegasus: " + " | ".join(e.problems))
-    missing = _inputs(built["inputs"], inputs_dir)
-    if missing:
-        raise StepError(missing[0])
-    _log(run_p, "prepare", "local", ir_dir)
-    P.write_folder(ir_dir, built)
-    for f in built["inputs"]:
-        shutil.copy2(Path(inputs_dir) / f, ir_dir / "inputs" / f)
-    v = P.validate_folder(ir_dir)
-    if v["errors"]:
-        raise StepError("the IR did not validate: " + " | ".join(v["errors"]))
-    return {"record": {"name": name, "host": st["host"], "runtime": st["runtime"], "image": st["image"],
-                       "image_source": st["image_source"],
-                       "ir_dir": str(ir_dir), "inputs_from": str(Path(inputs_dir).resolve()) if inputs_dir else None,
-                       "jobs": v["jobs"]},
-            "message": f"wrote {ir_dir} ({v['jobs']} jobs); validated"}
+    return _prepare_versioned(run_p, s, st, lay, inputs_dir, WorkflowSpec.model_validate(s["spec"]))
 
 
 def _prepare_versioned(run_p, s, st, lay, inputs_dir, spec) -> dict:

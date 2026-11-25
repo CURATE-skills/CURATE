@@ -12,6 +12,7 @@ import pytest
 
 import deploy as D
 import leakcheck as L
+from versioned import bundle_of, rebuilt, versioned_bundle
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 VENDOR = SCRIPTS / "vendor"
@@ -119,15 +120,14 @@ def workflow(user="alice", repo="faasr-actions", secrets=()):
 
 @pytest.fixture
 def run(tmp_path):
-    bundle = tmp_path / "faasr_output" / "weather-r1"
-    (bundle / "functions").mkdir(parents=True)
-    (bundle / "workflow.json").write_text(json.dumps(workflow(), indent=2))
-    (bundle / "functions" / "plot_weather.py").write_text("def plot_weather(): pass\n")
-    (bundle / "functions" / "download_station.py").write_text("def download_station(): pass\n")
+    """A run whose Gate 4 published weather-v1 and built this FaaSr bundle from it (tests/versioned.py)."""
+    fields, _ = versioned_bundle(tmp_path, {
+        "workflow.json": json.dumps(workflow(), indent=2), "functions/plot_weather.py": "def plot_weather(): pass\n",
+        "functions/download_station.py": "def download_station(): pass\n"})
     r = tmp_path / ".curate" / "runs" / "r1"
     r.mkdir(parents=True)
     (r / "state.json").write_text(json.dumps({
-        "schema_version": 2, "run_id": "r1", "stage": "done", "bundle_dir": str(bundle),
+        "schema_version": 2, "run_id": "r1", "stage": "done", **fields,
         "history": [{"gate": 4, "decision": "approve"}]}))
     return r
 
@@ -265,7 +265,7 @@ def test_preflight_ready_lists_suffixed_targets_only(run, env, capsys):
 
 
 def test_deploy_copy_suffixes_the_s3_folder_and_leaves_the_bundle_alone(run, env, capsys):
-    wf_path = Path(json.loads((run / "state.json").read_text())["bundle_dir"], "workflow.json")
+    wf_path = (bundle_of(run) / "workflow.json")
     before = wf_path.read_text()
     copy_wf, _, s3_targets = D.deploy_copy(workflow(), "-cs", "alice", "faasr-actions", "main")
     assert {a["Arguments"]["folder"] for a in copy_wf["ActionList"].values()} == {"weather_data-cs"}
@@ -279,8 +279,9 @@ def test_preflight_fills_placeholders_in_the_deploy_copy_only(run, env, capsys, 
     wf = workflow()
     wf["DataStores"]["S3"]["Bucket"] = "<FAASR_S3_BUCKET>"
     wf["ComputeServers"]["GH"]["UserName"] = "<FAASR_GH_USERNAME>"
-    wf_path = Path(json.loads((run / "state.json").read_text())["bundle_dir"], "workflow.json")
+    wf_path = (bundle_of(run) / "workflow.json")
     wf_path.write_text(json.dumps(wf))
+    rebuilt(run)
     monkeypatch.setenv("FAASR_S3_BUCKET", "b")
     s3 = FakeS3()
     code, out = pre(capsys, run, FakeGitHub(), s3=s3)
@@ -315,13 +316,14 @@ def test_preflight_s3_problems(run, env, capsys, monkeypatch, case, needle):
     s3 = FakeS3(reachable=case != "unreachable")
     if case == "no_keys":
         monkeypatch.delenv("S3_SecretKey")
-    bundle = Path(json.loads((run / "state.json").read_text())["bundle_dir"])
+    bundle = bundle_of(run)
     if case == "no_folder":
         wf = workflow()
         del wf["ActionList"]["plot"]["Arguments"]["folder"]
         (bundle / "workflow.json").write_text(json.dumps(wf))
     if case == "external":
         (bundle / "external_inputs.json").write_text(json.dumps([{"file": "in.csv", "s3_path": "weather_data/in.csv"}]))
+    rebuilt(run)
     code, out = pre(capsys, run, FakeGitHub(), s3=s3)
     assert code == 1 and any(needle in p for p in out["problems"]), out["problems"]
     assert all(v not in json.dumps(out) for v in FAKE.values())
@@ -399,7 +401,8 @@ def test_preflight_offline_problems(run, env, capsys, monkeypatch):
     wf = workflow()
     wf["DataStores"]["S3"]["Bucket"] = "<FAASR_S3_BUCKET>"
     wf["ActionContainers"]["plot"] = "me/custom:1"
-    Path(json.loads((run / "state.json").read_text())["bundle_dir"], "workflow.json").write_text(json.dumps(wf))
+    (bundle_of(run) / "workflow.json").write_text(json.dumps(wf))
+    rebuilt(run)
     code, out = pre(capsys, run)
     probs = " | ".join(out["problems"])
     assert code == 1 and "placeholders" in probs and "FAASR_S3_BUCKET not set" in probs
@@ -410,11 +413,11 @@ def test_preflight_offline_problems(run, env, capsys, monkeypatch):
 def test_preflight_refuses_unapproved_or_changed_bundles(run, env, capsys):
     s = json.loads((run / "state.json").read_text())
     s["history"].append({"gate": 4, "decision": "revise", "text": "use csv"})
-    s["bundle_hash"] = "0" * 64
     (run / "state.json").write_text(json.dumps(s))
+    (bundle_of(run) / "README.md").write_text("edited after it was built\n")
     code, out = pre(capsys, run, FakeGitHub())
     probs = " | ".join(out["problems"])
-    assert "superseded" in probs and "bundle folder changed" in probs
+    assert "superseded" in probs and "the bundle changed after it was built" in probs
 
 
 def test_suffix_must_be_non_empty_and_simple(run, env, capsys):
@@ -428,7 +431,8 @@ def test_suffix_must_be_non_empty_and_simple(run, env, capsys):
 def test_output_with_a_leaked_token_is_withheld(run, env, capsys, monkeypatch):
     wf = workflow()
     wf["WorkflowName"] = "weather-" + FAKE["S3_SecretKey"]  # a secret pasted into the bundle (echoed)
-    Path(json.loads((run / "state.json").read_text())["bundle_dir"], "workflow.json").write_text(json.dumps(wf))
+    (bundle_of(run) / "workflow.json").write_text(json.dumps(wf))
+    rebuilt(run)
     code, out = pre(capsys, run, FakeGitHub())
     assert code == 1 and out == {"ok": False, "error": "output withheld: contains secret values",
                                  "leaked_secret_names": ["S3_SecretKey"]}
@@ -440,7 +444,8 @@ def test_summary_diffs_the_deploy_copy_field_by_field(run, env, capsys, monkeypa
     wf = workflow()
     wf["DataStores"]["S3"]["Bucket"] = "<FAASR_S3_BUCKET>"
     wf["FunctionGitRepo"]["plot_weather"] = "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/plot_weather.py"
-    Path(json.loads((run / "state.json").read_text())["bundle_dir"], "workflow.json").write_text(json.dumps(wf))
+    (bundle_of(run) / "workflow.json").write_text(json.dumps(wf))
+    rebuilt(run)
     monkeypatch.setenv("FAASR_S3_BUCKET", "b")
     code, out = pre(capsys, run, FakeGitHub())
     assert out["ok"], out["problems"]
@@ -634,7 +639,7 @@ def test_tree_hash_ignores_os_metadata_but_not_content(tmp_path):
 def deploying(run):
     """The run after Gate 4 was approved with Approve & deploy."""
     s = json.loads((run / "state.json").read_text())
-    s.update(stage="deploy", deploy_choice="yes", bundle_hash=D.tree_hash(Path(s["bundle_dir"])))
+    s.update(stage="deploy", deploy_choice="yes")
     (run / "state.json").write_text(json.dumps(s))
     return run
 
@@ -735,40 +740,26 @@ def test_steps_go_in_order_and_a_finished_step_is_skipped(deploying, env, capsys
 
 
 @pytest.mark.parametrize("case,needle", [
-    ("changed", "bundle folder changed after Gate 4"),
-    ("no_hash", "no bundle hash was recorded"),
     ("stage", "not deploy"),
     ("no_deploy", "without deploying"),
     ("actions_env", "GITHUB_REPOSITORY is set here"),
-    ("version_changed", "approved version w-v1 changed after it was published"),
-    ("version_missing", "approved version w-v1 is missing"),
+    ("version_changed", "approved version weather-v1 changed after it was published"),
+    ("version_missing", "approved version weather-v1 is missing"),
     ("built_bundle_changed", "the bundle changed after it was built"),
+    ("pre_version", "approved before workflow versions"),
 ])
 def test_steps_refuse_before_writing(deploying, env, capsys, monkeypatch, case, needle):
     s = json.loads((deploying / "state.json").read_text())
-    if case.startswith("version") or case == "built_bundle_changed":
-        # a versioned run: the version Gate 4 published, and the bundle built from it with a manifest
-        import ids
-        vdir = deploying / "w-v1"
-        vdir.mkdir()
-        (vdir / "workflow.yml").write_text("class: Workflow\n")
-        vhash = ids.tree_hash(vdir, skip=("runs",))
-        exdir = vdir / "runs" / "20261122-010101-abcd"
-        shutil.copytree(s["bundle_dir"], exdir / "bundle")
-        ids.write_manifest(exdir, vhash, "faasr")
-        s.update(workflow_id="w-v1", version_dir=str(vdir), version_hash=vhash,
-                 execution={"run_id": "20261122-010101-abcd", "reference": "w-v1/20261122-010101-abcd",
-                            "dir": str(exdir), "target": "faasr", "bundle_dir": str(exdir / "bundle")})
-        if case == "version_changed":
-            (vdir / "workflow.yml").write_text("class: Workflow\nedited: true\n")
-        elif case == "version_missing":
-            s["version_dir"] = str(deploying / "gone")
-        else:
-            (exdir / "bundle" / "README.md").write_text("edited after it was built\n")
-    if case == "changed":
-        (Path(s["bundle_dir"]) / "functions" / "plot_weather.py").write_text("def plot_weather(): return 1\n")
-    if case == "no_hash":
-        s.pop("bundle_hash")
+    if case == "version_changed":
+        (Path(s["version_dir"]) / "workflow.yml").write_text("class: Workflow\nedited: true\n")
+    elif case == "version_missing":
+        s["version_dir"] = str(deploying / "gone")
+    elif case == "built_bundle_changed":
+        (bundle_of(deploying) / "functions" / "plot_weather.py").write_text("def plot_weather(): return 1\n")
+    elif case == "pre_version":  # the old emit's bundle, no version: no longer deployed
+        for k in ("workflow_id", "version_dir", "version_hash", "execution"):
+            s.pop(k)
+        s["bundle_dir"] = str(deploying / "old-bundle")
     if case == "stage":
         s["stage"] = "finalize"
     if case == "no_deploy":
@@ -778,16 +769,15 @@ def test_steps_refuse_before_writing(deploying, env, capsys, monkeypatch, case, 
     (deploying / "state.json").write_text(json.dumps(s))
     fake = FakeGitHub(writable=True)
     code, out = step(capsys, deploying, "publish", fake, "--confirmed")
-    assert code == 1 and needle in json.dumps(out), out
+    assert code == (2 if case == "pre_version" else 1) and needle in json.dumps(out), out  # 2: not deployable at all
     assert fake.puts == [] and log_lines(deploying) == []
 
 
 def test_a_secret_in_function_code_is_never_pushed(deploying, env, capsys):
     s = json.loads((deploying / "state.json").read_text())
-    bundle = Path(s["bundle_dir"])
+    bundle = bundle_of(deploying)
     (bundle / "functions" / "plot_weather.py").write_text(f"KEY = '{FAKE['S3_SecretKey']}'\n")
-    s["bundle_hash"] = D.tree_hash(bundle)  # as if it had been approved like this
-    (deploying / "state.json").write_text(json.dumps(s))
+    rebuilt(deploying)  # as if it had been built like this
     fake = FakeGitHub(writable=True)
     code, out = step(capsys, deploying, "publish", fake, "--confirmed")
     assert code == 1 and out["failed"] and "contains secret values (S3_SecretKey)" in out["error"]
@@ -823,7 +813,7 @@ def test_status_reports_done_and_next(deploying, env, capsys, runners):
 def test_publish_never_pushes_os_metadata(deploying, env, capsys, runners):
     # The same files tree_hash ignores: they can appear after approval without changing the hash,
     # and publish only pushes functions/<fn>.py for the functions in FunctionGitRepo.
-    bundle = Path(json.loads((deploying / "state.json").read_text())["bundle_dir"])
+    bundle = bundle_of(deploying)
     (bundle / ".DS_Store").write_bytes(b"finder")
     (bundle / "functions" / ".DS_Store").write_bytes(b"finder")
     (bundle / "functions" / "._plot_weather.py").write_bytes(b"apple double")
@@ -856,19 +846,21 @@ def test_curates_yaml_generator_is_deterministic(monkeypatch):
 
 @pytest.fixture
 def reusable(run, monkeypatch):
-    """r0 deployed weather-cs (all four steps, its deploy log); r1 was started from r0 at deploy."""
+    """r0 deployed weather-cs (all four steps, its deploy log); r1 was started from r0 at deploy and built
+    the same bundle from the same version (so the hash r0 deployed is r1's execution bundle's hash)."""
     _stub_modules(monkeypatch)
     s = json.loads((run / "state.json").read_text())
-    bundle = Path(s["bundle_dir"])
-    h = D.tree_hash(bundle)
+    bundle = bundle_of(run)
+    h = s["execution"]["bundle_hash"]
+    assert h == D.tree_hash(bundle)
     src = run.parent / "r0"
     (src / "deploy").mkdir(parents=True)
     paths = ["functions/weather-cs/download_station.py", "functions/weather-cs/plot_weather.py",
              "workflows/weather-cs.json", ".github/workflows/weather-cs-download.yml",
              ".github/workflows/weather-cs-plot.yml"]
     (src / "state.json").write_text(json.dumps({
-        "schema_version": 2, "run_id": "r0", "stage": "done", "bundle_dir": str(bundle), "bundle_hash": h,
-        "deploy_choice": "yes", "history": [{"gate": 4, "decision": "approve"}],
+        "schema_version": 2, "run_id": "r0", "stage": "done",
+        **{k: s[k] for k in ("workflow_id", "version_dir", "version_hash", "execution")}, "deploy_choice": "yes", "history": [{"gate": 4, "decision": "approve"}],
         "deploy": {"deploy_name": "weather-cs", "repo": "alice/faasr-actions", "branch": "main", "bundle_hash": h,
                    "invocation_id": "inv-0", "steps": {x: {"ok": True} for x in D.STEPS}}}))
     log = [{"run_id": "r0", "deploy_name": "weather-cs", "step": "x", "repo": "alice/faasr-actions",
@@ -876,8 +868,8 @@ def reusable(run, monkeypatch):
     log += [{"run_id": "r0", "deploy_name": "weather-cs", "step": "invoke", "bucket": "b", "prefix": x}
             for x in ("weather_data-cs/", "FaaSrLog/weather-cs/")]
     (src / "deploy" / "deploy-log.jsonl").write_text("".join(json.dumps(e) + "\n" for e in log))
-    s.update(stage="deploy", deploy_choice="yes", bundle_hash=h, history=[
-        {"gate": 4, "decision": "copied", "from_run": "r0", "snapshot": "005-gate4-approve.json", "bundle_hash": h},
+    s.update(stage="deploy", deploy_choice="yes", history=[
+        {"gate": 4, "decision": "copied", "from_run": "r0", "snapshot": "005-gate4-approve.json"},
         {"gate": 4, "decision": "deploy-confirmed"}])
     (run / "state.json").write_text(json.dumps(s))
     copy_wf = D.deploy_copy(workflow(), "-cs", "alice", "faasr-actions", "main")[0]
@@ -979,13 +971,14 @@ PLAIN_MAIN = "def main(inputs, outputs, params):\n    open(outputs['output1'], '
 @pytest.fixture
 def plain_run(run):
     """plot_weather is a plain step: FunctionGitRepo lists the wrapper and plot_weather_main.py."""
-    bundle = Path(json.loads((run / "state.json").read_text())["bundle_dir"])
+    bundle = bundle_of(run)
     wf = workflow()
     wf["FunctionGitRepo"]["plot_weather"] = ["alice/faasr-actions/main/functions/plot_weather.py",
                                              "alice/faasr-actions/main/functions/plot_weather_main.py"]
     (bundle / "workflow.json").write_text(json.dumps(wf, indent=2))
     (bundle / "functions" / "plot_weather.py").write_text("# wrapper\ndef plot_weather(folder): pass\n")
     (bundle / "functions" / "plot_weather_main.py").write_text(PLAIN_MAIN)
+    rebuilt(run)
     return run
 
 
@@ -1004,7 +997,7 @@ def test_deploy_copy_keeps_both_files_of_a_plain_step(plain_run, env, capsys):
 
 def test_publish_pushes_the_unchanged_function_byte_for_byte(plain_run, env, capsys, runners):
     s = json.loads((plain_run / "state.json").read_text())
-    s.update(stage="deploy", deploy_choice="yes", bundle_hash=D.tree_hash(Path(s["bundle_dir"])))
+    s.update(stage="deploy", deploy_choice="yes")
     (plain_run / "state.json").write_text(json.dumps(s))
     fake = FakeGitHub(writable=True)
     runners["fake"] = fake
@@ -1017,7 +1010,7 @@ def test_publish_pushes_the_unchanged_function_byte_for_byte(plain_run, env, cap
 
 
 def test_verify_compares_both_files_of_a_plain_step(plain_run, env):
-    bundle = Path(json.loads((plain_run / "state.json").read_text())["bundle_dir"])
+    bundle = bundle_of(plain_run)
     copy_wf, targets, _ = D.deploy_copy(json.loads((bundle / "workflow.json").read_text()), "-cs",
                                         "alice", "faasr-actions", "main")
     files = {f"functions/weather-cs/{b}": (bundle / "functions" / b).read_text() for _, b in D.function_files(copy_wf)}

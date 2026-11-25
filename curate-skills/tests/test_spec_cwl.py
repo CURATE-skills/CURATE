@@ -1,4 +1,5 @@
-"""scripts/spec_cwl.py: the spec -> CWL step emit will use (phase 6a)."""
+"""scripts/spec_cwl.py: the spec -> CWL step emit uses. Its output for the reference specs is fixed byte
+for byte in tests/test_cwl_reference.py and tests/test_real_versions.py."""
 import json
 import sys
 from pathlib import Path
@@ -8,11 +9,8 @@ import pytest
 PLUGIN = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN / "curate_ir"))
 sys.path.insert(0, str(PLUGIN / "tests"))
-import pegasus_ir as P  # noqa: E402
 import spec_cwl as SC  # noqa: E402
-import validate as V0  # noqa: E402
 from curate_models import WorkflowSpec  # noqa: E402
-from cwl.from_ir import convert  # noqa: E402
 from cwl.validate import validate  # noqa: E402
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -33,21 +31,6 @@ def valid(tmp_path, built):
     return wf
 
 
-@pytest.mark.parametrize("name", ["e2", "weather"])
-def test_same_as_from_ir_of_build_ir_for_what_v0_2_covers(tmp_path, name):
-    spec = fixture(name)
-    built = SC.build(spec)
-    folder = P.write_folder(tmp_path / "ir", P.build_ir(spec, name=P.ir_name(spec.name)))
-    expected = convert(V0.load(folder / "ir.yaml"))["workflow"]
-    got = dict(built["workflow"])
-    assert got.pop("label") == spec.name
-    got.pop("doc", None)
-    expected.pop("label")
-    expected.pop("doc", None)
-    assert got == expected
-    valid(tmp_path, built)
-
-
 def spec_with_conditions_and_secrets():
     node = lambda name, code, ins=(), outs=(), **kw: {  # noqa: E731
         "name": name, "code": code, "inputs": [{"name": i} for i in ins], "outputs": [{"name": o} for o in outs], **kw}
@@ -62,8 +45,6 @@ def spec_with_conditions_and_secrets():
 
 
 def test_conditions_secrets_and_file_less_edges_come_from_the_spec(tmp_path):
-    with pytest.raises(P.MappingError):  # the Pegasus IR still refuses them
-        P.build_ir(spec_with_conditions_and_secrets())
     built = SC.build(spec_with_conditions_and_secrets())
     steps = built["workflow"]["steps"]
     assert steps["report"]["hints"]["curate:run_if"] == {"step": "check", "result": True}

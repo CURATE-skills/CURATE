@@ -157,10 +157,9 @@ def built_outputs(wf: dict, manifest: dict) -> list[dict]:
 
 
 def run_outputs(run_p: Path, s: dict, wf: dict) -> list[dict]:
-    """The run's declared outputs: from the bundle's outputs.json when its builder wrote one, else
-    from workflow.json's Arguments (bundles from emit.write_bundle)."""
-    ex = s.get("execution") or {}
-    bundle = ex.get("bundle_dir") if s.get("workflow_id") else s.get("bundle_dir")
+    """The run's declared outputs: from the execution bundle's outputs.json (cwl_faasr writes one),
+    else from workflow.json's Arguments."""
+    bundle = (s.get("execution") or {}).get("bundle_dir")
     manifest = Path(bundle) / "outputs.json" if bundle else None
     if manifest and manifest.is_file():
         return built_outputs(wf, json.loads(manifest.read_text()))

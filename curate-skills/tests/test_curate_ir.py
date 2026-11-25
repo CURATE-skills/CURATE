@@ -1,6 +1,7 @@
 """curate_ir/: the IR validator, the v0.2 fan-out expander and the node runner, without Pegasus.
+(The diamond and fanout examples are CWL references now: tests/fixtures/cwl-ref, test_cwl_reference.py.)
 
-The examples run through the real runner shim (curate_ir/runner/curate_run.py) in a small local
+Workflows run through the real runner shim (curate_ir/runner/curate_run.py) in a small local
 executor that does what Pegasus's condorio staging does: each job runs in its own empty folder,
 gets its input files copied in under their flat names, and its outputs are picked up by name.
 """
@@ -14,7 +15,6 @@ import pytest
 
 PLUGIN = Path(__file__).resolve().parents[1]
 IR_DIR = PLUGIN / "curate_ir"
-EXAMPLES = IR_DIR / "examples"
 RUNNER = IR_DIR / "runner" / "curate_run.py"
 sys.path.insert(0, str(IR_DIR))
 
@@ -37,23 +37,6 @@ def ir_dict(tmp_path, nodes, **extra):
 
 
 # ── loading and validation ──
-
-@pytest.mark.parametrize("example", ["diamond", "fanout"])
-def test_examples_valid_and_relative_inputs_resolve(example):
-    ir = validate.load(EXAMPLES / example / "ir.yaml")
-    (inp,) = ir["inputs"]
-    assert inp["location"] == "file://" + str(EXAMPLES / example / "input" / "params.json")
-    assert Path(inp["location"][len("file://"):]).is_file()
-    _, errors, warnings, _ = validate.prepare(ir)
-    assert errors == []
-    assert not any("absolute path" in w for w in warnings)
-
-
-def test_no_example_names_a_home_folder():
-    for f in EXAMPLES.rglob("*"):
-        if f.is_file():
-            assert "/home/" not in f.read_text() and "/Users/" not in f.read_text(), f
-
 
 def test_absolute_and_url_locations_unchanged(tmp_path):
     f = tmp_path / "ir.json"
@@ -83,18 +66,6 @@ def test_missing_producer_and_cycle(tmp_path):
 
 
 # ── v0.2 fan-out ──
-
-def test_fanout_expands_and_gathers_in_axis_order():
-    ir = validate.load(EXAMPLES / "fanout" / "ir.yaml")
-    exp, errors = expand.expand(ir)
-    assert errors == []
-    ids = [n["id"] for n in exp["nodes"]]
-    assert len(ids) == 10 and "detect_ice__2019" in ids and "add_duration__2022" in ids
-    copy = next(n for n in exp["nodes"] if n["id"] == "add_duration__2020")
-    assert copy["inputs"] == {"ice": "ice_2020.json"} and copy["params"]["winter"] == "2020"
-    gather = next(n for n in exp["nodes"] if n["id"] == "assemble")
-    assert gather["inputs"]["rows"] == [f"row_{w}.json" for w in (2019, 2020, 2021, 2022)]
-
 
 def test_output_on_an_axis_the_node_does_not_fan_out_over_is_a_list(tmp_path):
     # One step writing one file per value without for_each (a fan-out writer): its output is the
@@ -195,13 +166,6 @@ def test_one_runner_for_every_node():
     assert "RUNNERS" not in src and 'pfn="file://" + str(SHIM)' in src
     assert RUNNER.is_file() and not (IR_DIR / "runner" / "curate_faasr_run.py").exists()
     assert not hasattr(validate, "CONTRACTS")
-
-
-def test_diamond_and_fanout_give_the_same_result(tmp_path):
-    d = run_locally(EXAMPLES / "diamond" / "ir.yaml", tmp_path / "diamond")
-    f = run_locally(EXAMPLES / "fanout" / "ir.yaml", tmp_path / "fanout")
-    a = d["ice_phenology_result.json"].read_bytes()
-    assert a and a == f["ice_phenology_result.json"].read_bytes()
 
 
 def test_runner_refuses_missing_inputs_and_unwritten_outputs(tmp_path):

@@ -1,10 +1,22 @@
+"""emit.py: the FaaSr workflow JSON checks (structural and FaaSr_py), placeholders and secrets in the
+FaaSr workflow cwl_faasr builds from a spec's CWL, and `emit.py bundle`, which writes the run's
+workflow draft for Gate 4. (Until phase 8 emit also turned a spec straight into FaaSr JSON and a bundle
+folder, emit_faasr_json / write_bundle; the FaaSr workflow now always comes from the CWL.)"""
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
+import cwl_faasr as CF
 import emit
+import spec_cwl
 from curate_models import FunctionSpec, IOSpec, WorkflowEdge, WorkflowSpec, clean_dependencies
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "curate_ir"))
+from cwl.validate import validate as cwl_validate  # noqa: E402
+
+PLAIN = "def main(inputs, outputs, params):\n    pass\n"
 
 DEPLOY_VARS = emit.PLACEHOLDER_VARS + ("FAASR_DEFAULT_CONTAINER",)
 
@@ -23,7 +35,7 @@ def single_node_spec():
             name="calculate_number_summary",
             inputs=[IOSpec(name="run_params.json", type="json")],
             outputs=[IOSpec(name="number_summary.json", type="json")],
-            code="def main(inputs, outputs, params):\n    pass\n",
+            code=PLAIN,
         )],
     )
 
@@ -34,28 +46,37 @@ def mapreduce_spec():
         entry="split_words",
         nodes=[
             FunctionSpec(name="split_words", inputs=[IOSpec(name="words.txt")],
-                         outputs=[IOSpec(name="chunk_{rank}.txt")]),
+                         outputs=[IOSpec(name="chunk_{rank}.txt")], code=PLAIN),
             FunctionSpec(name="map_words", rank=5, inputs=[IOSpec(name="chunk_{rank}.txt")],
-                         outputs=[IOSpec(name="counts_{rank}.json")]),
+                         outputs=[IOSpec(name="counts_{rank}.json")], code=PLAIN),
             FunctionSpec(name="reduce_counts", inputs=[IOSpec(name="counts_1.json")],
-                         outputs=[IOSpec(name="totals.json")]),
+                         outputs=[IOSpec(name="totals.json")], code=PLAIN),
         ],
         edges=[WorkflowEdge(from_node="split_words", to_node="map_words"),
                WorkflowEdge(from_node="map_words", to_node="reduce_counts")],
     )
 
 
+def faasr_wf(spec: WorkflowSpec) -> dict:
+    """The FaaSr workflow JSON for a spec, the way a deploy gets it: spec -> CWL -> cwl_faasr."""
+    import tempfile
+    folder = spec_cwl.write(spec_cwl.build(spec), Path(tempfile.mkdtemp()) / "cwl")
+    wf, errors, _ = cwl_validate(folder / "workflow.yml", folder / "inputs.yml")
+    assert errors == [], errors
+    return CF.build(wf, spec.name, spec.folder, spec.compute_target, spec.data_store, "structural")
+
+
 # ── ported from ref/curate tests/test_faasr_validation.py ──
 
 def test_single_terminal_action_is_a_valid_dag():
-    wf = emit.emit_faasr_json(single_node_spec())
+    wf = faasr_wf(single_node_spec())["workflow"]
     assert wf["FunctionInvoke"] == "calculate-number-summary"
     assert wf["ActionList"]["calculate-number-summary"]["InvokeNext"] == []
     assert emit.structural_validate(wf) == (True, None)
 
 
 def test_single_action_still_requires_a_valid_entry():
-    wf = emit.emit_faasr_json(single_node_spec())
+    wf = faasr_wf(single_node_spec())["workflow"]
     wf["FunctionInvoke"] = "missing-action"
     ok, err = emit.structural_validate(wf)
     assert not ok and "FunctionInvoke" in err
@@ -63,7 +84,7 @@ def test_single_action_still_requires_a_valid_entry():
 
 @pytest.fixture(scope="module")
 def faasr_py_available():
-    res = emit.faasr_py_validate(emit.emit_faasr_json(single_node_spec()))
+    res = emit.faasr_py_validate(faasr_wf(single_node_spec())["workflow"])
     if res is None:
         pytest.skip("FaaSr_py validator could not run")
     return res
@@ -74,20 +95,20 @@ def test_faasr_py_accepts_single_action_with_placeholders(faasr_py_available):
 
 
 def test_faasr_py_rejects_bad_entry(faasr_py_available):
-    wf = emit.emit_faasr_json(single_node_spec())
+    wf = faasr_wf(single_node_spec())["workflow"]
     wf["FunctionInvoke"] = "missing-action"
     ok, err = emit.faasr_py_validate(wf)
     assert not ok and "FunctionInvoke" in err
 
 
 def test_faasr_py_accepts_ranked_workflow(faasr_py_available):
-    assert emit.faasr_py_validate(emit.emit_faasr_json(mapreduce_spec())) == (True, None)
+    assert emit.faasr_py_validate(faasr_wf(mapreduce_spec())["workflow"]) == (True, None)
 
 
 # ── emitter behaviour ──
 
 def test_ranked_target_is_invoked_as_name_n():
-    wf = emit.emit_faasr_json(mapreduce_spec())
+    wf = faasr_wf(mapreduce_spec())["workflow"]
     assert wf["ActionList"]["split-words"]["InvokeNext"] == ["map-words(5)"]
     assert wf["ActionList"]["map-words"]["InvokeNext"] == ["reduce-counts"]
 
@@ -95,11 +116,12 @@ def test_ranked_target_is_invoked_as_name_n():
 def test_conditional_edges_become_true_false_branches():
     spec = WorkflowSpec(
         name="branchy", entry="check",
-        nodes=[FunctionSpec(name="check"), FunctionSpec(name="good"), FunctionSpec(name="bad")],
+        nodes=[FunctionSpec(name="check", code="def main(inputs, outputs, params):\n    return True\n"),
+               FunctionSpec(name="good", code=PLAIN), FunctionSpec(name="bad", code=PLAIN)],
         edges=[WorkflowEdge(from_node="check", to_node="good", condition="True"),
                WorkflowEdge(from_node="check", to_node="bad", condition="False")],
     )
-    wf = emit.emit_faasr_json(spec)
+    wf = faasr_wf(spec)["workflow"]
     assert wf["ActionList"]["check"]["InvokeNext"] == [{"True": ["good"], "False": ["bad"]}]
     assert emit.structural_validate(wf) == (True, None)
 
@@ -109,7 +131,7 @@ def test_dependencies_drop_stdlib_and_faasr():
         "numpy", "pandas"]
     spec = single_node_spec()
     spec.nodes[0].dependencies = ["re", "matplotlib"]
-    assert emit.emit_faasr_json(spec)["PyPIPackageDownloads"] == {
+    assert faasr_wf(spec)["workflow"]["PyPIPackageDownloads"] == {
         "calculate_number_summary": ["matplotlib"]}
 
 
@@ -122,7 +144,7 @@ def test_external_inputs_tolerate_rank_templates():
 def test_secret_names_only_in_workflow():
     spec = single_node_spec()
     spec.nodes[0].secrets = ["API_TOKEN"]
-    wf = emit.emit_faasr_json(spec)
+    wf = faasr_wf(spec)["workflow"]
     assert wf["Secrets"] == ["API_TOKEN"]
     assert wf["DataStores"]["S3"]["AccessKey"] == "S3_AccessKey"
 
@@ -130,7 +152,7 @@ def test_secret_names_only_in_workflow():
 # ── placeholders ──
 
 def test_unset_faasr_vars_become_placeholders():
-    wf = emit.emit_faasr_json(single_node_spec())
+    wf = faasr_wf(single_node_spec())["workflow"]
     assert wf["ComputeServers"]["GH"]["UserName"] == "<FAASR_GH_USERNAME>"
     assert wf["DataStores"]["S3"]["Bucket"] == "<FAASR_S3_BUCKET>"
     assert wf["FunctionGitRepo"]["calculate_number_summary"] == [
@@ -142,7 +164,7 @@ def test_unset_faasr_vars_become_placeholders():
 def test_set_faasr_vars_are_used(monkeypatch):
     monkeypatch.setenv("FAASR_GH_USERNAME", "octo")
     monkeypatch.setenv("FAASR_S3_BUCKET", "my-bucket")
-    wf = emit.emit_faasr_json(single_node_spec())
+    wf = faasr_wf(single_node_spec())["workflow"]
     assert wf["ComputeServers"]["GH"]["UserName"] == "octo"
     assert wf["DataStores"]["S3"]["Bucket"] == "my-bucket"
     assert "FAASR_GH_USERNAME" not in emit.placeholders_used()
@@ -152,22 +174,22 @@ def test_set_faasr_vars_are_used(monkeypatch):
 
 def test_structural_fallback_when_faasr_py_unavailable(monkeypatch):
     monkeypatch.setattr(emit, "faasr_py_validate", lambda wf, timeout=300: None)
-    res = emit.validate(emit.emit_faasr_json(mapreduce_spec()))
+    res = emit.validate(faasr_wf(mapreduce_spec())["workflow"])
     assert res["ok"] and res["level"] == "structural" and res["fallback_reason"]
-    forced = emit.validate(emit.emit_faasr_json(mapreduce_spec()), level="faasr_py")
+    forced = emit.validate(faasr_wf(mapreduce_spec())["workflow"], level="faasr_py")
     assert not forced["ok"] and forced["level"] == "faasr_py"
 
 
 def test_structural_catches_cycle_unreachable_and_bad_target():
-    wf = emit.emit_faasr_json(mapreduce_spec())
+    wf = faasr_wf(mapreduce_spec())["workflow"]
     wf["ActionList"]["reduce-counts"]["InvokeNext"] = ["split-words"]
     assert "cycle" in emit.structural_validate(wf)[1]
 
-    wf = emit.emit_faasr_json(mapreduce_spec())
+    wf = faasr_wf(mapreduce_spec())["workflow"]
     wf["ActionList"]["map-words"]["InvokeNext"] = []
     assert "unreachable" in emit.structural_validate(wf)[1]
 
-    wf = emit.emit_faasr_json(mapreduce_spec())
+    wf = faasr_wf(mapreduce_spec())["workflow"]
     wf["ActionList"]["map-words"]["InvokeNext"] = ["nowhere"]
     assert "nowhere" in emit.structural_validate(wf)[1]
 
@@ -183,114 +205,94 @@ def _all_text(d):
     return "".join(p.read_text() for p in d.rglob("*") if p.is_file())
 
 
-def test_bundle_layout_and_names_only(tmp_path, monkeypatch, structural_only):
+def test_faasr_bundle_has_secret_names_only(tmp_path, monkeypatch, structural_only):
     monkeypatch.setenv("S3_SecretKey", "s3-secret-value-xyz")
     monkeypatch.setenv("API_TOKEN", "api-token-value-123")
     spec = single_node_spec()
     spec.nodes[0].secrets = ["API_TOKEN"]
     spec.nodes[0].dependencies = ["numpy"]
-    res = emit.write_bundle(spec, tmp_path)
-    out = tmp_path / "local_function_test"
-    assert res["bundle_dir"] == str(out)
-    for f in ("workflow.json", "spec.json", "external_inputs.json", "README.md",
-              "functions/calculate_number_summary.py", "functions/calculate_number_summary_main.py",
-              "functions/calculate_number_summary.deps.txt"):
+    out = CF.write(faasr_wf(spec), tmp_path / "bundle")
+    for f in ("workflow.json", "outputs.json", "external_inputs.json", "README.md",
+              "functions/calculate_number_summary.py", "functions/calculate_number_summary_main.py"):
         assert (out / f).is_file(), f
     text = _all_text(out)
     assert "s3-secret-value-xyz" not in text and "api-token-value-123" not in text
-    readme = (out / "README.md").read_text()
-    assert "`API_TOKEN`" in readme and "`S3_SecretKey`" in readme
-    assert "<FAASR_S3_BUCKET>" in readme and "structural" in readme
+    assert "`API_TOKEN`" in (out / "README.md").read_text()
 
 
-def test_bundle_refuses_leaked_secret_value(tmp_path, monkeypatch, structural_only):
+def run_with(tmp_path, spec, run_id="20261018-run-a"):
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "state.json").write_text(json.dumps({"run_id": run_id, "spec": json.loads(spec.model_dump_json())}))
+    return run
+
+
+def test_draft_refuses_a_leaked_secret_value(tmp_path, capsys, monkeypatch, structural_only):
     monkeypatch.setenv("API_TOKEN", "api-token-value-123")
     spec = single_node_spec()
     spec.nodes[0].secrets = ["API_TOKEN"]
     spec.nodes[0].code += 'TOKEN = "api-token-value-123"\n'
-    res = emit.write_bundle(spec, tmp_path)
-    assert not res["ok"] and res["leaked_secret_names"] == ["API_TOKEN"]
-    assert not (tmp_path / "local_function_test").exists()
-    assert "api-token-value-123" not in json.dumps(res)
+    run = run_with(tmp_path, spec)
+    code = emit.main(["bundle", "--run", str(run)])
+    out = capsys.readouterr().out
+    res = json.loads(out)
+    assert code == 1 and not res["ok"] and res["draft"]["leaked_secret_names"] == ["API_TOKEN"]
+    assert not (run / "draft").exists() and "api-token-value-123" not in out
 
 
-def test_bundle_never_overwrites(tmp_path, structural_only):
-    first = emit.write_bundle(single_node_spec(), tmp_path)["bundle_dir"]
-    second = emit.write_bundle(single_node_spec(), tmp_path)["bundle_dir"]
-    assert second == first + "-2"
-
-
-def test_bundle_reports_missing_code(tmp_path, structural_only):
-    res = emit.write_bundle(mapreduce_spec(), tmp_path)
-    assert not res["ok"] and len(res["missing_code"]) == 3
+def test_draft_reports_missing_code(tmp_path, capsys, structural_only):
+    spec = mapreduce_spec()
+    for n in spec.nodes:
+        n.code = None
+    code = emit.main(["bundle", "--run", str(run_with(tmp_path, spec))])
+    res = json.loads(capsys.readouterr().out)
+    assert code == 1 and not res["ok"] and sum("has no code" in p for p in res["draft"]["problems"]) == 3
 
 
 def test_cli_bundle_updates_run_state(tmp_path, capsys, structural_only):
-    run = tmp_path / "run"
-    run.mkdir()
-    (run / "state.json").write_text(json.dumps({"spec": json.loads(single_node_spec().model_dump_json())}))
-    code = emit.main(["bundle", "--run", str(run), "--out", str(tmp_path / "out")])
+    run = run_with(tmp_path, single_node_spec())
+    code = emit.main(["bundle", "--run", str(run)])
     out = json.loads(capsys.readouterr().out)
     assert code == 0 and out["ok"]
     state = json.loads((run / "state.json").read_text())
-    assert state["bundle_dir"] == out["bundle_dir"]
-    v = state["validation"]  # from the draft and the FaaSr workflow built from it, not emit's bundle
+    assert "bundle_dir" not in state and "bundle_dir" not in out  # no FaaSr bundle before Gate 4
+    v = state["validation"]  # from the draft and the FaaSr workflow built from it
     assert {k: v[k] for k in ("ok", "level", "error", "source")} == {
         "ok": True, "level": "cwl: passed, faasr: passed (structural), pegasus: passed", "error": None,
         "source": "draft"}
     assert v["faasr"] == {"ok": True, "level": "structural", "error": None, "problems": []}
     assert v["pegasus"] == {"ok": True, "error": None, "problems": []}
-    assert out["bundle_validation"]["ok"] and state["draft_dir"] == str(run / "draft")
+    assert state["draft_dir"] == str(run / "draft")
     assert v["spec_hash"] and state["draft_spec_hash"] == v["spec_hash"]  # which spec the draft was built from
     assert state["stage"] == "gate4"
+    before = (run / "draft" / "workflow.yml").read_text()
+    assert emit.main(["bundle", "--run", str(run)]) == 0  # an unapproved draft is simply replaced
+    assert (run / "draft" / "workflow.yml").read_text() == before
 
 
 def test_cli_rejects_bad_spec(tmp_path, capsys):
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps({"name": "x", "nodes": [{"name": "a"}],
                                "edges": [{"from_node": "a", "to_node": "ghost"}]}))
-    assert emit.main(["emit", "--spec", str(bad)]) == 2
+    assert emit.main(["external-inputs", "--spec", str(bad)]) == 2
     assert "ghost" in capsys.readouterr().out
 
 
-def test_bundle_folder_is_per_run_and_never_overwritten(tmp_path, capsys, structural_only):
-    out_root = tmp_path / "out"
-
-    def make(run_id):
-        run = tmp_path / run_id
-        run.mkdir()
-        (run / "state.json").write_text(json.dumps({"run_id": run_id,
-                                                    "spec": json.loads(single_node_spec().model_dump_json())}))
-        return run
-
-    a, b = make("20261018-run-a"), make("20261018-run-b")
-    emit.main(["bundle", "--run", str(a), "--out", str(out_root)])
-    first = json.loads(capsys.readouterr().out)["bundle_dir"]
-    emit.main(["bundle", "--run", str(b), "--out", str(out_root)])
-    other = json.loads(capsys.readouterr().out)["bundle_dir"]
-    assert first.endswith("local_function_test-20261018-run-a")
-    assert other.endswith("local_function_test-20261018-run-b")
-
-    marker = Path(first) / "workflow.json"
-    before = marker.read_text()
-    emit.main(["bundle", "--run", str(a), "--out", str(out_root)])  # same run again
-    again = json.loads(capsys.readouterr().out)["bundle_dir"]
-    assert again == first + "-2" and marker.read_text() == before
-    assert json.loads((a / "state.json").read_text())["bundle_dir"] == again
+def test_old_emit_subcommands_are_gone(capsys):
+    for argv in (["emit", "--spec", "x.json"], ["validate", "--spec", "x.json"], ["bundle", "--spec", "x.json"]):
+        with pytest.raises(SystemExit):
+            emit.main(argv)
+    capsys.readouterr()
 
 
-def test_cli_bundle_writes_the_draft_even_when_emits_faasr_bundle_is_refused(tmp_path, capsys, structural_only):
-    """Nothing at Gate 4 depends on emit's old FaaSr bundle: a step FaaSr cannot wrap (its function
-    defines a top-level name equal to the step's) still gets a valid draft; only the FaaSr target is
-    marked as not buildable."""
+def test_cli_bundle_writes_the_draft_when_faasr_cannot_wrap_a_step(tmp_path, capsys, structural_only):
+    """A step FaaSr cannot wrap (its function defines a top-level name equal to the step's) still gets a
+    valid draft; only the FaaSr target is marked as not buildable."""
     spec = single_node_spec()
     spec.nodes[0].code = "calculate_number_summary = 1\n\ndef main(inputs, outputs, params):\n    pass\n"
-    run = tmp_path / "run"
-    run.mkdir()
-    (run / "state.json").write_text(json.dumps({"spec": json.loads(spec.model_dump_json())}))
-    code = emit.main(["bundle", "--run", str(run), "--out", str(tmp_path / "out")])
+    run = run_with(tmp_path, spec)
+    code = emit.main(["bundle", "--run", str(run)])
     out = json.loads(capsys.readouterr().out)
-    assert out["bundle_ok"] is False and "bundle_note" in out
     state = json.loads((run / "state.json").read_text())
     assert state["stage"] == "gate4" and state["draft_dir"] and "bundle_dir" not in state
     v = state["validation"]

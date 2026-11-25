@@ -125,7 +125,7 @@ def test_approve_pegasus_goes_to_deploy(source_run, capsys):
     s = state(source_run)
     assert s["deploy_choice"] == "pegasus" and s["pegasus"] is None and s["deploy"] is None
     # a versioned run records no emit-bundle hash: Gate 4 opened the Pegasus execution run instead
-    assert s["bundle_hash"] is None and s["history"][-1]["deploy"] == "pegasus"
+    assert "bundle_hash" not in s and s["history"][-1]["deploy"] == "pegasus"
     assert s["execution"]["target"] == "pegasus" and s["execution"]["reference"].startswith(s["workflow_id"] + "/")
     assert ok(S, ["require", "--run", str(source_run), "--stage", "deploy"], capsys)["problems"] == []
 

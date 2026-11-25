@@ -169,7 +169,7 @@ def test_fan_out_text_depends_on_rank_placeholder(make_run, capsys):
 
 
 def plain_mapreduce_md(make_run, capsys):
-    from test_pegasus_ir import e2_spec as plain_e2_spec
+    from test_spec_mapping import e2_spec as plain_e2_spec
     wf = plain_e2_spec()
     for n in wf.nodes:  # all to generate, so each gets a spec.md
         n.source, n.code = "new", None

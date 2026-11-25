@@ -3,21 +3,20 @@
 # dependencies = ["pydantic==2.11.7", "cwl-utils==0.47", "pyyaml==6.0.2"]
 # ///
 # Copyright (c) 2026 Nolan Cutler. MIT License; see NOTICE.
-# Derived from CURATE-prototype src/faasr_agents/faasr/emit.py and
-# src/faasr_agents/agents/wda.py (_unique_out_dir, _save_artifacts)
+# Derived from CURATE-prototype src/faasr_agents/faasr/emit.py
 # (commit 3fd5c16092ddf97a28bc3b83088e23e7f1b0f140). See scripts/VENDORED.md.
-"""WorkflowSpec -> FaaSr workflow JSON, validation, and output bundle.
+"""The workflow draft for Gate 4, FaaSr workflow JSON validation, and the FaaSr document helpers.
 
 Usage (prints JSON {"ok": ...}; exit 0 ok, 1 check failed, 2 bad input):
-  emit.py emit            (--spec FILE | --run DIR)
-  emit.py external-inputs (--spec FILE | --run DIR)
-  emit.py validate        (--spec FILE | --run DIR | --workflow FILE) [--level auto|faasr_py|structural]
-  emit.py bundle          (--spec FILE | --run DIR) [--out DIR] [--level ...]
-                          → <out>/<workflow>-<run_id>/ (with --run), never overwriting
+  emit.py bundle          --run DIR [--level auto|faasr_py|structural]
+                          → <run>/draft/ (workflow.yml, inputs.yml, functions/), from the spec by
+                          spec_cwl; validated with what both builders make of it
+  emit.py external-inputs (--spec FILE | --run DIR)   the files the spec reads but no step writes
+  emit.py validate        --workflow FILE [--level ...]  a FaaSr workflow JSON (e.g. a bundle's)
 
-Unset FAASR_* variables are emitted as "<FAASR_NAME>" placeholders. Secret
-values are never written: only secret names appear in any output, and the
-bundle is checked for leaked values of known secret env vars before it is kept.
+The FaaSr bundle itself is built from the approved version after Gate 4 (scripts/cwl_faasr.py,
+which uses the document helpers here). Unset FAASR_* variables are written as "<FAASR_NAME>"
+placeholders. Secret values are never written: only secret names appear in any output.
 """
 from __future__ import annotations
 
@@ -33,7 +32,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 import faasr_wrapper
-from curate_models import WorkflowSpec, clean_dependencies
+from curate_models import WorkflowSpec
 from runstate import run_lock, spec_hash, write_json_atomic
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -148,66 +147,6 @@ def external_inputs(spec: WorkflowSpec) -> list[dict]:
     return out
 
 
-def faasr_arguments(spec: WorkflowSpec, node) -> dict[str, str]:
-    """The Arguments a FaaSr function is called with: folder, input1.., output1.. (file names,
-    `{rank}` left in). Shared with the Pegasus target's IR (pegasus_ir.py)."""
-    args: dict[str, str] = {"folder": spec.folder}
-    for i, inp in enumerate(node.inputs, 1):
-        args[f"input{i}"] = inp.name
-    for i, out in enumerate(node.outputs, 1):
-        args[f"output{i}"] = out.name
-    return args
-
-
-def emit_faasr_json(spec: WorkflowSpec) -> dict:
-    """Convert a WorkflowSpec into a FaaSr workflow JSON dict.
-
-    ActionList keys are kebab-case (FaaSr schema constraint); FunctionName
-    values are the original snake_case Python function names.
-    """
-    action_name = {node.name: _to_action_name(node.name) for node in spec.nodes}
-    node_rank = {node.name: max(1, int(node.rank or 1)) for node in spec.nodes}
-
-    def _invoke_target(to_node: str) -> str:
-        # A ranked target is invoked as "name(N)" → N parallel instances.
-        target = action_name[to_node]
-        n = node_rank.get(to_node, 1)
-        return f"{target}({n})" if n > 1 else target
-
-    invoke_next: dict[str, list] = {node.name: [] for node in spec.nodes}
-    for edge in spec.edges:
-        if edge.condition is None:
-            invoke_next[edge.from_node].append(_invoke_target(edge.to_node))
-        else:
-            existing = invoke_next[edge.from_node]
-            cond_entry = next((e for e in existing if isinstance(e, dict)), None)
-            if cond_entry is None:
-                cond_entry = {}
-                existing.append(cond_entry)
-            cond_entry.setdefault(edge.condition, []).append(_invoke_target(edge.to_node))
-
-    action_list, function_git_repo = {}, {}
-    for node in spec.nodes:
-        aname = action_name[node.name]
-        # Always emit InvokeNext (empty list for terminal nodes): FaaSr_py's
-        # check_dag reads it unconditionally.
-        action_list[aname] = faasr_action(spec.compute_target, node.name, faasr_arguments(spec, node),
-                                          invoke_next.get(node.name, []))
-        function_git_repo[node.name] = function_repo_paths(node.name)
-
-    entry_python = spec.entry or (spec.nodes[0].name if spec.nodes else "")
-    entry_action = action_name.get(entry_python, _to_action_name(entry_python))
-    pypi_packages = {}
-    for node in spec.nodes:
-        deps = clean_dependencies(node.dependencies)
-        if deps:
-            pypi_packages[node.name] = deps
-    # Workflow-wide secret names = union of per-function secrets.
-    secrets = sorted({s for node in spec.nodes for s in node.secrets})
-    return faasr_document(spec.name, spec.compute_target, spec.data_store, action_list, function_git_repo,
-                          entry_action, pypi_packages, secrets)
-
-
 def faasr_action(compute_target: str, function_name: str, arguments: dict, invoke_next: list) -> dict:
     return {"FaaSServer": compute_target, "Type": "Python", "FunctionName": function_name,
             "Arguments": arguments, "InvokeNext": invoke_next}
@@ -222,8 +161,8 @@ def function_repo_paths(fn: str) -> list[str]:
 
 def faasr_document(name: str, compute_target: str, data_store: str, action_list: dict,
                    function_git_repo: dict, entry_action: str, pypi_packages: dict, secrets: list) -> dict:
-    """The FaaSr workflow JSON around an ActionList: servers, data store, containers (shared by
-    emit_faasr_json and the CWL FaaSr builder, scripts/cwl_faasr.py)."""
+    """The FaaSr workflow JSON around an ActionList: servers, data store, containers (for the CWL
+    FaaSr builder, scripts/cwl_faasr.py)."""
     gh_user = _env("FAASR_GH_USERNAME")
     gh_repo = _env("FAASR_ACTION_REPO")
     default_container = os.environ.get("FAASR_DEFAULT_CONTAINER", "").strip() or DEFAULT_CONTAINER
@@ -399,110 +338,6 @@ def find_leaked_secrets(text: str, names) -> list[str]:
             if k.upper() in want and len(v) >= 6 and v in text]
 
 
-# ── bundle (from agents/wda.py) ──────────────────────────────────────────────
-
-def _unique_out_dir(base: Path) -> Path:
-    """Return `base` if it's free (missing or empty), else `base-2`, `base-3`, …"""
-    candidate = base
-    n = 2
-    while candidate.is_dir() and any(candidate.iterdir()):
-        candidate = Path(f"{base}-{n}")
-        n += 1
-    return candidate
-
-
-def _bundle_readme(spec: WorkflowSpec, wf: dict, ext: list[dict], validation: dict,
-                   placeholders: list[str]) -> str:
-    lines = [f"# {wf['WorkflowName']}", "", spec.description or "", "",
-             "Generated by curate-skills. Not deployed.", ""]
-    lines += ["## Validation", "",
-              f"- level: `{validation['level']}`",
-              f"- ok: `{validation['ok']}`"]
-    if validation.get("error"):
-        lines.append(f"- error: {validation['error']}")
-    if validation.get("fallback_reason"):
-        lines.append(f"- note: {validation['fallback_reason']}; structural checks only")
-    lines += ["", "## Functions", ""]
-    for n in spec.nodes:
-        rank = f" ×{n.rank}" if n.rank > 1 else ""
-        deps = ", ".join(clean_dependencies(n.dependencies)) or "none"
-        lines.append(f"- `{n.name}`{rank} ({n.source}) — deps: {deps}")
-    lines += ["", "## Deploying", "",
-              "With curate-skills, `/curate-skills:curate-deploy` fills the placeholders below from your "
-              "settings (`~/.config/curate/.env`) in its own deploy copy; this bundle stays as approved. "
-              "Run `/curate-skills:curate-doctor --deploy --online` first: it checks the settings, the token "
-              "and the repo's Actions secrets."]
-    lines += ["", "## Actions secrets the repo needs (names only)", ""]
-    lines += [f"- `{s}`" for s in secret_names(spec)]
-    lines += ["", "## Input files you must provide in S3 (none = nothing to do)", ""]
-    lines += [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"]
-    lines += ["", "## Placeholders (filled at deploy from your settings)", ""]
-    lines += [f"- `{_placeholder(v)}` — from `{v}`" for v in placeholders] or ["- none"]
-    return "\n".join(lines) + "\n"
-
-
-def write_bundle(spec: WorkflowSpec, out_root: Path, level: str = "auto",
-                 run_id: str | None = None) -> dict:
-    """Write the bundle to a new folder: <out_root>/<workflow>[-<run_id>][-2, -3, …].
-
-    With a run id, two runs of the same workflow never share a folder; an existing,
-    non-empty folder is never overwritten (a numbered suffix is added instead).
-    """
-    # TODO(step 3): this becomes the FaaSr bundle builder, run only after FaaSr is chosen at Gate 4.
-    wrap_problems = faasr_wrapper.bundle_problems(spec)
-    if wrap_problems:
-        return {"ok": False, "error": "plain steps cannot be wrapped for FaaSr; nothing written",
-                "problems": wrap_problems}
-    wf = emit_faasr_json(spec)
-    validation = validate(wf, level)
-    ext = external_inputs(spec)
-    placeholders = placeholders_used()
-
-    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", spec.name)
-    if run_id:
-        safe_name += "-" + re.sub(r"[^a-zA-Z0-9_-]", "_", run_id)
-    out_dir = _unique_out_dir(out_root / safe_name)
-    fn_dir = out_dir / "functions"
-    fn_dir.mkdir(parents=True, exist_ok=True)
-
-    files: dict[Path, str] = {
-        out_dir / "workflow.json": json.dumps(wf, indent=2) + "\n",
-        out_dir / "spec.json": spec.model_dump_json(indent=2) + "\n",
-        out_dir / "external_inputs.json": json.dumps(ext, indent=2) + "\n",
-        out_dir / "README.md": _bundle_readme(spec, wf, ext, validation, placeholders),
-    }
-    missing_code = []
-    for node in spec.nodes:
-        if not node.code:
-            missing_code.append(node.name)
-            continue
-        # The function ships unchanged (byte-identical, no header); <fn>.py is only the wrapper.
-        # (Code that is not plain was refused above, by faasr_wrapper.bundle_problems.)
-        files[fn_dir / faasr_wrapper.main_file(node.name)] = node.code
-        files[fn_dir / f"{node.name}.py"] = faasr_wrapper.render(spec, node)
-        deps = clean_dependencies(node.dependencies)
-        files[fn_dir / f"{node.name}.deps.txt"] = "".join(f"{d}\n" for d in deps)
-
-    names = secret_names(spec)
-    leaked = sorted({n for text in files.values() for n in find_leaked_secrets(text, names)})
-    if leaked:
-        shutil.rmtree(out_dir, ignore_errors=True)
-        return {"ok": False, "error": "secret values found in bundle content; nothing written",
-                "leaked_secret_names": leaked}
-
-    for path, text in files.items():
-        path.write_text(text)
-    return {
-        "ok": validation["ok"] and not missing_code,
-        "bundle_dir": str(out_dir),
-        "validation": validation,
-        "missing_code": missing_code,
-        "placeholders": placeholders,
-        "external_inputs": ext,
-        "secret_names": names,
-    }
-
-
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 class InputError(Exception):
@@ -557,63 +392,41 @@ def _print(obj: dict, names=()) -> int:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="emit.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("emit", "external-inputs", "validate", "bundle"):
-        sp = sub.add_parser(name)
-        src = sp.add_mutually_exclusive_group()
-        src.add_argument("--spec", help="WorkflowSpec JSON file")
-        src.add_argument("--run", help="run dir containing state.json")
-        if name == "validate":
-            src.add_argument("--workflow", help="already-emitted FaaSr workflow JSON")
-        if name in ("validate", "bundle"):
-            sp.add_argument("--level", choices=["auto", "faasr_py", "structural"], default="auto")
-        if name == "bundle":
-            sp.add_argument("--out", default="faasr_output")
+    b = sub.add_parser("bundle", help="write the run's workflow draft for Gate 4")
+    b.add_argument("--run", required=True, help="run dir containing state.json")
+    b.add_argument("--level", choices=["auto", "faasr_py", "structural"], default="auto")
+    e = sub.add_parser("external-inputs")
+    src = e.add_mutually_exclusive_group(required=True)
+    src.add_argument("--spec", help="WorkflowSpec JSON file")
+    src.add_argument("--run", help="run dir containing state.json")
+    v = sub.add_parser("validate", help="validate a FaaSr workflow JSON")
+    v.add_argument("--workflow", required=True, help="a FaaSr workflow JSON file")
+    v.add_argument("--level", choices=["auto", "faasr_py", "structural"], default="auto")
     args = p.parse_args(argv)
 
     try:
-        if args.cmd == "validate" and args.workflow:
+        if args.cmd == "validate":
             wf = json.loads(Path(args.workflow).read_text())
             return _print(validate(wf, args.level), BASE_SECRET_NAMES)
+        if args.cmd == "external-inputs":
+            spec = load_spec(args)
+            return _print({"ok": True, "external_inputs": external_inputs(spec)}, secret_names(spec))
+        args.spec = None
         spec = load_spec(args)
     except (InputError, OSError, json.JSONDecodeError) as e:
         print(json.dumps({"ok": False, "error": str(e)}))
         return 2
-    names = secret_names(spec)
-
-    if args.cmd == "emit":
-        return _print({"ok": True, "workflow": emit_faasr_json(spec),
-                       "placeholders": placeholders_used()}, names)
-    if args.cmd == "external-inputs":
-        return _print({"ok": True, "external_inputs": external_inputs(spec)}, names)
-    if args.cmd == "validate":
-        result = validate(emit_faasr_json(spec), args.level)
-        update_state(args.run, validation={**{k: result[k] for k in ("ok", "level", "error")},
-                                           "spec_hash": spec_hash(spec.model_dump(mode="json"))})
-        return _print(result, names)
-    run_id = json.loads((Path(args.run) / "state.json").read_text()).get("run_id") if args.run else None
-    result = write_bundle(spec, Path(args.out), args.level, run_id=run_id)
-    if not args.run:  # a bundle on its own, as before
-        return _print(result, names)
-    # A run: Gate 4 approves the workflow draft, validated with what the builders make of it. Emit's
-    # FaaSr bundle is still written for runs approved before versions (until the old emit is removed);
-    # nothing at Gate 4 or later depends on it, so its problems are reported but do not block.
+    # Gate 4 approves the workflow draft, validated with what the builders make of it.
     draft = write_draft(spec, Path(args.run), args.level)
     sh = spec_hash(spec.model_dump(mode="json"))
     fields = {"draft_dir": draft.get("dir"), "draft_problems": draft.get("problems") or None,
               "draft_spec_hash": sh if draft["ok"] else None,
               "validation": {**draft["validation"], "spec_hash": sh}}
-    if "bundle_dir" in result:
-        fields["bundle_dir"] = result["bundle_dir"]
     if draft["ok"]:
         fields["stage"] = "gate4"
     update_state(args.run, **fields)
-    out = {**result, "ok": bool(draft["ok"] and draft["validation"]["ok"]), "draft": draft,
-           "validation": draft["validation"], "bundle_validation": result.get("validation"),
-           "bundle_ok": bool(result.get("ok"))}
-    if not result.get("ok"):
-        out["bundle_note"] = ("emit's FaaSr bundle was not written or did not validate; it only serves runs "
-                              "approved before workflow versions, so this run is not affected")
-    return _print(out, names)
+    return _print({"ok": bool(draft["ok"] and draft["validation"]["ok"]), "draft": draft,
+                   "validation": draft["validation"]}, secret_names(spec))
 
 
 def write_draft(spec: WorkflowSpec, run: Path, level: str = "auto") -> dict:
@@ -635,6 +448,12 @@ def write_draft(spec: WorkflowSpec, run: Path, level: str = "auto") -> dict:
     except spec_cwl.BuildError as e:
         return {"ok": False, "dir": None, "problems": e.problems,
                 "validation": {**failed, "error": "; ".join(e.problems)}}
+    texts = [json.dumps(built["workflow"]), json.dumps(built["inputs"]), *built["functions"].values()]
+    leaked = sorted({n for x in texts for n in find_leaked_secrets(x, secret_names(spec))})
+    if leaked:  # nothing is written
+        problems = [f"secret values found in the workflow draft ({', '.join(leaked)}); nothing written"]
+        return {"ok": False, "dir": None, "problems": problems, "leaked_secret_names": leaked,
+                "validation": {**failed, "error": problems[0]}}
     if target.exists():
         shutil.rmtree(target)
     spec_cwl.write(built, target)

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import monitor as M
+from versioned import versioned_bundle
 
 FAKE = {"GH_PAT": "ghp_" + "M" * 36, "S3_AccessKey": "AKIA" + "N" * 16, "S3_SecretKey": "s3cr3t-" + "p" * 33}
 INV = "2026-11-01-17-33-10"
@@ -39,14 +40,12 @@ def env(monkeypatch):
 
 @pytest.fixture
 def run(tmp_path):
-    bundle = tmp_path / "faasr_output" / "wx"
-    bundle.mkdir(parents=True)
-    (bundle / "workflow.json").write_text("{}")
+    fields, _ = versioned_bundle(tmp_path, {"workflow.json": "{}"}, wid="wx-v1")  # no outputs.json: Arguments
     r = tmp_path / ".curate" / "runs" / "r1"
     (r / "deploy").mkdir(parents=True)
     (r / "deploy" / "workflow.json").write_text(json.dumps(WF))
     (r / "state.json").write_text(json.dumps({
-        "schema_version": 2, "run_id": "r1", "stage": "monitor", "bundle_dir": str(bundle), "deploy_choice": "yes",
+        "schema_version": 2, "run_id": "r1", "stage": "monitor", **fields, "deploy_choice": "yes",
         "spec": {"name": "wx", "nodes": [{"name": "dl"}, {"name": "pr"}, {"name": "pl"}]},
         "iteration": 0, "max_iterations": 5,
         "history": [{"gate": 4, "decision": "approve"}],
