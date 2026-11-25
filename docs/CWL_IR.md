@@ -231,6 +231,13 @@ input file keeps its location's name (FaaSr names a workflow input list
 their own prefix (`map__output1__`), which a FaaSr folder input lists; any other name starting
 with that prefix is refused. Step and output ids may not contain `__`.
 
+Versions published before `curate:name` (8e8c9f9) have none, and versions are never edited. When
+one is built for a deploy, `scripts/execution.py` (`recover_names`) builds the run's approved spec
+again and takes `curate:name` out. If that has exactly the version's content hash, the spec is the
+one the version came from, and each output gets its `curate:name` from that build, in memory only.
+The version folder and its hashes stay as they were. Otherwise the deploy is refused, and the user
+publishes a new version (`--start-at emit --from-run <run_id>`, then Gate 4).
+
 ## Mapping from IR v0.2
 
 | IR v0.2 | CWL IR |

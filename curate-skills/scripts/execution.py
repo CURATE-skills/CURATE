@@ -57,13 +57,68 @@ def source_dir(s: dict, run) -> Path:
     return Path(s.get("draft_dir") or ids.draft_dir(run))
 
 
-def load_workflow(folder: Path):
+def load_workflow(folder: Path, s: dict | None = None):
+    """The validated workflow; for a version published before curate:name, with the names recovered
+    from the run's spec (recover_names)."""
     from cwl.validate import validate
     inputs = folder / "inputs.yml"
     wf, errors, _ = validate(folder / "workflow.yml", inputs if inputs.is_file() else None)
     if errors:
         raise ExecutionError("the workflow does not validate: " + " | ".join(errors))
+    if s is not None:
+        recover_names(wf, folder, s)
     return wf
+
+
+def _without_names(doc: dict) -> dict:
+    """The CWL as it was written before curate:name (8e8c9f9): no curate:name on Operation outputs,
+    and an output left with only its type written as that type."""
+    import copy
+    doc = copy.deepcopy(doc)
+    for step in (doc.get("steps") or {}).values():
+        outs = ((step.get("run") or {}).get("outputs")) or {}
+        for k, port in outs.items():
+            if isinstance(port, dict) and "curate:name" in port:
+                port.pop("curate:name")
+                if set(port) == {"type"}:
+                    outs[k] = port["type"]
+    return doc
+
+
+def recover_names(wf, folder: Path, s: dict) -> None:
+    """A version published before curate:name has none, so the builders would drop the spec's file
+    names and extensions (a function's savefig would write the wrong file). Versions are never
+    edited, so the names are recovered in memory: the run's approved spec, built again and with
+    curate:name taken out, must have exactly the version's content hash (so the spec is the one the
+    version was built from); then each output gets its curate:name from that build. The version
+    folder, its content hash and its version hash are unchanged. Otherwise the deploy is refused."""
+    missing = [(sid, out) for sid, st in wf.steps.items() for out, port in st.op_outputs.items() if not port.name]
+    if not missing:
+        return
+    import spec_cwl
+    from cwl.validate import validate
+    try:
+        built = spec_cwl.build(_spec(s))
+    except (spec_cwl.BuildError, KeyError, ValueError) as e:
+        built, why = None, f"the run's spec does not build ({e})"
+    if built is not None:
+        if spec_cwl.content_hash(_without_names(built["workflow"]), built["functions"]) != \
+                ids.draft_content_hash(folder):
+            built, why = None, "the run's spec no longer builds exactly this version"
+    if built is None:
+        raise ExecutionError(
+            f"{folder.name} was published before generated file names kept the spec's file names "
+            f"(curate:name), and {why}, so its names cannot be recovered; without them a function "
+            "would get paths without their extensions. Publish a new version: start from the run that published it with "
+            "--start-at emit --from-run <run_id> and approve Gate 4 again.")
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        new, errors, _ = validate(spec_cwl.write(built, Path(tmp) / "w") / "workflow.yml")
+    if errors:
+        raise ExecutionError("recovering curate:name: the run's spec builds a workflow that does not "
+                             "validate: " + " | ".join(errors))
+    for sid, out in missing:
+        wf.steps[sid].op_outputs[out].name = new.steps[sid].op_outputs[out].name
 
 
 def _spec(s: dict):
@@ -77,7 +132,7 @@ def faasr_built(s: dict, run) -> dict:
     import cwl_faasr
     spec = _spec(s)
     try:
-        return cwl_faasr.build(load_workflow(source_dir(s, run)), spec.name, spec.folder, spec.compute_target,
+        return cwl_faasr.build(load_workflow(source_dir(s, run), s), spec.name, spec.folder, spec.compute_target,
                                spec.data_store)
     except cwl_faasr.BuildError as e:
         raise ExecutionError("cannot be built for FaaSr: " + " | ".join(e.problems), e.problems) from e
@@ -86,7 +141,7 @@ def faasr_built(s: dict, run) -> dict:
 def pegasus_built(s: dict, run, name: str, image: str | None) -> dict:
     import cwl_pegasus
     try:
-        return cwl_pegasus.build(load_workflow(source_dir(s, run)), name, image)
+        return cwl_pegasus.build(load_workflow(source_dir(s, run), s), name, image)
     except cwl_pegasus.BuildError as e:
         raise ExecutionError("cannot run on Pegasus: " + " | ".join(e.problems), e.problems) from e
 
