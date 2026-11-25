@@ -53,7 +53,7 @@ CWL v1.2 restricted to a CURATE profile, plus eight `curate:` extensions in a `$
 | output placeholder not in node's `for_each` (one step writes all files) | `Operation` output `File[]` with `curate:axis: <axis>`, one file per axis value, in axis order |
 | axis value injected into `params`; renamed via `rank: "{rank3}"` | step input sourced from the axis input under the param's name |
 | `{folder: "part_{r}.csv"}` input | `File[]` input + `curate:folder: true` |
-| `{axis}` in intermediate file names | dropped; the builder names intermediate files (deterministically, e.g. `<step>__<values>__<output>`) |
+| `{axis}` in intermediate file names | dropped; the builder names intermediate files (deterministically, `<step id>__<out id>[__<values>]__<curate:name>`, ids as in `workflow.yml`) |
 | external `{axis}` file family (workflow input `x_{r}.csv`) | workflow input `File[]`; a scattered consumer takes it with `scatter: [axis, input]`, `scatterMethod: dotproduct` |
 | `curate_done*` marker files (edge with no file) | `curate:after` |
 | spec conditional edge | `curate:run_if` on the target step |
