@@ -1,0 +1,91 @@
+ir_version: '0.2'
+expanded: true
+name: corvallis-winter-weather-1124-2044
+description: Compare Corvallis, Oregon winter 2024-25 daily PRCP, TMIN and TMAX from
+  NOAA GHCN with the 10-year average for the same days, and plot one three-panel figure.
+defaults:
+  image: file:///images/curate-weather.tar
+  resources:
+    cpus: 1
+    memory_mb: 2048
+inputs: []
+nodes:
+- id: download_ghcn_daily
+  _origin: download_ghcn_daily
+  _assign: {}
+  code: functions/download_ghcn_daily.py
+  entrypoint: main
+  inputs: {}
+  outputs:
+    output1:
+    - download_ghcn_daily__output1__1__ghcn_daily_1.csv
+    - download_ghcn_daily__output1__2__ghcn_daily_2.csv
+    - download_ghcn_daily__output1__3__ghcn_daily_3.csv
+  params: {}
+  packages:
+  - requests
+  - pandas
+- id: compare_winter_variable__1
+  _origin: compare_winter_variable
+  _assign:
+    rank3: '1'
+  code: functions/compare_winter_variable.py
+  entrypoint: main
+  inputs:
+    input1: download_ghcn_daily__output1__1__ghcn_daily_1.csv
+  outputs:
+    output1: compare_winter_variable__output1__1__winter_comparison_1.csv
+  params:
+    rank: 1
+    max_rank: 3
+  packages:
+  - pandas
+- id: compare_winter_variable__2
+  _origin: compare_winter_variable
+  _assign:
+    rank3: '2'
+  code: functions/compare_winter_variable.py
+  entrypoint: main
+  inputs:
+    input1: download_ghcn_daily__output1__2__ghcn_daily_2.csv
+  outputs:
+    output1: compare_winter_variable__output1__2__winter_comparison_2.csv
+  params:
+    rank: 2
+    max_rank: 3
+  packages:
+  - pandas
+- id: compare_winter_variable__3
+  _origin: compare_winter_variable
+  _assign:
+    rank3: '3'
+  code: functions/compare_winter_variable.py
+  entrypoint: main
+  inputs:
+    input1: download_ghcn_daily__output1__3__ghcn_daily_3.csv
+  outputs:
+    output1: compare_winter_variable__output1__3__winter_comparison_3.csv
+  params:
+    rank: 3
+    max_rank: 3
+  packages:
+  - pandas
+- id: plot_winter_comparison
+  _origin: plot_winter_comparison
+  _assign: {}
+  code: functions/plot_winter_comparison.py
+  entrypoint: main
+  inputs:
+    input1:
+    - compare_winter_variable__output1__1__winter_comparison_1.csv
+    - compare_winter_variable__output1__2__winter_comparison_2.csv
+    - compare_winter_variable__output1__3__winter_comparison_3.csv
+  outputs:
+    output1: plot_winter_comparison__output1__winter_comparison.png
+  params: {}
+  packages:
+  - pandas
+  - matplotlib
+outputs:
+- file: plot_winter_comparison__output1__winter_comparison.png
+  deliver_as: results/winter_comparison.png

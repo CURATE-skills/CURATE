@@ -1,0 +1,102 @@
+cwlVersion: v1.2
+class: Workflow
+$namespaces:
+  curate: https://github.com/CURATE-skills/CURATE/blob/main/docs/CWL_IR.md#
+label: t
+requirements:
+  ScatterFeatureRequirement: {}
+  MultipleInputFeatureRequirement: {}
+hints:
+  DockerRequirement:
+    dockerPull: python:3.12-slim
+inputs:
+  r:
+    type: int[]
+    default:
+    - 1
+    - 2
+outputs:
+  summary_json:
+    type: File
+    outputSource: all/o
+    curate:deliver_as: summary.json
+steps:
+  split:
+    in: {}
+    out:
+    - b
+    run:
+      class: Operation
+      inputs: {}
+      outputs:
+        b:
+          type: File[]
+          curate:axis: r
+          curate:name: batch_{r}.txt
+    hints:
+      curate:function:
+        code: functions/split.py
+        entrypoint: main
+  use:
+    scatter:
+    - rank
+    - b
+    scatterMethod: dotproduct
+    in:
+      rank: r
+      b: split/b
+    out:
+    - o
+    run:
+      class: Operation
+      inputs:
+        rank: int
+        b: File
+      outputs:
+        o:
+          type: File
+          curate:name: part_{r}.csv
+    hints:
+      curate:function:
+        code: functions/use.py
+        entrypoint: main
+  extra:
+    in: {}
+    out:
+    - x
+    run:
+      class: Operation
+      inputs: {}
+      outputs:
+        x:
+          type: File
+          curate:name: part_x.csv
+    hints:
+      curate:function:
+        code: functions/extra.py
+        entrypoint: main
+  all:
+    in:
+      parts:
+        source:
+        - use/o
+        - extra/x
+        linkMerge: merge_flattened
+        curate:folder: true
+    out:
+    - o
+    run:
+      class: Operation
+      inputs:
+        parts: File[]
+      outputs:
+        o:
+          type: File
+          curate:name: summary.json
+    hints:
+      curate:function:
+        code: functions/all.py
+        entrypoint: main
+      curate:after:
+        steps:
+        - use

@@ -18,13 +18,19 @@ sys.path.insert(0, str(PLUGIN / "curate_ir"))
 sys.path.insert(0, str(PLUGIN / "tests"))
 import cwl_faasr as CF  # noqa: E402
 import cwl_pegasus as CP  # noqa: E402
-import emit  # noqa: E402
 import plain_contract as PC  # noqa: E402
 from curate_models import WorkflowSpec  # noqa: E402
-from test_cwl_builders import cwl_of  # noqa: E402
-from test_cwl_from_ir import FIXTURES  # noqa: E402
+from cwl.validate import validate  # noqa: E402
 
-SPECS = {"e2": FIXTURES / "e2-stages" / "spec-with-code.json", "weather": FIXTURES / "weather-spec.json"}
+REF = PLUGIN / "tests" / "fixtures" / "cwl-ref"  # the CWL fixtures, with the specs they were built from
+SPECS = {"e2": REF / "e2-stages" / "spec.json", "weather": REF / "weather" / "spec.json"}
+
+
+def cwl_of(which):
+    folder = SPECS[which].parent
+    wf, errors, _ = validate(folder / "workflow.yml", folder / "inputs.yml")
+    assert errors == []
+    return wf
 
 
 def ext(name: str) -> str:
@@ -56,7 +62,7 @@ def test_deploy_paths_keep_the_stub_tests_extensions(tmp_path, which):
     spec = WorkflowSpec.model_validate(data)
     want = stub_extensions(spec)
     assert any(e for e in want.values()), "the fixture has file names with extensions"
-    wf = cwl_of(data, tmp_path)
+    wf = cwl_of(which)
 
     # Pegasus: every job's paths
     seen = set()
@@ -86,7 +92,7 @@ def test_deploy_paths_keep_the_stub_tests_extensions(tmp_path, which):
 def test_the_weather_plot_keeps_png(tmp_path):
     """The case found on maxwell: the plot's output must end in .png at deploy too."""
     data = json.loads(SPECS["weather"].read_text())
-    wf = cwl_of(data, tmp_path)
+    wf = cwl_of("weather")
     plot = next(j for j in CP.build(wf, "t")["ir"]["nodes"] if j["_origin"] == "plot_weather_comparison")
     assert plot["outputs"]["output1"] == "plot_weather_comparison__output1__corvallis_winter_comparison.png"
     spec = WorkflowSpec.model_validate(data)

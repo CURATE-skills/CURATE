@@ -1,0 +1,34 @@
+{
+  "name": "t_flow",
+  "folder": "tf",
+  "nodes": [
+    {
+      "name": "a",
+      "code": "def main(inputs, outputs, params):\n    open(list(outputs.values())[0], 'w').write('x')\n",
+      "rank": 2,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "p_{rank}.txt"
+        }
+      ]
+    },
+    {
+      "name": "b",
+      "code": "def main(inputs, outputs, params):\n    open(list(outputs.values())[0], 'w').write('x')\n",
+      "rank": 2,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "q_{rank}.txt"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "a",
+      "to_node": "b"
+    }
+  ]
+}

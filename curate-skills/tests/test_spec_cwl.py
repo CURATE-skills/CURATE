@@ -14,7 +14,7 @@ import validate as V0  # noqa: E402
 from curate_models import WorkflowSpec  # noqa: E402
 from cwl.from_ir import convert  # noqa: E402
 from cwl.validate import validate  # noqa: E402
-from test_cwl_from_ir import FIXTURES  # noqa: E402
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 PLAIN = "def main(inputs, outputs, params):\n    open(list(outputs.values())[0], 'w').write('x')\n"
 CHECK = "def main(inputs, outputs, params):\n    return True\n"

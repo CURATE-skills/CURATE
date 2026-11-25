@@ -1,0 +1,358 @@
+{
+ "jobs": {
+  "name": "t",
+  "description": "",
+  "defaults": {
+   "image": "docker:///python:3.12-slim"
+  },
+  "inputs": [],
+  "outputs": [
+   {
+    "file": "assemble__row__2019__row_2019.json",
+    "deliver_as": "results/row_2019.json"
+   },
+   {
+    "file": "assemble__row__2020__row_2020.json",
+    "deliver_as": "results/row_2020.json"
+   }
+  ],
+  "nodes": [
+   {
+    "id": "detect__2019__a",
+    "_origin": "detect",
+    "_assign": {
+     "winter": "2019",
+     "station": "a"
+    },
+    "code": "functions/detect.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "ice": "detect__ice__2019__a__ice_2019_a.json"
+    },
+    "params": {
+     "winter": "2019",
+     "station": "a"
+    }
+   },
+   {
+    "id": "detect__2019__b",
+    "_origin": "detect",
+    "_assign": {
+     "winter": "2019",
+     "station": "b"
+    },
+    "code": "functions/detect.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "ice": "detect__ice__2019__b__ice_2019_b.json"
+    },
+    "params": {
+     "winter": "2019",
+     "station": "b"
+    }
+   },
+   {
+    "id": "detect__2019__c",
+    "_origin": "detect",
+    "_assign": {
+     "winter": "2019",
+     "station": "c"
+    },
+    "code": "functions/detect.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "ice": "detect__ice__2019__c__ice_2019_c.json"
+    },
+    "params": {
+     "winter": "2019",
+     "station": "c"
+    }
+   },
+   {
+    "id": "detect__2020__a",
+    "_origin": "detect",
+    "_assign": {
+     "winter": "2020",
+     "station": "a"
+    },
+    "code": "functions/detect.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "ice": "detect__ice__2020__a__ice_2020_a.json"
+    },
+    "params": {
+     "winter": "2020",
+     "station": "a"
+    }
+   },
+   {
+    "id": "detect__2020__b",
+    "_origin": "detect",
+    "_assign": {
+     "winter": "2020",
+     "station": "b"
+    },
+    "code": "functions/detect.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "ice": "detect__ice__2020__b__ice_2020_b.json"
+    },
+    "params": {
+     "winter": "2020",
+     "station": "b"
+    }
+   },
+   {
+    "id": "detect__2020__c",
+    "_origin": "detect",
+    "_assign": {
+     "winter": "2020",
+     "station": "c"
+    },
+    "code": "functions/detect.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "ice": "detect__ice__2020__c__ice_2020_c.json"
+    },
+    "params": {
+     "winter": "2020",
+     "station": "c"
+    }
+   },
+   {
+    "id": "assemble__2019",
+    "_origin": "assemble",
+    "_assign": {
+     "winter": "2019"
+    },
+    "code": "functions/assemble.py",
+    "entrypoint": "main",
+    "inputs": {
+     "ice": [
+      "detect__ice__2019__a__ice_2019_a.json",
+      "detect__ice__2019__b__ice_2019_b.json",
+      "detect__ice__2019__c__ice_2019_c.json"
+     ]
+    },
+    "outputs": {
+     "row": "assemble__row__2019__row_2019.json"
+    },
+    "params": {
+     "winter": "2019"
+    }
+   },
+   {
+    "id": "assemble__2020",
+    "_origin": "assemble",
+    "_assign": {
+     "winter": "2020"
+    },
+    "code": "functions/assemble.py",
+    "entrypoint": "main",
+    "inputs": {
+     "ice": [
+      "detect__ice__2020__a__ice_2020_a.json",
+      "detect__ice__2020__b__ice_2020_b.json",
+      "detect__ice__2020__c__ice_2020_c.json"
+     ]
+    },
+    "outputs": {
+     "row": "assemble__row__2020__row_2020.json"
+    },
+    "params": {
+     "winter": "2020"
+    }
+   }
+  ],
+  "_base": "<fixture>"
+ },
+ "pegasus": {
+  "ir": {
+   "ir_version": "0.2",
+   "expanded": true,
+   "name": "t",
+   "description": "t",
+   "defaults": {
+    "image": "docker:///python:3.12-slim"
+   },
+   "inputs": [],
+   "nodes": [
+    {
+     "id": "detect__2019__a",
+     "_origin": "detect",
+     "_assign": {
+      "winter": "2019",
+      "station": "a"
+     },
+     "code": "functions/detect.py",
+     "entrypoint": "main",
+     "inputs": {},
+     "outputs": {
+      "ice": "detect__ice__2019__a__ice_2019_a.json"
+     },
+     "params": {
+      "winter": "2019",
+      "station": "a"
+     }
+    },
+    {
+     "id": "detect__2019__b",
+     "_origin": "detect",
+     "_assign": {
+      "winter": "2019",
+      "station": "b"
+     },
+     "code": "functions/detect.py",
+     "entrypoint": "main",
+     "inputs": {},
+     "outputs": {
+      "ice": "detect__ice__2019__b__ice_2019_b.json"
+     },
+     "params": {
+      "winter": "2019",
+      "station": "b"
+     }
+    },
+    {
+     "id": "detect__2019__c",
+     "_origin": "detect",
+     "_assign": {
+      "winter": "2019",
+      "station": "c"
+     },
+     "code": "functions/detect.py",
+     "entrypoint": "main",
+     "inputs": {},
+     "outputs": {
+      "ice": "detect__ice__2019__c__ice_2019_c.json"
+     },
+     "params": {
+      "winter": "2019",
+      "station": "c"
+     }
+    },
+    {
+     "id": "detect__2020__a",
+     "_origin": "detect",
+     "_assign": {
+      "winter": "2020",
+      "station": "a"
+     },
+     "code": "functions/detect.py",
+     "entrypoint": "main",
+     "inputs": {},
+     "outputs": {
+      "ice": "detect__ice__2020__a__ice_2020_a.json"
+     },
+     "params": {
+      "winter": "2020",
+      "station": "a"
+     }
+    },
+    {
+     "id": "detect__2020__b",
+     "_origin": "detect",
+     "_assign": {
+      "winter": "2020",
+      "station": "b"
+     },
+     "code": "functions/detect.py",
+     "entrypoint": "main",
+     "inputs": {},
+     "outputs": {
+      "ice": "detect__ice__2020__b__ice_2020_b.json"
+     },
+     "params": {
+      "winter": "2020",
+      "station": "b"
+     }
+    },
+    {
+     "id": "detect__2020__c",
+     "_origin": "detect",
+     "_assign": {
+      "winter": "2020",
+      "station": "c"
+     },
+     "code": "functions/detect.py",
+     "entrypoint": "main",
+     "inputs": {},
+     "outputs": {
+      "ice": "detect__ice__2020__c__ice_2020_c.json"
+     },
+     "params": {
+      "winter": "2020",
+      "station": "c"
+     }
+    },
+    {
+     "id": "assemble__2019",
+     "_origin": "assemble",
+     "_assign": {
+      "winter": "2019"
+     },
+     "code": "functions/assemble.py",
+     "entrypoint": "main",
+     "inputs": {
+      "ice": [
+       "detect__ice__2019__a__ice_2019_a.json",
+       "detect__ice__2019__b__ice_2019_b.json",
+       "detect__ice__2019__c__ice_2019_c.json"
+      ]
+     },
+     "outputs": {
+      "row": "assemble__row__2019__row_2019.json"
+     },
+     "params": {
+      "winter": "2019"
+     }
+    },
+    {
+     "id": "assemble__2020",
+     "_origin": "assemble",
+     "_assign": {
+      "winter": "2020"
+     },
+     "code": "functions/assemble.py",
+     "entrypoint": "main",
+     "inputs": {
+      "ice": [
+       "detect__ice__2020__a__ice_2020_a.json",
+       "detect__ice__2020__b__ice_2020_b.json",
+       "detect__ice__2020__c__ice_2020_c.json"
+      ]
+     },
+     "outputs": {
+      "row": "assemble__row__2020__row_2020.json"
+     },
+     "params": {
+      "winter": "2020"
+     }
+    }
+   ],
+   "outputs": [
+    {
+     "file": "assemble__row__2019__row_2019.json",
+     "deliver_as": "results/row_2019.json"
+    },
+    {
+     "file": "assemble__row__2020__row_2020.json",
+     "deliver_as": "results/row_2020.json"
+    }
+   ]
+  },
+  "copy": {},
+  "needed": []
+ },
+ "faasr": {
+  "problems": [
+   "step detect scatters over several axes (winter, station); FaaSr runs one ranked action per step, over one axis"
+  ]
+ }
+}

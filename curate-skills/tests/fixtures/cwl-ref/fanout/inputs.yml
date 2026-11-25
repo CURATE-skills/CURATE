@@ -1,0 +1,8 @@
+winter:
+- '2019'
+- '2020'
+- '2021'
+- '2022'
+params_json:
+  class: File
+  location: input/params.json

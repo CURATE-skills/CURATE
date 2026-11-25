@@ -1,0 +1,15 @@
+{
+  "workflow_name": "mapreduce",
+  "workflow_id": "mapreduce-v1",
+  "version": 1,
+  "content_hash": "sha256:d950c3eb6aa863021c6c98c8cbb3823f77399b218c2416661827d096f46d489b",
+  "pegasus": {
+    "run": "mapreduce-v1/20261124-220635-7263",
+    "name": "mapreduce-1124-2206",
+    "image": "docker:///python:3.12-slim"
+  },
+  "faasr": {
+    "run": "mapreduce-v1/20261124-221815-6052"
+  },
+  "version_hash": "b10b0551be56702075f1484c167af7fd252b72b19022df83d2475606b680777b"
+}

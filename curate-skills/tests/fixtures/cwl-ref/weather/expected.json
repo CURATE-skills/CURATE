@@ -1,0 +1,394 @@
+{
+ "jobs": {
+  "name": "corvallis_winter_weather_comparison",
+  "description": "Compare winter 2025 weather in Corvallis, Oregon (GHCN-Daily station USC00351862) against the previous 10-year daily average for PRCP, TMIN and TMAX.",
+  "defaults": {
+   "image": "docker:///python:3.12-slim",
+   "resources": {
+    "cpus": 1,
+    "memory_mb": 2048
+   }
+  },
+  "inputs": [],
+  "outputs": [
+   {
+    "file": "plot_weather_comparison__output1__corvallis_winter_comparison.png",
+    "deliver_as": "results/corvallis_winter_comparison.png"
+   }
+  ],
+  "nodes": [
+   {
+    "id": "download_ghcn_station",
+    "_origin": "download_ghcn_station",
+    "_assign": {},
+    "code": "functions/download_ghcn_station.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "output1": "download_ghcn_station__output1__USC00351862_daily.csv"
+    },
+    "params": {},
+    "packages": [
+     "requests"
+    ]
+   },
+   {
+    "id": "process_weather_variable__1",
+    "_origin": "process_weather_variable",
+    "_assign": {
+     "rank3": "1"
+    },
+    "code": "functions/process_weather_variable.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": "download_ghcn_station__output1__USC00351862_daily.csv"
+    },
+    "outputs": {
+     "output1": "process_weather_variable__output1__1__winter_comparison_1.csv"
+    },
+    "params": {
+     "rank": 1,
+     "max_rank": 3
+    },
+    "packages": [
+     "pandas"
+    ]
+   },
+   {
+    "id": "process_weather_variable__2",
+    "_origin": "process_weather_variable",
+    "_assign": {
+     "rank3": "2"
+    },
+    "code": "functions/process_weather_variable.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": "download_ghcn_station__output1__USC00351862_daily.csv"
+    },
+    "outputs": {
+     "output1": "process_weather_variable__output1__2__winter_comparison_2.csv"
+    },
+    "params": {
+     "rank": 2,
+     "max_rank": 3
+    },
+    "packages": [
+     "pandas"
+    ]
+   },
+   {
+    "id": "process_weather_variable__3",
+    "_origin": "process_weather_variable",
+    "_assign": {
+     "rank3": "3"
+    },
+    "code": "functions/process_weather_variable.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": "download_ghcn_station__output1__USC00351862_daily.csv"
+    },
+    "outputs": {
+     "output1": "process_weather_variable__output1__3__winter_comparison_3.csv"
+    },
+    "params": {
+     "rank": 3,
+     "max_rank": 3
+    },
+    "packages": [
+     "pandas"
+    ]
+   },
+   {
+    "id": "plot_weather_comparison",
+    "_origin": "plot_weather_comparison",
+    "_assign": {},
+    "code": "functions/plot_weather_comparison.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": {
+      "folder": [
+       "process_weather_variable__output1__1__winter_comparison_1.csv",
+       "process_weather_variable__output1__2__winter_comparison_2.csv",
+       "process_weather_variable__output1__3__winter_comparison_3.csv"
+      ]
+     }
+    },
+    "outputs": {
+     "output1": "plot_weather_comparison__output1__corvallis_winter_comparison.png"
+    },
+    "params": {},
+    "packages": [
+     "pandas",
+     "matplotlib"
+    ]
+   }
+  ],
+  "_base": "<fixture>"
+ },
+ "pegasus": {
+  "ir": {
+   "ir_version": "0.2",
+   "expanded": true,
+   "name": "t",
+   "description": "Compare winter 2025 weather in Corvallis, Oregon (GHCN-Daily station USC00351862) against the previous 10-year daily average for PRCP, TMIN and TMAX.",
+   "defaults": {
+    "image": "docker:///python:3.12-slim",
+    "resources": {
+     "cpus": 1,
+     "memory_mb": 2048
+    }
+   },
+   "inputs": [],
+   "nodes": [
+    {
+     "id": "download_ghcn_station",
+     "_origin": "download_ghcn_station",
+     "_assign": {},
+     "code": "functions/download_ghcn_station.py",
+     "entrypoint": "main",
+     "inputs": {},
+     "outputs": {
+      "output1": "download_ghcn_station__output1__USC00351862_daily.csv"
+     },
+     "params": {},
+     "packages": [
+      "requests"
+     ]
+    },
+    {
+     "id": "process_weather_variable__1",
+     "_origin": "process_weather_variable",
+     "_assign": {
+      "rank3": "1"
+     },
+     "code": "functions/process_weather_variable.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": "download_ghcn_station__output1__USC00351862_daily.csv"
+     },
+     "outputs": {
+      "output1": "process_weather_variable__output1__1__winter_comparison_1.csv"
+     },
+     "params": {
+      "rank": 1,
+      "max_rank": 3
+     },
+     "packages": [
+      "pandas"
+     ]
+    },
+    {
+     "id": "process_weather_variable__2",
+     "_origin": "process_weather_variable",
+     "_assign": {
+      "rank3": "2"
+     },
+     "code": "functions/process_weather_variable.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": "download_ghcn_station__output1__USC00351862_daily.csv"
+     },
+     "outputs": {
+      "output1": "process_weather_variable__output1__2__winter_comparison_2.csv"
+     },
+     "params": {
+      "rank": 2,
+      "max_rank": 3
+     },
+     "packages": [
+      "pandas"
+     ]
+    },
+    {
+     "id": "process_weather_variable__3",
+     "_origin": "process_weather_variable",
+     "_assign": {
+      "rank3": "3"
+     },
+     "code": "functions/process_weather_variable.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": "download_ghcn_station__output1__USC00351862_daily.csv"
+     },
+     "outputs": {
+      "output1": "process_weather_variable__output1__3__winter_comparison_3.csv"
+     },
+     "params": {
+      "rank": 3,
+      "max_rank": 3
+     },
+     "packages": [
+      "pandas"
+     ]
+    },
+    {
+     "id": "plot_weather_comparison",
+     "_origin": "plot_weather_comparison",
+     "_assign": {},
+     "code": "functions/plot_weather_comparison.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": {
+       "folder": [
+        "process_weather_variable__output1__1__winter_comparison_1.csv",
+        "process_weather_variable__output1__2__winter_comparison_2.csv",
+        "process_weather_variable__output1__3__winter_comparison_3.csv"
+       ]
+      }
+     },
+     "outputs": {
+      "output1": "plot_weather_comparison__output1__corvallis_winter_comparison.png"
+     },
+     "params": {},
+     "packages": [
+      "pandas",
+      "matplotlib"
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "file": "plot_weather_comparison__output1__corvallis_winter_comparison.png",
+     "deliver_as": "results/corvallis_winter_comparison.png"
+    }
+   ]
+  },
+  "copy": {},
+  "needed": []
+ },
+ "faasr": {
+  "workflow": {
+   "FunctionInvoke": "download-ghcn-station",
+   "WorkflowName": "t",
+   "DefaultDataStore": "S3",
+   "LoggingDataStore": "S3",
+   "FaaSrLog": "FaaSrLog",
+   "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+   "ActionList": {
+    "download-ghcn-station": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "download_ghcn_station",
+     "Arguments": {
+      "folder": "tf",
+      "output1": "download_ghcn_station__output1__USC00351862_daily.csv"
+     },
+     "InvokeNext": [
+      "process-weather-variable(3)"
+     ]
+    },
+    "process-weather-variable": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "process_weather_variable",
+     "Arguments": {
+      "folder": "tf",
+      "input1": "download_ghcn_station__output1__USC00351862_daily.csv",
+      "output1": "process_weather_variable__output1__{rank}__winter_comparison_{rank}.csv"
+     },
+     "InvokeNext": [
+      "plot-weather-comparison"
+     ]
+    },
+    "plot-weather-comparison": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "plot_weather_comparison",
+     "Arguments": {
+      "folder": "tf",
+      "input1": "process_weather_variable__output1__{rank}__winter_comparison_{rank}.csv",
+      "output1": "plot_weather_comparison__output1__corvallis_winter_comparison.png"
+     },
+     "InvokeNext": []
+    }
+   },
+   "ActionContainers": {
+    "download-ghcn-station": "ghcr.io/faasr/github-actions-python:latest",
+    "process-weather-variable": "ghcr.io/faasr/github-actions-python:latest",
+    "plot-weather-comparison": "ghcr.io/faasr/github-actions-python:latest"
+   },
+   "ComputeServers": {
+    "My_GitHub_Account": {
+     "FaaSType": "GitHubActions",
+     "UserName": "<FAASR_GH_USERNAME>",
+     "ActionRepoName": "<FAASR_ACTION_REPO>",
+     "Branch": "main",
+     "UseSecretStore": true
+    }
+   },
+   "DataStores": {
+    "S3": {
+     "Endpoint": "<FAASR_S3_ENDPOINT>",
+     "Bucket": "<FAASR_S3_BUCKET>",
+     "Region": "<FAASR_S3_REGION>",
+     "AccessKey": "S3_AccessKey",
+     "SecretKey": "S3_SecretKey",
+     "Writable": "TRUE"
+    }
+   },
+   "FunctionGitRepo": {
+    "download_ghcn_station": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/download_ghcn_station.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/download_ghcn_station_main.py"
+    ],
+    "process_weather_variable": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/process_weather_variable.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/process_weather_variable_main.py"
+    ],
+    "plot_weather_comparison": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/plot_weather_comparison.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/plot_weather_comparison_main.py"
+    ]
+   },
+   "PyPIPackageDownloads": {
+    "download_ghcn_station": [
+     "requests"
+    ],
+    "process_weather_variable": [
+     "pandas"
+    ],
+    "plot_weather_comparison": [
+     "pandas",
+     "matplotlib"
+    ]
+   }
+  },
+  "names": {
+   "download_ghcn_station/output1": "download_ghcn_station__output1__USC00351862_daily.csv",
+   "process_weather_variable/output1": "process_weather_variable__output1__{rank}__winter_comparison_{rank}.csv",
+   "plot_weather_comparison/output1": "plot_weather_comparison__output1__corvallis_winter_comparison.png"
+  },
+  "outputs": {
+   "files": [
+    {
+     "action": "download-ghcn-station",
+     "file": "download_ghcn_station__output1__USC00351862_daily.csv"
+    },
+    {
+     "action": "process-weather-variable",
+     "file": "process_weather_variable__output1__1__winter_comparison_1.csv"
+    },
+    {
+     "action": "process-weather-variable",
+     "file": "process_weather_variable__output1__2__winter_comparison_2.csv"
+    },
+    {
+     "action": "process-weather-variable",
+     "file": "process_weather_variable__output1__3__winter_comparison_3.csv"
+    },
+    {
+     "action": "plot-weather-comparison",
+     "file": "plot_weather_comparison__output1__corvallis_winter_comparison.png"
+    }
+   ],
+   "deliverables": [
+    {
+     "output": "corvallis_winter_comparison_png",
+     "file": "plot_weather_comparison__output1__corvallis_winter_comparison.png",
+     "deliver_as": "results/corvallis_winter_comparison.png"
+    }
+   ]
+  },
+  "external_inputs": []
+ }
+}

@@ -1,0 +1,15 @@
+{
+  "workflow_name": "corvallis-winter-weather",
+  "workflow_id": "corvallis-winter-weather-v1",
+  "version": 1,
+  "content_hash": "sha256:8ce54a5aabf44eb3e2dcb0d1353ee9e5c5775a249f70825883ccd5aa680b1762",
+  "pegasus": {
+    "run": "corvallis-winter-weather-v1/20261124-204455-0e28",
+    "name": "corvallis-winter-weather-1124-2044",
+    "image": "file:///images/curate-weather.tar"
+  },
+  "faasr": {
+    "run": "corvallis-winter-weather-v1/20261124-210945-a884"
+  },
+  "version_hash": "02718827c7916fb51cc72793e5e30af62002638ee8eaea7d8a5c09ffaa0d0253"
+}

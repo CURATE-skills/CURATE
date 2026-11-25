@@ -1,0 +1,594 @@
+{
+ "jobs": {
+  "name": "fanout-ice-demo",
+  "description": "Same synthetic data as the diamond, computed per winter in parallel (1 -> N -> N -> 1)",
+  "defaults": {
+   "image": "docker:///python:3.12-slim",
+   "resources": {
+    "cpus": 1,
+    "memory_mb": 1024
+   }
+  },
+  "inputs": [
+   {
+    "file": "params.json",
+    "location": "file://<fixture>/input/params.json"
+   }
+  ],
+  "outputs": [
+   {
+    "file": "assemble__result__ice_phenology_result.json",
+    "deliver_as": "results/ice_phenology_result.json"
+   }
+  ],
+  "nodes": [
+   {
+    "id": "load_data",
+    "_origin": "load_data",
+    "_assign": {},
+    "code": "functions/load_data.py",
+    "entrypoint": "main",
+    "inputs": {
+     "params": "params.json"
+    },
+    "outputs": {
+     "daily": "load_data__daily__daily.csv"
+    },
+    "params": {}
+   },
+   {
+    "id": "detect_ice__2019",
+    "_origin": "detect_ice",
+    "_assign": {
+     "winter": "2019"
+    },
+    "code": "functions/detect_ice.py",
+    "entrypoint": "main",
+    "inputs": {
+     "daily": "load_data__daily__daily.csv"
+    },
+    "outputs": {
+     "ice": "detect_ice__ice__2019__ice_2019.json"
+    },
+    "params": {
+     "winter": "2019",
+     "run_days": 5
+    }
+   },
+   {
+    "id": "detect_ice__2020",
+    "_origin": "detect_ice",
+    "_assign": {
+     "winter": "2020"
+    },
+    "code": "functions/detect_ice.py",
+    "entrypoint": "main",
+    "inputs": {
+     "daily": "load_data__daily__daily.csv"
+    },
+    "outputs": {
+     "ice": "detect_ice__ice__2020__ice_2020.json"
+    },
+    "params": {
+     "winter": "2020",
+     "run_days": 5
+    }
+   },
+   {
+    "id": "detect_ice__2021",
+    "_origin": "detect_ice",
+    "_assign": {
+     "winter": "2021"
+    },
+    "code": "functions/detect_ice.py",
+    "entrypoint": "main",
+    "inputs": {
+     "daily": "load_data__daily__daily.csv"
+    },
+    "outputs": {
+     "ice": "detect_ice__ice__2021__ice_2021.json"
+    },
+    "params": {
+     "winter": "2021",
+     "run_days": 5
+    }
+   },
+   {
+    "id": "detect_ice__2022",
+    "_origin": "detect_ice",
+    "_assign": {
+     "winter": "2022"
+    },
+    "code": "functions/detect_ice.py",
+    "entrypoint": "main",
+    "inputs": {
+     "daily": "load_data__daily__daily.csv"
+    },
+    "outputs": {
+     "ice": "detect_ice__ice__2022__ice_2022.json"
+    },
+    "params": {
+     "winter": "2022",
+     "run_days": 5
+    }
+   },
+   {
+    "id": "add_duration__2019",
+    "_origin": "add_duration",
+    "_assign": {
+     "winter": "2019"
+    },
+    "code": "functions/add_duration.py",
+    "entrypoint": "main",
+    "inputs": {
+     "ice": "detect_ice__ice__2019__ice_2019.json"
+    },
+    "outputs": {
+     "row": "add_duration__row__2019__row_2019.json"
+    },
+    "params": {
+     "winter": "2019"
+    }
+   },
+   {
+    "id": "add_duration__2020",
+    "_origin": "add_duration",
+    "_assign": {
+     "winter": "2020"
+    },
+    "code": "functions/add_duration.py",
+    "entrypoint": "main",
+    "inputs": {
+     "ice": "detect_ice__ice__2020__ice_2020.json"
+    },
+    "outputs": {
+     "row": "add_duration__row__2020__row_2020.json"
+    },
+    "params": {
+     "winter": "2020"
+    }
+   },
+   {
+    "id": "add_duration__2021",
+    "_origin": "add_duration",
+    "_assign": {
+     "winter": "2021"
+    },
+    "code": "functions/add_duration.py",
+    "entrypoint": "main",
+    "inputs": {
+     "ice": "detect_ice__ice__2021__ice_2021.json"
+    },
+    "outputs": {
+     "row": "add_duration__row__2021__row_2021.json"
+    },
+    "params": {
+     "winter": "2021"
+    }
+   },
+   {
+    "id": "add_duration__2022",
+    "_origin": "add_duration",
+    "_assign": {
+     "winter": "2022"
+    },
+    "code": "functions/add_duration.py",
+    "entrypoint": "main",
+    "inputs": {
+     "ice": "detect_ice__ice__2022__ice_2022.json"
+    },
+    "outputs": {
+     "row": "add_duration__row__2022__row_2022.json"
+    },
+    "params": {
+     "winter": "2022"
+    }
+   },
+   {
+    "id": "assemble",
+    "_origin": "assemble",
+    "_assign": {},
+    "code": "functions/assemble.py",
+    "entrypoint": "main",
+    "inputs": {
+     "rows": [
+      "add_duration__row__2019__row_2019.json",
+      "add_duration__row__2020__row_2020.json",
+      "add_duration__row__2021__row_2021.json",
+      "add_duration__row__2022__row_2022.json"
+     ]
+    },
+    "outputs": {
+     "result": "assemble__result__ice_phenology_result.json"
+    },
+    "params": {}
+   }
+  ],
+  "_base": "<fixture>"
+ },
+ "pegasus": {
+  "ir": {
+   "ir_version": "0.2",
+   "expanded": true,
+   "name": "t",
+   "description": "Same synthetic data as the diamond, computed per winter in parallel (1 -> N -> N -> 1)",
+   "defaults": {
+    "image": "docker:///python:3.12-slim",
+    "resources": {
+     "cpus": 1,
+     "memory_mb": 1024
+    }
+   },
+   "inputs": [
+    {
+     "file": "params.json",
+     "location": "inputs/params.json"
+    }
+   ],
+   "nodes": [
+    {
+     "id": "load_data",
+     "_origin": "load_data",
+     "_assign": {},
+     "code": "functions/load_data.py",
+     "entrypoint": "main",
+     "inputs": {
+      "params": "params.json"
+     },
+     "outputs": {
+      "daily": "load_data__daily__daily.csv"
+     },
+     "params": {}
+    },
+    {
+     "id": "detect_ice__2019",
+     "_origin": "detect_ice",
+     "_assign": {
+      "winter": "2019"
+     },
+     "code": "functions/detect_ice.py",
+     "entrypoint": "main",
+     "inputs": {
+      "daily": "load_data__daily__daily.csv"
+     },
+     "outputs": {
+      "ice": "detect_ice__ice__2019__ice_2019.json"
+     },
+     "params": {
+      "winter": "2019",
+      "run_days": 5
+     }
+    },
+    {
+     "id": "detect_ice__2020",
+     "_origin": "detect_ice",
+     "_assign": {
+      "winter": "2020"
+     },
+     "code": "functions/detect_ice.py",
+     "entrypoint": "main",
+     "inputs": {
+      "daily": "load_data__daily__daily.csv"
+     },
+     "outputs": {
+      "ice": "detect_ice__ice__2020__ice_2020.json"
+     },
+     "params": {
+      "winter": "2020",
+      "run_days": 5
+     }
+    },
+    {
+     "id": "detect_ice__2021",
+     "_origin": "detect_ice",
+     "_assign": {
+      "winter": "2021"
+     },
+     "code": "functions/detect_ice.py",
+     "entrypoint": "main",
+     "inputs": {
+      "daily": "load_data__daily__daily.csv"
+     },
+     "outputs": {
+      "ice": "detect_ice__ice__2021__ice_2021.json"
+     },
+     "params": {
+      "winter": "2021",
+      "run_days": 5
+     }
+    },
+    {
+     "id": "detect_ice__2022",
+     "_origin": "detect_ice",
+     "_assign": {
+      "winter": "2022"
+     },
+     "code": "functions/detect_ice.py",
+     "entrypoint": "main",
+     "inputs": {
+      "daily": "load_data__daily__daily.csv"
+     },
+     "outputs": {
+      "ice": "detect_ice__ice__2022__ice_2022.json"
+     },
+     "params": {
+      "winter": "2022",
+      "run_days": 5
+     }
+    },
+    {
+     "id": "add_duration__2019",
+     "_origin": "add_duration",
+     "_assign": {
+      "winter": "2019"
+     },
+     "code": "functions/add_duration.py",
+     "entrypoint": "main",
+     "inputs": {
+      "ice": "detect_ice__ice__2019__ice_2019.json"
+     },
+     "outputs": {
+      "row": "add_duration__row__2019__row_2019.json"
+     },
+     "params": {
+      "winter": "2019"
+     }
+    },
+    {
+     "id": "add_duration__2020",
+     "_origin": "add_duration",
+     "_assign": {
+      "winter": "2020"
+     },
+     "code": "functions/add_duration.py",
+     "entrypoint": "main",
+     "inputs": {
+      "ice": "detect_ice__ice__2020__ice_2020.json"
+     },
+     "outputs": {
+      "row": "add_duration__row__2020__row_2020.json"
+     },
+     "params": {
+      "winter": "2020"
+     }
+    },
+    {
+     "id": "add_duration__2021",
+     "_origin": "add_duration",
+     "_assign": {
+      "winter": "2021"
+     },
+     "code": "functions/add_duration.py",
+     "entrypoint": "main",
+     "inputs": {
+      "ice": "detect_ice__ice__2021__ice_2021.json"
+     },
+     "outputs": {
+      "row": "add_duration__row__2021__row_2021.json"
+     },
+     "params": {
+      "winter": "2021"
+     }
+    },
+    {
+     "id": "add_duration__2022",
+     "_origin": "add_duration",
+     "_assign": {
+      "winter": "2022"
+     },
+     "code": "functions/add_duration.py",
+     "entrypoint": "main",
+     "inputs": {
+      "ice": "detect_ice__ice__2022__ice_2022.json"
+     },
+     "outputs": {
+      "row": "add_duration__row__2022__row_2022.json"
+     },
+     "params": {
+      "winter": "2022"
+     }
+    },
+    {
+     "id": "assemble",
+     "_origin": "assemble",
+     "_assign": {},
+     "code": "functions/assemble.py",
+     "entrypoint": "main",
+     "inputs": {
+      "rows": [
+       "add_duration__row__2019__row_2019.json",
+       "add_duration__row__2020__row_2020.json",
+       "add_duration__row__2021__row_2021.json",
+       "add_duration__row__2022__row_2022.json"
+      ]
+     },
+     "outputs": {
+      "result": "assemble__result__ice_phenology_result.json"
+     },
+     "params": {}
+    }
+   ],
+   "outputs": [
+    {
+     "file": "assemble__result__ice_phenology_result.json",
+     "deliver_as": "results/ice_phenology_result.json"
+    }
+   ]
+  },
+  "copy": {
+   "params.json": "<fixture>/input/params.json"
+  },
+  "needed": []
+ },
+ "faasr": {
+  "workflow": {
+   "FunctionInvoke": "load-data",
+   "WorkflowName": "t",
+   "DefaultDataStore": "S3",
+   "LoggingDataStore": "S3",
+   "FaaSrLog": "FaaSrLog",
+   "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+   "ActionList": {
+    "load-data": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "load_data",
+     "Arguments": {
+      "folder": "tf",
+      "params": "params.json",
+      "daily": "load_data__daily__daily.csv"
+     },
+     "InvokeNext": [
+      "detect-ice(4)"
+     ]
+    },
+    "detect-ice": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "detect_ice",
+     "Arguments": {
+      "folder": "tf",
+      "daily": "load_data__daily__daily.csv",
+      "ice": "detect_ice__ice__{rank}__ice_{rank}.json"
+     },
+     "InvokeNext": [
+      "add-duration(4)"
+     ]
+    },
+    "add-duration": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "add_duration",
+     "Arguments": {
+      "folder": "tf",
+      "ice": "detect_ice__ice__{rank}__ice_{rank}.json",
+      "row": "add_duration__row__{rank}__row_{rank}.json"
+     },
+     "InvokeNext": [
+      "assemble"
+     ]
+    },
+    "assemble": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "assemble",
+     "Arguments": {
+      "folder": "tf",
+      "rows": "add_duration__row__{rank}__row_{rank}.json",
+      "result": "assemble__result__ice_phenology_result.json"
+     },
+     "InvokeNext": []
+    }
+   },
+   "ActionContainers": {
+    "load-data": "ghcr.io/faasr/github-actions-python:latest",
+    "detect-ice": "ghcr.io/faasr/github-actions-python:latest",
+    "add-duration": "ghcr.io/faasr/github-actions-python:latest",
+    "assemble": "ghcr.io/faasr/github-actions-python:latest"
+   },
+   "ComputeServers": {
+    "My_GitHub_Account": {
+     "FaaSType": "GitHubActions",
+     "UserName": "<FAASR_GH_USERNAME>",
+     "ActionRepoName": "<FAASR_ACTION_REPO>",
+     "Branch": "main",
+     "UseSecretStore": true
+    }
+   },
+   "DataStores": {
+    "S3": {
+     "Endpoint": "<FAASR_S3_ENDPOINT>",
+     "Bucket": "<FAASR_S3_BUCKET>",
+     "Region": "<FAASR_S3_REGION>",
+     "AccessKey": "S3_AccessKey",
+     "SecretKey": "S3_SecretKey",
+     "Writable": "TRUE"
+    }
+   },
+   "FunctionGitRepo": {
+    "load_data": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/load_data.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/load_data_main.py"
+    ],
+    "detect_ice": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/detect_ice.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/detect_ice_main.py"
+    ],
+    "add_duration": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/add_duration.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/add_duration_main.py"
+    ],
+    "assemble": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/assemble.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/assemble_main.py"
+    ]
+   }
+  },
+  "names": {
+   "params_json": "params.json",
+   "load_data/daily": "load_data__daily__daily.csv",
+   "detect_ice/ice": "detect_ice__ice__{rank}__ice_{rank}.json",
+   "add_duration/row": "add_duration__row__{rank}__row_{rank}.json",
+   "assemble/result": "assemble__result__ice_phenology_result.json"
+  },
+  "outputs": {
+   "files": [
+    {
+     "action": "load-data",
+     "file": "load_data__daily__daily.csv"
+    },
+    {
+     "action": "detect-ice",
+     "file": "detect_ice__ice__1__ice_1.json"
+    },
+    {
+     "action": "detect-ice",
+     "file": "detect_ice__ice__2__ice_2.json"
+    },
+    {
+     "action": "detect-ice",
+     "file": "detect_ice__ice__3__ice_3.json"
+    },
+    {
+     "action": "detect-ice",
+     "file": "detect_ice__ice__4__ice_4.json"
+    },
+    {
+     "action": "add-duration",
+     "file": "add_duration__row__1__row_1.json"
+    },
+    {
+     "action": "add-duration",
+     "file": "add_duration__row__2__row_2.json"
+    },
+    {
+     "action": "add-duration",
+     "file": "add_duration__row__3__row_3.json"
+    },
+    {
+     "action": "add-duration",
+     "file": "add_duration__row__4__row_4.json"
+    },
+    {
+     "action": "assemble",
+     "file": "assemble__result__ice_phenology_result.json"
+    }
+   ],
+   "deliverables": [
+    {
+     "output": "ice_phenology_result_json",
+     "file": "assemble__result__ice_phenology_result.json",
+     "deliver_as": "results/ice_phenology_result.json"
+    }
+   ]
+  },
+  "external_inputs": [
+   {
+    "input": "params_json",
+    "file": "params.json",
+    "location": "file://<fixture>/input/params.json",
+    "s3_path": "tf/params.json"
+   }
+  ]
+ }
+}

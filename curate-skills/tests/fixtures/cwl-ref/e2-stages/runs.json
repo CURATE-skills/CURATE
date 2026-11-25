@@ -1,0 +1,47 @@
+{
+ "faasr_objects": [
+  "mapreduce_word_count/generate_text__output1__input_text.txt",
+  "mapreduce_word_count/map__output1__1__map_counts_1.json",
+  "mapreduce_word_count/map__output1__2__map_counts_2.json",
+  "mapreduce_word_count/map__output1__3__map_counts_3.json",
+  "mapreduce_word_count/reduce__output1__1__word_count_1.json",
+  "mapreduce_word_count/reduce__output1__2__word_count_2.json",
+  "mapreduce_word_count/reduce__output1__3__word_count_3.json",
+  "mapreduce_word_count/reduce__output1__4__word_count_4.json",
+  "mapreduce_word_count/reduce__output1__5__word_count_5.json",
+  "mapreduce_word_count/shuffle__output1__1__shuffle_partition_1.json",
+  "mapreduce_word_count/shuffle__output1__2__shuffle_partition_2.json",
+  "mapreduce_word_count/shuffle__output1__3__shuffle_partition_3.json",
+  "mapreduce_word_count/shuffle__output1__4__shuffle_partition_4.json",
+  "mapreduce_word_count/shuffle__output1__5__shuffle_partition_5.json",
+  "mapreduce_word_count/split__output1__1__text_batch_1.txt",
+  "mapreduce_word_count/split__output1__2__text_batch_2.txt",
+  "mapreduce_word_count/split__output1__3__text_batch_3.txt"
+ ],
+ "pegasus_files": [
+  "generate_text__output1__input_text.txt",
+  "map__output1__1__map_counts_1.json",
+  "map__output1__2__map_counts_2.json",
+  "map__output1__3__map_counts_3.json",
+  "reduce__output1__1__word_count_1.json",
+  "reduce__output1__2__word_count_2.json",
+  "reduce__output1__3__word_count_3.json",
+  "reduce__output1__4__word_count_4.json",
+  "reduce__output1__5__word_count_5.json",
+  "shuffle__output1__1__shuffle_partition_1.json",
+  "shuffle__output1__2__shuffle_partition_2.json",
+  "shuffle__output1__3__shuffle_partition_3.json",
+  "shuffle__output1__4__shuffle_partition_4.json",
+  "shuffle__output1__5__shuffle_partition_5.json",
+  "split__output1__1__text_batch_1.txt",
+  "split__output1__2__text_batch_2.txt",
+  "split__output1__3__text_batch_3.txt"
+ ],
+ "results_sha256": {
+  "reduce__output1__1__word_count_1.json": "df5754ab82124a68a217f49818b3fa55d44737f7065a38afad3228e500285f65",
+  "reduce__output1__2__word_count_2.json": "a5faf8e9b948c291c2af8699b4d6b977c355ec99c95a154fbd68cc89f0d7ee89",
+  "reduce__output1__3__word_count_3.json": "944d4bb87bee704ada7585caa5890e7f3a19e19f56f4fb8b94adf5891c8c0469",
+  "reduce__output1__4__word_count_4.json": "860774b1e4b021e670b533e6500c4d139fd51ced2aaabc6c8a3ae121297aab9b",
+  "reduce__output1__5__word_count_5.json": "10fef26a8c9b8e9aae478a60bc54c70df436f9054e8468b8acee62f1eaf2890d"
+ }
+}

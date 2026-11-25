@@ -1,0 +1,8 @@
+w:
+- a
+- b
+data_w_csv:
+- class: File
+  location: inputs/data_a.csv
+- class: File
+  location: inputs/data_b.csv

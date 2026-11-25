@@ -1,0 +1,120 @@
+{
+  "FunctionInvoke": "generate-text",
+  "WorkflowName": "mapreduce",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "generate-text": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "generate_text",
+      "Arguments": {
+        "folder": "mapreduce",
+        "output1": "generate_text__output1__input_text.txt"
+      },
+      "InvokeNext": [
+        "split"
+      ]
+    },
+    "split": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "split",
+      "Arguments": {
+        "folder": "mapreduce",
+        "input1": "generate_text__output1__input_text.txt",
+        "output1": "split__output1__{rank}__batch_{rank}.txt"
+      },
+      "InvokeNext": [
+        "map(3)"
+      ]
+    },
+    "map": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "map",
+      "Arguments": {
+        "folder": "mapreduce",
+        "input1": "split__output1__{rank}__batch_{rank}.txt",
+        "output1": "map__output1__{rank}__map_counts_{rank}.json"
+      },
+      "InvokeNext": [
+        "shuffle"
+      ]
+    },
+    "shuffle": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "shuffle",
+      "Arguments": {
+        "folder": "mapreduce",
+        "input1": "map__output1__{rank}__map_counts_{rank}.json",
+        "output1": "shuffle__output1__{rank}__partition_{rank}.json"
+      },
+      "InvokeNext": [
+        "reduce(5)"
+      ]
+    },
+    "reduce": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "reduce",
+      "Arguments": {
+        "folder": "mapreduce",
+        "input1": "shuffle__output1__{rank}__partition_{rank}.json",
+        "output1": "reduce__output1__{rank}__word_total_{rank}.json"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ActionContainers": {
+    "generate-text": "ghcr.io/faasr/github-actions-python:latest",
+    "split": "ghcr.io/faasr/github-actions-python:latest",
+    "map": "ghcr.io/faasr/github-actions-python:latest",
+    "shuffle": "ghcr.io/faasr/github-actions-python:latest",
+    "reduce": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "<FAASR_GH_USERNAME>",
+      "ActionRepoName": "<FAASR_ACTION_REPO>",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "<FAASR_S3_ENDPOINT>",
+      "Bucket": "<FAASR_S3_BUCKET>",
+      "Region": "<FAASR_S3_REGION>",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "generate_text": [
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/generate_text.py",
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/generate_text_main.py"
+    ],
+    "split": [
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/split.py",
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/split_main.py"
+    ],
+    "map": [
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/map.py",
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/map_main.py"
+    ],
+    "shuffle": [
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/shuffle.py",
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/shuffle_main.py"
+    ],
+    "reduce": [
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/reduce.py",
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/reduce_main.py"
+    ]
+  }
+}

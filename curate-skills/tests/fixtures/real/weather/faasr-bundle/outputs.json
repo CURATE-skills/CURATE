@@ -1,0 +1,39 @@
+{
+  "files": [
+    {
+      "action": "download-ghcn-daily",
+      "file": "download_ghcn_daily__output1__1__ghcn_daily_1.csv"
+    },
+    {
+      "action": "download-ghcn-daily",
+      "file": "download_ghcn_daily__output1__2__ghcn_daily_2.csv"
+    },
+    {
+      "action": "download-ghcn-daily",
+      "file": "download_ghcn_daily__output1__3__ghcn_daily_3.csv"
+    },
+    {
+      "action": "compare-winter-variable",
+      "file": "compare_winter_variable__output1__1__winter_comparison_1.csv"
+    },
+    {
+      "action": "compare-winter-variable",
+      "file": "compare_winter_variable__output1__2__winter_comparison_2.csv"
+    },
+    {
+      "action": "compare-winter-variable",
+      "file": "compare_winter_variable__output1__3__winter_comparison_3.csv"
+    },
+    {
+      "action": "plot-winter-comparison",
+      "file": "plot_winter_comparison__output1__winter_comparison.png"
+    }
+  ],
+  "deliverables": [
+    {
+      "output": "winter_comparison_png",
+      "file": "plot_winter_comparison__output1__winter_comparison.png",
+      "deliver_as": "results/winter_comparison.png"
+    }
+  ]
+}

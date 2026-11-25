@@ -1,0 +1,112 @@
+{
+  "name": "corvallis_winter_weather_comparison",
+  "description": "Compare winter 2025 weather in Corvallis, Oregon (GHCN-Daily station USC00351862) against the previous 10-year daily average for PRCP, TMIN and TMAX.",
+  "nodes": [
+    {
+      "name": "download_ghcn_station",
+      "description": "Download the NOAA GHCN-Daily CSV for station USC00351862 (Corvallis, Oregon). Fetch the per-station daily CSV from NOAA NCEI's public GHCN-Daily access endpoint (https://www.ncei.noaa.gov/data/global-historical-climatology-network-daily/access/USC00351862.csv; no credentials needed), check the response succeeded and is non-empty with a DATE column, and upload the raw CSV unchanged to the S3 data store as the workflow's station data file for the downstream per-variable processing step.",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "USC00351862_daily.csv",
+          "type": "csv",
+          "description": "Raw GHCN-Daily station CSV for USC00351862 downloaded from NOAA NCEI"
+        }
+      ],
+      "dependencies": [
+        "requests"
+      ],
+      "secrets": [],
+      "rank": 1,
+      "source": "new",
+      "user_model_mode": null,
+      "code": "import csv\nimport io\nimport os\nimport shutil\nimport tempfile\n\nimport requests\n\nGHCN_URL = (\n    \"https://www.ncei.noaa.gov/data/global-historical-climatology-network-daily/\"\n    \"access/USC00351862.csv\"\n)\n\n\ndef _curate_copy(src, dst):\n    \"\"\"Copy a file unless src and dst are the same path (added by migrate_catalog.py).\"\"\"\n    if os.path.abspath(src) != os.path.abspath(dst):\n        shutil.copyfile(src, dst)\n\n\ndef main(inputs, outputs, params):\n    \"\"\"Download the NOAA GHCN-Daily CSV for station USC00351862 and upload it unchanged.\"\"\"\n    output1 = outputs[\"output1\"]\n    print(f\"Downloading GHCN-Daily station CSV from {GHCN_URL}\", flush=True)\n    try:\n        resp = requests.get(GHCN_URL, timeout=300)\n        resp.raise_for_status()\n    except Exception as e:\n        print(f\"ERROR: failed to download {GHCN_URL}: {e}\", flush=True)\n        raise\n\n    content = resp.content\n    if not content or not content.strip():\n        msg = f\"ERROR: empty response from {GHCN_URL}\"\n        print(msg, flush=True)\n        raise RuntimeError(msg)\n\n    # Validate header contains a DATE column\n    first_line = content.split(b\"\\n\", 1)[0].decode(\"utf-8\", errors=\"replace\")\n    header = next(csv.reader(io.StringIO(first_line)), [])\n    header = [h.strip().strip('\"') for h in header]\n    if \"DATE\" not in header:\n        msg = f\"ERROR: downloaded CSV has no DATE column; header: {header[:20]}\"\n        print(msg, flush=True)\n        raise RuntimeError(msg)\n\n    n_lines = content.count(b\"\\n\")\n    print(f\"Downloaded {len(content)} bytes, ~{n_lines} lines; columns: {len(header)}\", flush=True)\n\n    tmpdir = tempfile.mkdtemp()\n    local_path = os.path.join(tmpdir, \"USC00351862_daily.csv\")\n    with open(local_path, \"wb\") as f:\n        f.write(content)\n\n    _curate_copy(local_path, output1)\n    print(f\"Uploaded station CSV to ./{output1}\", flush=True)\n"
+    },
+    {
+      "name": "process_weather_variable",
+      "description": "Runs in parallel, one instance per variable: precipitation (PRCP), minimum temperature (TMIN) and maximum temperature (TMAX), selected by rank (rank 1 = PRCP, rank 2 = TMIN, rank 3 = TMAX, via faasr_rank()). Reads the downloaded station CSV. For its variable: take the values from 2025-01-01 to 2025-03-01, and the daily average over the same dates in each of the previous 10 years (extend that window by 30 days). Temperatures in the data are in tenths of a degree Celsius. Exact interpretation (user-confirmed): this year's values cover 2025-01-01 to 2025-03-01 only. The 10-year baseline uses 2015-2024, and ONLY the baseline window is extended, by 30 days after the end date: Jan 1 to Mar 31 of each baseline year. For each calendar month-day in Jan 1..Mar 31, average the variable across the 10 baseline years (ignoring missing values; Feb 29 averages only the leap years present). Units: keep PRCP exactly as reported in the CSV, with no unit conversion; only convert TMIN and TMAX from tenths of degrees Celsius to degrees Celsius (divide by 10). Write one ranked output per instance: a CSV with columns date (2025 calendar date for the month-day, Jan 1..Mar 31; Feb 29 dropped since 2025 has none), variable, this_year (empty after 2025-03-01 or where missing), ten_year_avg.",
+      "inputs": [
+        {
+          "name": "USC00351862_daily.csv",
+          "type": "csv",
+          "description": "Raw station CSV shared by all three instances"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "winter_comparison_{rank}.csv",
+          "type": "csv",
+          "description": "Per-variable daily series (rank 1=PRCP, 2=TMIN, 3=TMAX), Jan 1-Mar 31: date, variable, this_year (to Mar 1), ten_year_avg"
+        }
+      ],
+      "dependencies": [
+        "pandas"
+      ],
+      "secrets": [],
+      "rank": 3,
+      "source": "new",
+      "user_model_mode": null,
+      "code": "import os\nimport shutil\nimport tempfile\n\nimport pandas as pd\n\nRANK_VARIABLES = {1: \"PRCP\", 2: \"TMIN\", 3: \"TMAX\"}\nTHIS_YEAR = 2025\nTHIS_START = pd.Timestamp(\"2025-01-01\")\nTHIS_END = pd.Timestamp(\"2025-03-01\")\nBASELINE_YEARS = list(range(2015, 2025))  # previous 10 years: 2015..2024\n# Baseline window extended by 30 days after Mar 1 -> Jan 1 .. Mar 31 of each year\nBASELINE_END_MONTH_DAY = (3, 31)\n\n\ndef _curate_copy(src, dst):\n    \"\"\"Copy a file unless src and dst are the same path (added by migrate_catalog.py).\"\"\"\n    if os.path.abspath(src) != os.path.abspath(dst):\n        shutil.copyfile(src, dst)\n\n\ndef main(inputs, outputs, params):\n    input1 = inputs[\"input1\"]\n    output1 = outputs[\"output1\"]\n    r = {\"rank\": params[\"rank\"], \"max_rank\": params[\"max_rank\"]}\n    rank = int(r[\"rank\"])\n    if rank not in RANK_VARIABLES:\n        msg = f\"ERROR: unexpected rank {rank}; expected 1..3\"\n        print(msg, flush=True)\n        raise ValueError(msg)\n    var = RANK_VARIABLES[rank]\n    in_name = input1 if \"{rank}\" in input1 else input1\n    out_name = output1\n    print(f\"Rank {rank}: processing {var} from ./{in_name}\", flush=True)\n\n    tmpdir = tempfile.mkdtemp()\n    local_in = os.path.join(tmpdir, \"station.csv\")\n    _curate_copy(in_name, local_in)\n\n    df = pd.read_csv(local_in, usecols=lambda c: c in (\"DATE\", var), dtype=str)\n    if \"DATE\" not in df.columns or var not in df.columns:\n        msg = f\"ERROR: input CSV missing DATE or {var} column\"\n        print(msg, flush=True)\n        raise ValueError(msg)\n\n    df[\"DATE\"] = pd.to_datetime(df[\"DATE\"].str.strip(), errors=\"coerce\")\n    df[var] = pd.to_numeric(df[var].str.strip(), errors=\"coerce\")\n    df = df.dropna(subset=[\"DATE\"])\n    if var in (\"TMIN\", \"TMAX\"):\n        # tenths of degrees Celsius -> degrees Celsius\n        df[var] = df[var] / 10.0\n    # PRCP is kept exactly as reported (no unit conversion)\n\n    df[\"month\"] = df[\"DATE\"].dt.month\n    df[\"day\"] = df[\"DATE\"].dt.day\n    in_window = (df[\"month\"] <= 2) | (\n        (df[\"month\"] == 3) & (df[\"day\"] <= BASELINE_END_MONTH_DAY[1])\n    )\n\n    base = df[df[\"DATE\"].dt.year.isin(BASELINE_YEARS) & in_window]\n    base = base.dropna(subset=[var])\n    if base.empty:\n        msg = f\"ERROR: no {var} data for baseline years {BASELINE_YEARS[0]}-{BASELINE_YEARS[-1]}\"\n        print(msg, flush=True)\n        raise ValueError(msg)\n    avg = base.groupby([\"month\", \"day\"])[var].mean()\n\n    this = df[(df[\"DATE\"] >= THIS_START) & (df[\"DATE\"] <= THIS_END)].set_index(\"DATE\")[var]\n    if this.dropna().empty:\n        msg = f\"ERROR: no {var} data between {THIS_START.date()} and {THIS_END.date()}\"\n        print(msg, flush=True)\n        raise ValueError(msg)\n\n    dates = pd.date_range(f\"{THIS_YEAR}-01-01\", f\"{THIS_YEAR}-03-31\", freq=\"D\")\n    rows = []\n    for d in dates:\n        ty = this.get(d) if d <= THIS_END else None\n        ty = None if ty is None or pd.isna(ty) else float(ty)\n        ta = avg.get((d.month, d.day))\n        ta = None if ta is None or pd.isna(ta) else float(ta)\n        rows.append(\n            {\n                \"date\": d.strftime(\"%Y-%m-%d\"),\n                \"variable\": var,\n                \"this_year\": ty,\n                \"ten_year_avg\": ta,\n            }\n        )\n    out = pd.DataFrame(rows, columns=[\"date\", \"variable\", \"this_year\", \"ten_year_avg\"])\n\n    local_out = os.path.join(tmpdir, out_name)\n    out.to_csv(local_out, index=False)\n    _curate_copy(local_out, out_name)\n    print(f\"Rank {rank}: wrote {len(out)} rows for {var} \"\n        f\"({out['this_year'].notna().sum()} this-year values) to ./{out_name}\", flush=True)\n"
+    },
+    {
+      "name": "plot_weather_comparison",
+      "description": "Runs once after all three parallel variable-processing instances finish. Reads the three per-variable result CSVs (one per rank: 1 = PRCP, 2 = TMIN, 3 = TMAX). Plot a figure with three panels (precipitation, max temperature, min temperature) showing this year as a solid line and the 10-year average as a dashed line. The plot covers 2025-01-01 to 2025-03-01 only (drop rows after 2025-03-01 even though the inputs' baseline extends to Mar 31). Panels are stacked vertically sharing the date x-axis; precipitation is plotted as reported in the CSV with no unit conversion (y-label: 'Precipitation (as reported, tenths of mm)'), temperatures in degrees Celsius. Include a legend and a title naming Corvallis, OR (USC00351862), winter 2025 vs 2015-2024 average. Use a headless matplotlib backend (Agg) and upload the figure as a PNG to the S3 data store.",
+      "inputs": [
+        {
+          "name": "winter_comparison_{rank}.csv",
+          "type": "csv",
+          "description": "The three per-variable comparison CSVs (ranks 1-3)",
+          "kind": "folder"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "corvallis_winter_comparison.png",
+          "type": "png",
+          "description": "Three-panel figure: precipitation, max temperature, min temperature"
+        }
+      ],
+      "dependencies": [
+        "pandas",
+        "matplotlib"
+      ],
+      "secrets": [],
+      "rank": 1,
+      "source": "new",
+      "user_model_mode": null,
+      "code": "import os\n\nimport matplotlib\n\nmatplotlib.use(\"Agg\")\nimport matplotlib.dates as mdates  # noqa: E402\nimport matplotlib.pyplot as plt  # noqa: E402\nimport pandas as pd  # noqa: E402\n\nPLOT_START = pd.Timestamp(\"2025-01-01\")\nPLOT_END = pd.Timestamp(\"2025-03-01\")\n\n# Panel order: precipitation, max temperature, min temperature\nPANELS = [\n    (\"PRCP\", \"Precipitation\", \"Precipitation (as reported, tenths of mm)\"),\n    (\"TMAX\", \"Maximum temperature\", \"Max temperature (\u00b0C)\"),\n    (\"TMIN\", \"Minimum temperature\", \"Min temperature (\u00b0C)\"),\n]\n\n\ndef main(inputs, outputs, params):\n    # inputs[\"input1\"] is a folder holding every per-variable comparison file\n    # (winter_comparison_<rank>.csv), and only those.\n    folder = inputs[\"input1\"]\n    names = sorted(os.listdir(folder))\n    if not names:\n        msg = f\"ERROR: the input folder {folder} holds no comparison files\"\n        print(msg, flush=True)\n        raise FileNotFoundError(msg)\n    print(f\"Found {len(names)} comparison files: {names}\", flush=True)\n\n    frames = []\n    for name in names:\n        df = pd.read_csv(os.path.join(folder, name))\n        required = {\"date\", \"variable\", \"this_year\", \"ten_year_avg\"}\n        if not required.issubset(df.columns):\n            msg = f\"ERROR: {name} missing columns {sorted(required - set(df.columns))}\"\n            print(msg, flush=True)\n            raise ValueError(msg)\n        frames.append(df)\n\n    data = pd.concat(frames, ignore_index=True)\n    data[\"date\"] = pd.to_datetime(data[\"date\"], errors=\"coerce\")\n    data[\"this_year\"] = pd.to_numeric(data[\"this_year\"], errors=\"coerce\")\n    data[\"ten_year_avg\"] = pd.to_numeric(data[\"ten_year_avg\"], errors=\"coerce\")\n    data = data.dropna(subset=[\"date\"])\n    data = data[(data[\"date\"] >= PLOT_START) & (data[\"date\"] <= PLOT_END)]\n\n    missing = [v for v, _, _ in PANELS if v not in set(data[\"variable\"])]\n    if missing:\n        msg = f\"ERROR: no data for variable(s) {missing} in inputs\"\n        print(msg, flush=True)\n        raise ValueError(msg)\n\n    fig, axes = plt.subplots(len(PANELS), 1, figsize=(11, 10), sharex=True)\n    for ax, (var, title, ylabel) in zip(axes, PANELS):\n        sub = data[data[\"variable\"] == var].sort_values(\"date\")\n        ax.plot(sub[\"date\"], sub[\"this_year\"], linestyle=\"-\", color=\"tab:blue\",\n                label=\"Winter 2025\")\n        ax.plot(sub[\"date\"], sub[\"ten_year_avg\"], linestyle=\"--\", color=\"tab:orange\",\n                label=\"2015-2024 average\")\n        ax.set_title(title)\n        ax.set_ylabel(ylabel)\n        ax.grid(True, alpha=0.3)\n        ax.legend(loc=\"upper right\")\n    axes[-1].set_xlabel(\"Date\")\n    axes[-1].set_xlim(PLOT_START, PLOT_END)\n    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter(\"%b %d\"))\n    fig.suptitle(\"Corvallis, OR (USC00351862): winter 2025 vs 2015-2024 average\")\n    fig.tight_layout(rect=(0, 0, 1, 0.97))\n\n    fig.savefig(outputs[\"output1\"], dpi=150)\n    plt.close(fig)\n    print(f\"Wrote figure to {outputs['output1']}\", flush=True)\n"
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "download_ghcn_station",
+      "to_node": "process_weather_variable",
+      "condition": null
+    },
+    {
+      "from_node": "process_weather_variable",
+      "to_node": "plot_weather_comparison",
+      "condition": null
+    }
+  ],
+  "data_flow": [
+    {
+      "from_node": "download_ghcn_station",
+      "to_node": "process_weather_variable",
+      "file": "USC00351862_daily.csv",
+      "format": "csv",
+      "folder": "corvallis_winter_weather"
+    },
+    {
+      "from_node": "process_weather_variable",
+      "to_node": "plot_weather_comparison",
+      "file": "winter_comparison_{rank}.csv",
+      "format": "csv",
+      "folder": "corvallis_winter_weather"
+    }
+  ],
+  "entry": "download_ghcn_station",
+  "compute_target": "GH",
+  "data_store": "S3",
+  "folder": "corvallis_winter_weather"
+}

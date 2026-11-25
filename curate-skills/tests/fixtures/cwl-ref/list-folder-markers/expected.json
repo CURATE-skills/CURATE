@@ -1,0 +1,221 @@
+{
+ "jobs": {
+  "name": "t",
+  "description": "",
+  "defaults": {
+   "image": "docker:///python:3.12-slim"
+  },
+  "inputs": [],
+  "outputs": [
+   {
+    "file": "all__o__summary.json",
+    "deliver_as": "summary.json"
+   }
+  ],
+  "nodes": [
+   {
+    "id": "split",
+    "_origin": "split",
+    "_assign": {},
+    "code": "functions/split.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "b": [
+      "split__b__1__batch_1.txt",
+      "split__b__2__batch_2.txt"
+     ]
+    },
+    "params": {}
+   },
+   {
+    "id": "use__1",
+    "_origin": "use",
+    "_assign": {
+     "r": "1"
+    },
+    "code": "functions/use.py",
+    "entrypoint": "main",
+    "inputs": {
+     "b": "split__b__1__batch_1.txt"
+    },
+    "outputs": {
+     "o": "use__o__1__part_1.csv"
+    },
+    "params": {
+     "rank": 1
+    }
+   },
+   {
+    "id": "use__2",
+    "_origin": "use",
+    "_assign": {
+     "r": "2"
+    },
+    "code": "functions/use.py",
+    "entrypoint": "main",
+    "inputs": {
+     "b": "split__b__2__batch_2.txt"
+    },
+    "outputs": {
+     "o": "use__o__2__part_2.csv"
+    },
+    "params": {
+     "rank": 2
+    }
+   },
+   {
+    "id": "extra",
+    "_origin": "extra",
+    "_assign": {},
+    "code": "functions/extra.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "x": "extra__x__part_x.csv"
+    },
+    "params": {}
+   },
+   {
+    "id": "all",
+    "_origin": "all",
+    "_assign": {},
+    "code": "functions/all.py",
+    "entrypoint": "main",
+    "inputs": {
+     "parts": {
+      "folder": [
+       "use__o__1__part_1.csv",
+       "use__o__2__part_2.csv",
+       "extra__x__part_x.csv"
+      ]
+     }
+    },
+    "outputs": {
+     "o": "all__o__summary.json"
+    },
+    "params": {},
+    "after": [
+     "use__1",
+     "use__2"
+    ]
+   }
+  ],
+  "_base": "<fixture>"
+ },
+ "pegasus": {
+  "ir": {
+   "ir_version": "0.2",
+   "expanded": true,
+   "name": "t",
+   "description": "t",
+   "defaults": {
+    "image": "docker:///python:3.12-slim"
+   },
+   "inputs": [],
+   "nodes": [
+    {
+     "id": "split",
+     "_origin": "split",
+     "_assign": {},
+     "code": "functions/split.py",
+     "entrypoint": "main",
+     "inputs": {},
+     "outputs": {
+      "b": [
+       "split__b__1__batch_1.txt",
+       "split__b__2__batch_2.txt"
+      ]
+     },
+     "params": {}
+    },
+    {
+     "id": "use__1",
+     "_origin": "use",
+     "_assign": {
+      "r": "1"
+     },
+     "code": "functions/use.py",
+     "entrypoint": "main",
+     "inputs": {
+      "b": "split__b__1__batch_1.txt"
+     },
+     "outputs": {
+      "o": "use__o__1__part_1.csv"
+     },
+     "params": {
+      "rank": 1
+     }
+    },
+    {
+     "id": "use__2",
+     "_origin": "use",
+     "_assign": {
+      "r": "2"
+     },
+     "code": "functions/use.py",
+     "entrypoint": "main",
+     "inputs": {
+      "b": "split__b__2__batch_2.txt"
+     },
+     "outputs": {
+      "o": "use__o__2__part_2.csv"
+     },
+     "params": {
+      "rank": 2
+     }
+    },
+    {
+     "id": "extra",
+     "_origin": "extra",
+     "_assign": {},
+     "code": "functions/extra.py",
+     "entrypoint": "main",
+     "inputs": {},
+     "outputs": {
+      "x": "extra__x__part_x.csv"
+     },
+     "params": {}
+    },
+    {
+     "id": "all",
+     "_origin": "all",
+     "_assign": {},
+     "code": "functions/all.py",
+     "entrypoint": "main",
+     "inputs": {
+      "parts": {
+       "folder": [
+        "use__o__1__part_1.csv",
+        "use__o__2__part_2.csv",
+        "extra__x__part_x.csv"
+       ]
+      }
+     },
+     "outputs": {
+      "o": "all__o__summary.json"
+     },
+     "params": {},
+     "after": [
+      "use__1",
+      "use__2"
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "file": "all__o__summary.json",
+     "deliver_as": "summary.json"
+    }
+   ]
+  },
+  "copy": {},
+  "needed": []
+ },
+ "faasr": {
+  "problems": [
+   "step all: folder input parts gathers several sources; on FaaSr a folder input lists one prefix",
+   "FaaSr starts one action; the workflow has 2 first steps (split, extra)"
+  ]
+ }
+}

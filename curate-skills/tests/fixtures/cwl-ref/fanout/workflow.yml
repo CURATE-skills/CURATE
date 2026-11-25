@@ -1,0 +1,114 @@
+cwlVersion: v1.2
+class: Workflow
+$namespaces:
+  curate: https://github.com/CURATE-skills/CURATE/blob/main/docs/CWL_IR.md#
+label: fanout-ice-demo
+doc: Same synthetic data as the diamond, computed per winter in parallel (1 -> N ->
+  N -> 1)
+requirements:
+  ScatterFeatureRequirement: {}
+hints:
+  DockerRequirement:
+    dockerPull: python:3.12-slim
+  ResourceRequirement:
+    coresMin: 1
+    ramMin: 1024
+inputs:
+  winter:
+    type: string[]
+    default:
+    - '2019'
+    - '2020'
+    - '2021'
+    - '2022'
+  params_json:
+    type: File
+    default:
+      class: File
+      location: input/params.json
+outputs:
+  ice_phenology_result_json:
+    type: File
+    outputSource: assemble/result
+    curate:deliver_as: results/ice_phenology_result.json
+steps:
+  load_data:
+    in:
+      params: params_json
+    out:
+    - daily
+    run:
+      class: Operation
+      inputs:
+        params: File
+      outputs:
+        daily:
+          type: File
+          curate:name: daily.csv
+    hints:
+      curate:function:
+        code: functions/load_data.py
+        entrypoint: main
+  detect_ice:
+    scatter: winter
+    in:
+      winter: winter
+      run_days:
+        default: 5
+      daily: load_data/daily
+    out:
+    - ice
+    run:
+      class: Operation
+      inputs:
+        winter: string
+        run_days: int
+        daily: File
+      outputs:
+        ice:
+          type: File
+          curate:name: ice_{winter}.json
+    hints:
+      curate:function:
+        code: functions/detect_ice.py
+        entrypoint: main
+  add_duration:
+    scatter:
+    - winter
+    - ice
+    scatterMethod: dotproduct
+    in:
+      winter: winter
+      ice: detect_ice/ice
+    out:
+    - row
+    run:
+      class: Operation
+      inputs:
+        winter: string
+        ice: File
+      outputs:
+        row:
+          type: File
+          curate:name: row_{winter}.json
+    hints:
+      curate:function:
+        code: functions/add_duration.py
+        entrypoint: main
+  assemble:
+    in:
+      rows: add_duration/row
+    out:
+    - result
+    run:
+      class: Operation
+      inputs:
+        rows: File[]
+      outputs:
+        result:
+          type: File
+          curate:name: ice_phenology_result.json
+    hints:
+      curate:function:
+        code: functions/assemble.py
+        entrypoint: main

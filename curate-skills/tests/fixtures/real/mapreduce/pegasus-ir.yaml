@@ -1,0 +1,167 @@
+ir_version: '0.2'
+expanded: true
+name: mapreduce-1124-2206
+description: 'MapReduce word-count benchmark: generate text, split into N batches,
+  N parallel mappers, shuffle/flatten, M parallel reducers (N=3, W=5000, M=5).'
+defaults:
+  image: docker:///python:3.12-slim
+  resources:
+    cpus: 1
+    memory_mb: 2048
+inputs: []
+nodes:
+- id: generate_text
+  _origin: generate_text
+  _assign: {}
+  code: functions/generate_text.py
+  entrypoint: main
+  inputs: {}
+  outputs:
+    output1: generate_text__output1__input_text.txt
+  params: {}
+- id: split
+  _origin: split
+  _assign: {}
+  code: functions/split.py
+  entrypoint: main
+  inputs:
+    input1: generate_text__output1__input_text.txt
+  outputs:
+    output1:
+    - split__output1__1__batch_1.txt
+    - split__output1__2__batch_2.txt
+    - split__output1__3__batch_3.txt
+  params: {}
+- id: map__1
+  _origin: map
+  _assign:
+    rank3: '1'
+  code: functions/map.py
+  entrypoint: main
+  inputs:
+    input1: split__output1__1__batch_1.txt
+  outputs:
+    output1: map__output1__1__map_counts_1.json
+  params:
+    rank: 1
+    max_rank: 3
+- id: map__2
+  _origin: map
+  _assign:
+    rank3: '2'
+  code: functions/map.py
+  entrypoint: main
+  inputs:
+    input1: split__output1__2__batch_2.txt
+  outputs:
+    output1: map__output1__2__map_counts_2.json
+  params:
+    rank: 2
+    max_rank: 3
+- id: map__3
+  _origin: map
+  _assign:
+    rank3: '3'
+  code: functions/map.py
+  entrypoint: main
+  inputs:
+    input1: split__output1__3__batch_3.txt
+  outputs:
+    output1: map__output1__3__map_counts_3.json
+  params:
+    rank: 3
+    max_rank: 3
+- id: shuffle
+  _origin: shuffle
+  _assign: {}
+  code: functions/shuffle.py
+  entrypoint: main
+  inputs:
+    input1:
+    - map__output1__1__map_counts_1.json
+    - map__output1__2__map_counts_2.json
+    - map__output1__3__map_counts_3.json
+  outputs:
+    output1:
+    - shuffle__output1__1__partition_1.json
+    - shuffle__output1__2__partition_2.json
+    - shuffle__output1__3__partition_3.json
+    - shuffle__output1__4__partition_4.json
+    - shuffle__output1__5__partition_5.json
+  params: {}
+- id: reduce__1
+  _origin: reduce
+  _assign:
+    rank5: '1'
+  code: functions/reduce.py
+  entrypoint: main
+  inputs:
+    input1: shuffle__output1__1__partition_1.json
+  outputs:
+    output1: reduce__output1__1__word_total_1.json
+  params:
+    rank: 1
+    max_rank: 5
+- id: reduce__2
+  _origin: reduce
+  _assign:
+    rank5: '2'
+  code: functions/reduce.py
+  entrypoint: main
+  inputs:
+    input1: shuffle__output1__2__partition_2.json
+  outputs:
+    output1: reduce__output1__2__word_total_2.json
+  params:
+    rank: 2
+    max_rank: 5
+- id: reduce__3
+  _origin: reduce
+  _assign:
+    rank5: '3'
+  code: functions/reduce.py
+  entrypoint: main
+  inputs:
+    input1: shuffle__output1__3__partition_3.json
+  outputs:
+    output1: reduce__output1__3__word_total_3.json
+  params:
+    rank: 3
+    max_rank: 5
+- id: reduce__4
+  _origin: reduce
+  _assign:
+    rank5: '4'
+  code: functions/reduce.py
+  entrypoint: main
+  inputs:
+    input1: shuffle__output1__4__partition_4.json
+  outputs:
+    output1: reduce__output1__4__word_total_4.json
+  params:
+    rank: 4
+    max_rank: 5
+- id: reduce__5
+  _origin: reduce
+  _assign:
+    rank5: '5'
+  code: functions/reduce.py
+  entrypoint: main
+  inputs:
+    input1: shuffle__output1__5__partition_5.json
+  outputs:
+    output1: reduce__output1__5__word_total_5.json
+  params:
+    rank: 5
+    max_rank: 5
+outputs:
+- file: reduce__output1__1__word_total_1.json
+  deliver_as: results/word_total_1.json
+- file: reduce__output1__2__word_total_2.json
+  deliver_as: results/word_total_2.json
+- file: reduce__output1__3__word_total_3.json
+  deliver_as: results/word_total_3.json
+- file: reduce__output1__4__word_total_4.json
+  deliver_as: results/word_total_4.json
+- file: reduce__output1__5__word_total_5.json
+  deliver_as: results/word_total_5.json

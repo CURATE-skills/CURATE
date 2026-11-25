@@ -1,0 +1,220 @@
+{
+ "jobs": {
+  "name": "t",
+  "description": "",
+  "defaults": {
+   "image": "docker:///python:3.12-slim"
+  },
+  "inputs": [],
+  "outputs": [
+   {
+    "file": "c__o__c.json",
+    "deliver_as": "c.json"
+   }
+  ],
+  "nodes": [
+   {
+    "id": "a__1",
+    "_origin": "a",
+    "_assign": {
+     "r": "1"
+    },
+    "code": "functions/a.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "o": "a__o__1__a_1"
+    },
+    "params": {
+     "rank": 1
+    }
+   },
+   {
+    "id": "a__2",
+    "_origin": "a",
+    "_assign": {
+     "r": "2"
+    },
+    "code": "functions/a.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "o": "a__o__2__a_2"
+    },
+    "params": {
+     "rank": 2
+    }
+   },
+   {
+    "id": "b__2019",
+    "_origin": "b",
+    "_assign": {
+     "w": "2019"
+    },
+    "code": "functions/b.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "o": "b__o__2019__b_2019"
+    },
+    "params": {
+     "w": "2019"
+    }
+   },
+   {
+    "id": "b__2020",
+    "_origin": "b",
+    "_assign": {
+     "w": "2020"
+    },
+    "code": "functions/b.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "o": "b__o__2020__b_2020"
+    },
+    "params": {
+     "w": "2020"
+    }
+   },
+   {
+    "id": "c",
+    "_origin": "c",
+    "_assign": {},
+    "code": "functions/c.py",
+    "entrypoint": "main",
+    "inputs": {
+     "x": [
+      "a__o__1__a_1",
+      "a__o__2__a_2"
+     ],
+     "y": [
+      "b__o__2019__b_2019",
+      "b__o__2020__b_2020"
+     ]
+    },
+    "outputs": {
+     "o": "c__o__c.json"
+    },
+    "params": {
+     "literal": "{w}"
+    }
+   }
+  ],
+  "_base": "<fixture>"
+ },
+ "pegasus": {
+  "ir": {
+   "ir_version": "0.2",
+   "expanded": true,
+   "name": "t",
+   "description": "t",
+   "defaults": {
+    "image": "docker:///python:3.12-slim"
+   },
+   "inputs": [],
+   "nodes": [
+    {
+     "id": "a__1",
+     "_origin": "a",
+     "_assign": {
+      "r": "1"
+     },
+     "code": "functions/a.py",
+     "entrypoint": "main",
+     "inputs": {},
+     "outputs": {
+      "o": "a__o__1__a_1"
+     },
+     "params": {
+      "rank": 1
+     }
+    },
+    {
+     "id": "a__2",
+     "_origin": "a",
+     "_assign": {
+      "r": "2"
+     },
+     "code": "functions/a.py",
+     "entrypoint": "main",
+     "inputs": {},
+     "outputs": {
+      "o": "a__o__2__a_2"
+     },
+     "params": {
+      "rank": 2
+     }
+    },
+    {
+     "id": "b__2019",
+     "_origin": "b",
+     "_assign": {
+      "w": "2019"
+     },
+     "code": "functions/b.py",
+     "entrypoint": "main",
+     "inputs": {},
+     "outputs": {
+      "o": "b__o__2019__b_2019"
+     },
+     "params": {
+      "w": "2019"
+     }
+    },
+    {
+     "id": "b__2020",
+     "_origin": "b",
+     "_assign": {
+      "w": "2020"
+     },
+     "code": "functions/b.py",
+     "entrypoint": "main",
+     "inputs": {},
+     "outputs": {
+      "o": "b__o__2020__b_2020"
+     },
+     "params": {
+      "w": "2020"
+     }
+    },
+    {
+     "id": "c",
+     "_origin": "c",
+     "_assign": {},
+     "code": "functions/c.py",
+     "entrypoint": "main",
+     "inputs": {
+      "x": [
+       "a__o__1__a_1",
+       "a__o__2__a_2"
+      ],
+      "y": [
+       "b__o__2019__b_2019",
+       "b__o__2020__b_2020"
+      ]
+     },
+     "outputs": {
+      "o": "c__o__c.json"
+     },
+     "params": {
+      "literal": "{w}"
+     }
+    }
+   ],
+   "outputs": [
+    {
+     "file": "c__o__c.json",
+     "deliver_as": "c.json"
+    }
+   ]
+  },
+  "copy": {},
+  "needed": []
+ },
+ "faasr": {
+  "problems": [
+   "FaaSr starts one action; the workflow has 2 first steps (a, b)"
+  ]
+ }
+}

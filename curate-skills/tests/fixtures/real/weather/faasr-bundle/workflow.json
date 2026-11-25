@@ -1,0 +1,97 @@
+{
+  "FunctionInvoke": "download-ghcn-daily",
+  "WorkflowName": "corvallis-winter-weather",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "download-ghcn-daily": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "download_ghcn_daily",
+      "Arguments": {
+        "folder": "corvallis-winter-weather",
+        "output1": "download_ghcn_daily__output1__{rank}__ghcn_daily_{rank}.csv"
+      },
+      "InvokeNext": [
+        "compare-winter-variable(3)"
+      ]
+    },
+    "compare-winter-variable": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "compare_winter_variable",
+      "Arguments": {
+        "folder": "corvallis-winter-weather",
+        "input1": "download_ghcn_daily__output1__{rank}__ghcn_daily_{rank}.csv",
+        "output1": "compare_winter_variable__output1__{rank}__winter_comparison_{rank}.csv"
+      },
+      "InvokeNext": [
+        "plot-winter-comparison"
+      ]
+    },
+    "plot-winter-comparison": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "plot_winter_comparison",
+      "Arguments": {
+        "folder": "corvallis-winter-weather",
+        "input1": "compare_winter_variable__output1__{rank}__winter_comparison_{rank}.csv",
+        "output1": "plot_winter_comparison__output1__winter_comparison.png"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ActionContainers": {
+    "download-ghcn-daily": "ghcr.io/faasr/github-actions-python:latest",
+    "compare-winter-variable": "ghcr.io/faasr/github-actions-python:latest",
+    "plot-winter-comparison": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "<FAASR_GH_USERNAME>",
+      "ActionRepoName": "<FAASR_ACTION_REPO>",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "<FAASR_S3_ENDPOINT>",
+      "Bucket": "<FAASR_S3_BUCKET>",
+      "Region": "<FAASR_S3_REGION>",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "download_ghcn_daily": [
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/download_ghcn_daily.py",
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/download_ghcn_daily_main.py"
+    ],
+    "compare_winter_variable": [
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/compare_winter_variable.py",
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/compare_winter_variable_main.py"
+    ],
+    "plot_winter_comparison": [
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/plot_winter_comparison.py",
+      "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/plot_winter_comparison_main.py"
+    ]
+  },
+  "PyPIPackageDownloads": {
+    "download_ghcn_daily": [
+      "requests",
+      "pandas"
+    ],
+    "compare_winter_variable": [
+      "pandas"
+    ],
+    "plot_winter_comparison": [
+      "pandas",
+      "matplotlib"
+    ]
+  }
+}

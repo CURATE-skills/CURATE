@@ -1,0 +1,99 @@
+{
+  "files": [
+    {
+      "action": "generate-text",
+      "file": "generate_text__output1__input_text.txt"
+    },
+    {
+      "action": "split",
+      "file": "split__output1__1__batch_1.txt"
+    },
+    {
+      "action": "split",
+      "file": "split__output1__2__batch_2.txt"
+    },
+    {
+      "action": "split",
+      "file": "split__output1__3__batch_3.txt"
+    },
+    {
+      "action": "map",
+      "file": "map__output1__1__map_counts_1.json"
+    },
+    {
+      "action": "map",
+      "file": "map__output1__2__map_counts_2.json"
+    },
+    {
+      "action": "map",
+      "file": "map__output1__3__map_counts_3.json"
+    },
+    {
+      "action": "shuffle",
+      "file": "shuffle__output1__1__partition_1.json"
+    },
+    {
+      "action": "shuffle",
+      "file": "shuffle__output1__2__partition_2.json"
+    },
+    {
+      "action": "shuffle",
+      "file": "shuffle__output1__3__partition_3.json"
+    },
+    {
+      "action": "shuffle",
+      "file": "shuffle__output1__4__partition_4.json"
+    },
+    {
+      "action": "shuffle",
+      "file": "shuffle__output1__5__partition_5.json"
+    },
+    {
+      "action": "reduce",
+      "file": "reduce__output1__1__word_total_1.json"
+    },
+    {
+      "action": "reduce",
+      "file": "reduce__output1__2__word_total_2.json"
+    },
+    {
+      "action": "reduce",
+      "file": "reduce__output1__3__word_total_3.json"
+    },
+    {
+      "action": "reduce",
+      "file": "reduce__output1__4__word_total_4.json"
+    },
+    {
+      "action": "reduce",
+      "file": "reduce__output1__5__word_total_5.json"
+    }
+  ],
+  "deliverables": [
+    {
+      "output": "word_total_rank5_json",
+      "file": "reduce__output1__1__word_total_1.json",
+      "deliver_as": "results/word_total_1.json"
+    },
+    {
+      "output": "word_total_rank5_json",
+      "file": "reduce__output1__2__word_total_2.json",
+      "deliver_as": "results/word_total_2.json"
+    },
+    {
+      "output": "word_total_rank5_json",
+      "file": "reduce__output1__3__word_total_3.json",
+      "deliver_as": "results/word_total_3.json"
+    },
+    {
+      "output": "word_total_rank5_json",
+      "file": "reduce__output1__4__word_total_4.json",
+      "deliver_as": "results/word_total_4.json"
+    },
+    {
+      "output": "word_total_rank5_json",
+      "file": "reduce__output1__5__word_total_5.json",
+      "deliver_as": "results/word_total_5.json"
+    }
+  ]
+}

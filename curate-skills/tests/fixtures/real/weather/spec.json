@@ -1,0 +1,149 @@
+{
+  "name": "corvallis_winter_weather",
+  "description": "Compare Corvallis, Oregon winter 2024-25 daily PRCP, TMIN and TMAX from NOAA GHCN with the 10-year average for the same days, and plot one three-panel figure.",
+  "nodes": [
+    {
+      "name": "download_ghcn_daily",
+      "description": "Entry step (no input files). Download daily NOAA GHCN weather data for the Corvallis, Oregon station (GHCN-Daily station USC00351862, CORVALLIS STATE UNIV; station id overridable via params['station']) from NOAA NCEI's public, no-credential GHCN-Daily per-station access CSV (https://www.ncei.noaa.gov/data/global-historical-climatology-network-daily/access/<station>.csv; wide format with DATE and per-element value and <ELEMENT>_ATTRIBUTES columns, values in GHCN units). Keep only dates 2014-12-01 through 2025-02-28, which covers winter 2024-25 (Dec 2024 - Feb 2025) and the preceding 10 winters (Dec 2014 - Feb 2015 through Dec 2023 - Feb 2024) needed for the 10-year average. Convert units: PRCP tenths of mm -> mm, TMIN/TMAX tenths of degC -> degC. Treat a value as missing when blank or when its quality flag (second field of the _ATTRIBUTES column) is non-blank. Write one file per variable, numbered by rank: rank 1 = PRCP, rank 2 = TMIN, rank 3 = TMAX, i.e. ghcn_daily_1.csv, ghcn_daily_2.csv, ghcn_daily_3.csv, each with columns date (YYYY-MM-DD), variable, value, units, one row per date in the window (value blank if missing). Use retries with a timeout on the HTTP request and raise a clear error if the download fails, the station has none of the three variables, or the window has no rows.",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "ghcn_daily_{rank}.csv",
+          "type": "csv",
+          "description": "Daily values for one variable, 2014-12-01..2025-02-28 (rank 1 PRCP mm, rank 2 TMIN degC, rank 3 TMAX degC); the step writes all three copies.",
+          "kind": "file",
+          "read": null
+        }
+      ],
+      "dependencies": [
+        "requests",
+        "pandas"
+      ],
+      "secrets": [],
+      "rank": 1,
+      "source": "new",
+      "user_model_mode": null,
+      "catalog_id": null,
+      "code": "\"\"\"Download NOAA GHCN-Daily data for one station and write one CSV per variable.\n\nSource: NOAA NCEI GHCN-Daily per-station access CSV (public, no credentials).\nOutput i (rank order) holds variable VARIABLES[i]: PRCP (mm), TMIN (degC), TMAX (degC).\n\"\"\"\nimport io\nimport time\n\nimport pandas as pd\nimport requests\n\nDEFAULT_STATION = \"USC00351862\"  # CORVALLIS STATE UNIV, Oregon\nBASE_URL = \"https://www.ncei.noaa.gov/data/global-historical-climatology-network-daily/access/{station}.csv\"\nWINDOW_START = \"2014-12-01\"\nWINDOW_END = \"2025-02-28\"\n\n# rank order: rank 1 = PRCP, rank 2 = TMIN, rank 3 = TMAX\nVARIABLES = [\"PRCP\", \"TMIN\", \"TMAX\"]\nUNITS = {\"PRCP\": \"mm\", \"TMIN\": \"degC\", \"TMAX\": \"degC\"}\nSCALE = {\"PRCP\": 0.1, \"TMIN\": 0.1, \"TMAX\": 0.1}  # GHCN tenths -> mm / degC\n\nTIMEOUT = 120\nRETRIES = 4\n\n\ndef _download(url: str) -> str:\n    last_err = None\n    for attempt in range(1, RETRIES + 1):\n        try:\n            print(f\"Downloading {url} (attempt {attempt}/{RETRIES})\")\n            resp = requests.get(url, timeout=TIMEOUT)\n            resp.raise_for_status()\n            if not resp.text.strip():\n                raise RuntimeError(f\"Empty response from {url}\")\n            return resp.text\n        except (requests.RequestException, RuntimeError) as err:\n            last_err = err\n            print(f\"Download attempt {attempt} failed: {err}\")\n            if attempt < RETRIES:\n                time.sleep(5 * attempt)\n    raise RuntimeError(f\"Failed to download GHCN-Daily data from {url} after {RETRIES} attempts: {last_err}\")\n\n\ndef _quality_flag(attr) -> str:\n    \"\"\"Return the quality flag (second comma-separated field) of a GHCN _ATTRIBUTES value.\"\"\"\n    if attr is None or (isinstance(attr, float) and pd.isna(attr)):\n        return \"\"\n    parts = str(attr).split(\",\")\n    return parts[1].strip() if len(parts) > 1 else \"\"\n\n\ndef main(inputs: dict, outputs: dict, params: dict) -> None:\n    station = (params or {}).get(\"station\", DEFAULT_STATION)\n    out_paths = outputs[\"output1\"]\n    if isinstance(out_paths, str):\n        out_paths = [out_paths]\n    n = len(out_paths)\n    if n == 0:\n        raise ValueError(\"outputs['output1'] holds no paths\")\n    if n > len(VARIABLES):\n        raise ValueError(f\"outputs['output1'] has {n} paths but only {len(VARIABLES)} variables are defined: {VARIABLES}\")\n\n    url = BASE_URL.format(station=station)\n    text = _download(url)\n    df = pd.read_csv(io.StringIO(text), dtype=str, keep_default_na=False, low_memory=False)\n    if \"DATE\" not in df.columns:\n        raise RuntimeError(f\"Downloaded file for station {station} has no DATE column; columns: {list(df.columns)[:10]}\")\n\n    present = [v for v in VARIABLES if v in df.columns]\n    if not present:\n        raise RuntimeError(f\"Station {station} has none of the variables {VARIABLES}\")\n    print(f\"Station {station}: {len(df)} rows total; variables present: {present}\")\n\n    df[\"DATE\"] = pd.to_datetime(df[\"DATE\"], format=\"%Y-%m-%d\")\n    df = df[(df[\"DATE\"] >= WINDOW_START) & (df[\"DATE\"] <= WINDOW_END)]\n    if df.empty:\n        raise RuntimeError(f\"Station {station} has no rows between {WINDOW_START} and {WINDOW_END}\")\n    if df[\"DATE\"].duplicated().any():\n        raise RuntimeError(f\"Station {station} has duplicate dates in the window\")\n    df = df.set_index(\"DATE\")\n    full_index = pd.date_range(WINDOW_START, WINDOW_END, freq=\"D\")\n\n    for i, path in enumerate(out_paths):\n        var = VARIABLES[i]\n        if var in df.columns:\n            raw = pd.to_numeric(df[var].str.strip().replace(\"\", pd.NA), errors=\"coerce\")\n            attr_col = f\"{var}_ATTRIBUTES\"\n            if attr_col in df.columns:\n                qflag = df[attr_col].map(_quality_flag)\n                raw = raw.where(qflag == \"\")\n                n_flagged = int((qflag != \"\").sum())\n            else:\n                n_flagged = 0\n            values = (raw * SCALE[var]).round(1)\n        else:\n            print(f\"WARNING: station {station} has no {var} column; all values blank\")\n            values = pd.Series(dtype=float)\n            n_flagged = 0\n        values = values.reindex(full_index)\n\n        out = pd.DataFrame({\n            \"date\": full_index.strftime(\"%Y-%m-%d\"),\n            \"variable\": var,\n            \"value\": values.values,\n            \"units\": UNITS[var],\n        })\n        out.to_csv(path, index=False)\n        print(f\"Wrote {var} ({UNITS[var]}): {len(out)} rows, {int(out['value'].notna().sum())} valid, \"\n              f\"{n_flagged} quality-flagged -> {path}\")\n",
+      "tests": null,
+      "origin_kind": null,
+      "origin_name": null
+    },
+    {
+      "name": "compare_winter_variable",
+      "description": "Ranked step (3 parallel instances). params['rank'] selects the variable: rank 1 = PRCP, rank 2 = TMIN, rank 3 = TMAX. Reads its own variable's daily file (ghcn_daily_{rank}.csv). Compare winter 2024-25 (Dec 2024 - Feb 2025) daily values with the 10-year average for the same days: the 10-year average for each calendar day (month-day, Dec 1 .. Feb 28) is the arithmetic mean over the 10 preceding winters (2014-15 .. 2023-24) of that day's value, skipping missing days and recording how many years contributed (n_years); the average is blank when fewer than 5 years have a value. Feb 29 values are dropped (winter 2024-25 has no Feb 29). Write winter_comparison_{rank}.csv with one row per winter day ordered 2024-12-01 .. 2025-02-28 (90 rows) and columns: date, day_of_winter (1..90), variable, units, value_2024_25 (blank if missing), avg_10yr, n_years, diff (value_2024_25 minus avg_10yr, blank if either is missing). Raise if the input has no data for the variable.",
+      "inputs": [
+        {
+          "name": "ghcn_daily_{rank}.csv",
+          "type": "csv",
+          "description": "This instance's variable's daily values.",
+          "kind": "file",
+          "read": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "winter_comparison_{rank}.csv",
+          "type": "csv",
+          "description": "Day-by-day winter 2024-25 vs 10-year average for this instance's variable.",
+          "kind": "file",
+          "read": null
+        }
+      ],
+      "dependencies": [
+        "pandas"
+      ],
+      "secrets": [],
+      "rank": 3,
+      "source": "new",
+      "user_model_mode": null,
+      "catalog_id": null,
+      "code": "\"\"\"Compare winter 2024-25 daily values of one GHCN variable with the 10-year average.\n\nRanked step: rank 1 = PRCP, rank 2 = TMIN, rank 3 = TMAX.\nThe 10-year average for each calendar day (Dec 1 .. Feb 28) is the mean over the\n10 preceding winters (2014-15 .. 2023-24), skipping missing days; blank when fewer\nthan 5 years have a value. Feb 29 is dropped.\n\"\"\"\nimport pandas as pd\n\nVARIABLES = [\"PRCP\", \"TMIN\", \"TMAX\"]  # rank order\nTARGET_WINTER = 2024  # winter starting Dec 2024\nN_BASE_YEARS = 10\nMIN_YEARS = 5\n\n\ndef _winter_start_year(dates: pd.Series) -> pd.Series:\n    \"\"\"Dec belongs to the winter starting that year; Jan/Feb to the winter starting the year before.\"\"\"\n    return dates.dt.year.where(dates.dt.month == 12, dates.dt.year - 1)\n\n\ndef main(inputs: dict, outputs: dict, params: dict) -> None:\n    rank = int(params[\"rank\"])\n    if not 1 <= rank <= len(VARIABLES):\n        raise ValueError(f\"rank {rank} out of range 1..{len(VARIABLES)}\")\n    var = VARIABLES[rank - 1]\n    in_path = inputs[\"input1\"]\n    out_path = outputs[\"output1\"]\n    print(f\"Rank {rank}/{params.get('max_rank')}: variable {var}, input {in_path}\")\n\n    df = pd.read_csv(in_path)\n    required = {\"date\", \"variable\", \"value\", \"units\"}\n    missing_cols = required - set(df.columns)\n    if missing_cols:\n        raise ValueError(f\"Input {in_path} lacks columns {sorted(missing_cols)}; has {list(df.columns)}\")\n\n    file_vars = set(df[\"variable\"].dropna().astype(str).unique())\n    if file_vars != {var}:\n        raise ValueError(f\"Input {in_path} holds variables {sorted(file_vars)}, expected only {var} for rank {rank}\")\n    units_vals = df[\"units\"].dropna().astype(str).unique()\n    if len(units_vals) != 1:\n        raise ValueError(f\"Input {in_path} has units {list(units_vals)}, expected exactly one\")\n    units = units_vals[0]\n\n    df[\"date\"] = pd.to_datetime(df[\"date\"], format=\"%Y-%m-%d\")\n    df[\"value\"] = pd.to_numeric(df[\"value\"], errors=\"coerce\")\n    if df[\"date\"].duplicated().any():\n        raise ValueError(f\"Input {in_path} has duplicate dates\")\n    if df[\"value\"].notna().sum() == 0:\n        raise ValueError(f\"Input {in_path} has no data for {var}\")\n\n    # Winter days only, Feb 29 dropped\n    winter = df[df[\"date\"].dt.month.isin([12, 1, 2])].copy()\n    winter = winter[~((winter[\"date\"].dt.month == 2) & (winter[\"date\"].dt.day == 29))]\n    winter[\"wyear\"] = _winter_start_year(winter[\"date\"])\n    winter[\"md\"] = winter[\"date\"].dt.strftime(\"%m-%d\")\n\n    # Target winter 2024-25 calendar\n    target_dates = pd.date_range(f\"{TARGET_WINTER}-12-01\", f\"{TARGET_WINTER + 1}-02-28\", freq=\"D\")\n    target_dates = target_dates[~((target_dates.month == 2) & (target_dates.day == 29))]\n    md_order = target_dates.strftime(\"%m-%d\")\n\n    cur = winter[winter[\"wyear\"] == TARGET_WINTER].set_index(\"md\")[\"value\"]\n    if cur.notna().sum() == 0:\n        raise ValueError(f\"Input {in_path} has no {var} data for winter {TARGET_WINTER}-{(TARGET_WINTER + 1) % 100:02d}\")\n\n    base_years = range(TARGET_WINTER - N_BASE_YEARS, TARGET_WINTER)\n    base = winter[winter[\"wyear\"].isin(base_years)]\n    if base[\"value\"].notna().sum() == 0:\n        raise ValueError(f\"Input {in_path} has no {var} data for the baseline winters \"\n                         f\"{base_years[0]}-{base_years[-1] + 1}\")\n    grp = base.groupby(\"md\")[\"value\"]\n    mean = grp.mean()  # skips NaN\n    n_years = grp.count()\n\n    value = cur.reindex(md_order)\n    n = n_years.reindex(md_order).fillna(0).astype(int)\n    avg = mean.reindex(md_order).where(n >= MIN_YEARS).round(2)\n    diff = (value - avg).round(2)\n\n    out = pd.DataFrame({\n        \"date\": target_dates.strftime(\"%Y-%m-%d\"),\n        \"day_of_winter\": range(1, len(target_dates) + 1),\n        \"variable\": var,\n        \"units\": units,\n        \"value_2024_25\": value.values,\n        \"avg_10yr\": avg.values,\n        \"n_years\": n.values,\n        \"diff\": diff.values,\n    })\n    if len(out) != 90:\n        raise RuntimeError(f\"Expected 90 winter days, built {len(out)}\")\n    out.to_csv(out_path, index=False)\n    print(f\"Wrote {var} ({units}): {len(out)} rows, {int(out['value_2024_25'].notna().sum())} with 2024-25 values, \"\n          f\"{int(out['avg_10yr'].notna().sum())} with 10-yr avg, n_years range \"\n          f\"{int(out['n_years'].min())}-{int(out['n_years'].max())} -> {out_path}\")\n",
+      "tests": null,
+      "origin_kind": null,
+      "origin_name": null
+    },
+    {
+      "name": "plot_winter_comparison",
+      "description": "Fan-in step that runs once after all three ranked comparison instances finish. Reads the fixed list of the three per-variable comparison tables winter_comparison_1.csv (PRCP), winter_comparison_2.csv (TMIN), winter_comparison_3.csv (TMAX); raise if any is missing. Make one figure with three panels (one per variable: PRCP, TMIN, TMAX) showing winter 2024-25 vs the 10-year average: three panels stacked vertically with a shared date x-axis (Dec 2024 - Feb 2025); PRCP panel shows winter 2024-25 daily values as bars and the 10-year average as a line; TMIN and TMAX panels show both as lines; each panel has a legend, a y-axis label with units (mm for PRCP, degC for TMIN/TMAX) and a title naming the variable. Overall title: 'Corvallis, OR (GHCN USC00351862): winter 2024-25 vs 10-year average (2014-15 to 2023-24)'. Save as winter_comparison.png at 150 dpi using the headless matplotlib backend (Agg).",
+      "inputs": [
+        {
+          "name": "winter_comparison_{rank}.csv",
+          "type": "csv",
+          "description": "The three per-variable comparison tables (ranks 1..3).",
+          "kind": "file",
+          "read": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "winter_comparison.png",
+          "type": "png",
+          "description": "One figure, three panels (PRCP, TMIN, TMAX).",
+          "kind": "file",
+          "read": null
+        }
+      ],
+      "dependencies": [
+        "pandas",
+        "matplotlib"
+      ],
+      "secrets": [],
+      "rank": 1,
+      "source": "new",
+      "user_model_mode": null,
+      "catalog_id": null,
+      "code": "\"\"\"Plot winter 2024-25 vs the 10-year average for PRCP, TMIN and TMAX in one 3-panel figure.\n\nFan-in step: reads the per-variable comparison tables written by compare_winter_variable\n(columns date, day_of_winter, variable, units, value_2024_25, avg_10yr, n_years, diff).\n\"\"\"\nimport os\n\nimport matplotlib\n\nmatplotlib.use(\"Agg\")\nimport matplotlib.dates as mdates  # noqa: E402\nimport matplotlib.pyplot as plt  # noqa: E402\nimport pandas as pd  # noqa: E402\n\nPANEL_ORDER = [\"PRCP\", \"TMIN\", \"TMAX\"]\nPANEL_NAMES = {\n    \"PRCP\": \"Precipitation (PRCP)\",\n    \"TMIN\": \"Minimum temperature (TMIN)\",\n    \"TMAX\": \"Maximum temperature (TMAX)\",\n}\nEXPECTED_UNITS = {\"PRCP\": \"mm\", \"TMIN\": \"degC\", \"TMAX\": \"degC\"}\nSUPTITLE = (\"Corvallis, OR (GHCN USC00351862): winter 2024-25 vs 10-year average \"\n            \"(2014-15 to 2023-24)\")\nREQUIRED_COLS = {\"date\", \"variable\", \"units\", \"value_2024_25\", \"avg_10yr\"}\n\n\ndef _load(path: str) -> pd.DataFrame:\n    if not os.path.isfile(path) or os.path.getsize(path) == 0:\n        raise FileNotFoundError(f\"Comparison table missing or empty: {path}\")\n    df = pd.read_csv(path)\n    missing = REQUIRED_COLS - set(df.columns)\n    if missing:\n        raise ValueError(f\"{path} lacks columns {sorted(missing)}; has {list(df.columns)}\")\n    vars_ = df[\"variable\"].dropna().astype(str).unique()\n    if len(vars_) != 1:\n        raise ValueError(f\"{path} holds variables {list(vars_)}, expected exactly one\")\n    units = df[\"units\"].dropna().astype(str).unique()\n    if len(units) != 1:\n        raise ValueError(f\"{path} has units {list(units)}, expected exactly one\")\n    df[\"date\"] = pd.to_datetime(df[\"date\"], format=\"%Y-%m-%d\")\n    df[\"value_2024_25\"] = pd.to_numeric(df[\"value_2024_25\"], errors=\"coerce\")\n    df[\"avg_10yr\"] = pd.to_numeric(df[\"avg_10yr\"], errors=\"coerce\")\n    return df.sort_values(\"date\").reset_index(drop=True)\n\n\ndef main(inputs: dict, outputs: dict, params: dict) -> None:\n    paths = inputs[\"input1\"]\n    if isinstance(paths, str):\n        paths = [paths]\n    if not paths:\n        raise ValueError(\"input1 (winter_comparison tables) holds no files\")\n    out_path = outputs[\"output1\"]\n\n    tables = {}\n    for p in paths:\n        df = _load(p)\n        var = str(df[\"variable\"].iloc[0])\n        if var in tables:\n            raise ValueError(f\"Variable {var} appears in more than one input ({p})\")\n        tables[var] = df\n        print(f\"Read {var}: {len(df)} rows, {int(df['value_2024_25'].notna().sum())} values, \"\n              f\"{int(df['avg_10yr'].notna().sum())} averages <- {p}\")\n\n    missing = [v for v in PANEL_ORDER if v not in tables]\n    if missing:\n        raise ValueError(f\"input1 lacks comparison tables for {missing}; found {sorted(tables)}\")\n    extra = [v for v in tables if v not in PANEL_ORDER]\n    if extra:\n        raise ValueError(f\"input1 holds unexpected variables {extra}\")\n\n    fig, axes = plt.subplots(3, 1, figsize=(11, 10), sharex=True)\n    for ax, var in zip(axes, PANEL_ORDER):\n        df = tables[var]\n        units = str(df[\"units\"].iloc[0])\n        if units != EXPECTED_UNITS[var]:\n            raise ValueError(f\"{var} units are {units!r}, expected {EXPECTED_UNITS[var]!r}\")\n        if var == \"PRCP\":\n            ax.bar(df[\"date\"], df[\"value_2024_25\"], width=0.8, color=\"tab:blue\",\n                   alpha=0.7, label=\"Winter 2024-25\")\n            ax.plot(df[\"date\"], df[\"avg_10yr\"], color=\"black\", linewidth=1.5,\n                    label=\"10-year average\")\n        else:\n            color = \"tab:blue\" if var == \"TMIN\" else \"tab:red\"\n            ax.plot(df[\"date\"], df[\"value_2024_25\"], color=color, linewidth=1.5,\n                    label=\"Winter 2024-25\")\n            ax.plot(df[\"date\"], df[\"avg_10yr\"], color=\"black\", linewidth=1.5,\n                    linestyle=\"--\", label=\"10-year average\")\n        ax.set_ylabel(f\"{var} ({units})\")\n        ax.set_title(PANEL_NAMES[var])\n        ax.legend(loc=\"upper right\")\n        ax.grid(True, alpha=0.3)\n\n    axes[-1].set_xlabel(\"Date\")\n    axes[-1].xaxis.set_major_locator(mdates.MonthLocator())\n    axes[-1].xaxis.set_minor_locator(mdates.DayLocator(bymonthday=[8, 15, 22]))\n    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter(\"%b %Y\"))\n    first = min(t[\"date\"].min() for t in tables.values())\n    last = max(t[\"date\"].max() for t in tables.values())\n    axes[-1].set_xlim(first - pd.Timedelta(days=1), last + pd.Timedelta(days=1))\n\n    fig.suptitle(SUPTITLE, fontsize=12)\n    fig.tight_layout(rect=(0, 0, 1, 0.97))\n    fig.savefig(out_path, dpi=150)\n    plt.close(fig)\n    print(f\"Wrote figure -> {out_path}\")\n",
+      "tests": null,
+      "origin_kind": null,
+      "origin_name": null
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "download_ghcn_daily",
+      "to_node": "compare_winter_variable",
+      "condition": null
+    },
+    {
+      "from_node": "compare_winter_variable",
+      "to_node": "plot_winter_comparison",
+      "condition": null
+    }
+  ],
+  "data_flow": [
+    {
+      "from_node": "download_ghcn_daily",
+      "to_node": "compare_winter_variable",
+      "file": "ghcn_daily_{rank}.csv",
+      "format": "csv",
+      "folder": "corvallis-winter-weather"
+    },
+    {
+      "from_node": "compare_winter_variable",
+      "to_node": "plot_winter_comparison",
+      "file": "winter_comparison_{rank}.csv",
+      "format": "csv",
+      "folder": "corvallis-winter-weather"
+    }
+  ],
+  "entry": "download_ghcn_daily",
+  "compute_target": "GH",
+  "data_store": "S3",
+  "folder": "corvallis-winter-weather",
+  "assumptions": [
+    "\"the Corvallis, Oregon station\" -> GHCN-Daily station USC00351862 (CORVALLIS STATE UNIV)",
+    "\"10-year average\" -> the 10 winters before 2024-25: Dec 2014-Feb 2015 through Dec 2023-Feb 2024",
+    "\"for the same days\" -> matched by calendar day (month-day), Dec 1 .. Feb 28; Feb 29 dropped",
+    "average -> arithmetic mean over the years with a value; blank if fewer than 5 of 10 years have data",
+    "missing or flagged data -> values with a non-blank GHCN quality flag are treated as missing",
+    "units -> PRCP tenths of mm converted to mm; TMIN/TMAX tenths of degC converted to degC"
+  ],
+  "presentation_assumptions": [
+    "data source -> NOAA NCEI GHCN-Daily per-station access CSV (public, no credentials)",
+    "panel layout -> three panels stacked vertically (PRCP, TMIN, TMAX), shared date x-axis",
+    "plot style -> PRCP 2024-25 as bars with the average as a line; temperatures as two lines",
+    "files -> per-variable CSVs numbered by rank (1 PRCP, 2 TMIN, 3 TMAX); figure winter_comparison.png at 150 dpi",
+    "S3 folder -> corvallis-winter-weather"
+  ]
+}

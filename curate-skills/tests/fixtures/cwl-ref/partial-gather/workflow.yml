@@ -1,0 +1,74 @@
+cwlVersion: v1.2
+class: Workflow
+$namespaces:
+  curate: https://github.com/CURATE-skills/CURATE/blob/main/docs/CWL_IR.md#
+label: t
+requirements:
+  ScatterFeatureRequirement: {}
+hints:
+  DockerRequirement:
+    dockerPull: python:3.12-slim
+inputs:
+  winter:
+    type: string[]
+    default:
+    - '2019'
+    - '2020'
+  station:
+    type: string[]
+    default:
+    - a
+    - b
+    - c
+outputs:
+  row_winter_json:
+    type: File[]
+    outputSource: assemble/row
+    curate:deliver_as: results/row_{winter}.json
+steps:
+  detect:
+    scatter:
+    - winter
+    - station
+    scatterMethod: nested_crossproduct
+    in:
+      winter: winter
+      station: station
+    out:
+    - ice
+    run:
+      class: Operation
+      inputs:
+        winter: string
+        station: string
+      outputs:
+        ice:
+          type: File
+          curate:name: ice_{winter}_{station}.json
+    hints:
+      curate:function:
+        code: functions/detect.py
+        entrypoint: main
+  assemble:
+    scatter:
+    - winter
+    - ice
+    scatterMethod: dotproduct
+    in:
+      winter: winter
+      ice: detect/ice
+    out:
+    - row
+    run:
+      class: Operation
+      inputs:
+        winter: string
+        ice: File[]
+      outputs:
+        row:
+          type: File
+          curate:name: row_{winter}.json
+    hints:
+      curate:function:
+        code: functions/assemble.py
+        entrypoint: main

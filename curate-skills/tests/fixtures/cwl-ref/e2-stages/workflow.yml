@@ -1,0 +1,141 @@
+cwlVersion: v1.2
+class: Workflow
+$namespaces:
+  curate: https://github.com/CURATE-skills/CURATE/blob/main/docs/CWL_IR.md#
+label: mapreduce_word_count
+doc: 'MapReduce word counting benchmark: generate text, split into N=3 batches, N
+  parallel mappers, shuffle (flatten), M=5 parallel reducers.'
+requirements:
+  ScatterFeatureRequirement: {}
+hints:
+  DockerRequirement:
+    dockerPull: python:3.12-slim
+  ResourceRequirement:
+    coresMin: 1
+    ramMin: 2048
+inputs:
+  rank3:
+    type: int[]
+    default:
+    - 1
+    - 2
+    - 3
+  rank5:
+    type: int[]
+    default:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+outputs:
+  word_count_rank5_json:
+    type: File[]
+    outputSource: reduce/output1
+    curate:deliver_as: results/word_count_{rank5}.json
+steps:
+  generate_text:
+    in: {}
+    out:
+    - output1
+    run:
+      class: Operation
+      inputs: {}
+      outputs:
+        output1:
+          type: File
+          curate:name: input_text.txt
+    hints:
+      curate:function:
+        code: functions/generate_text.py
+        entrypoint: main
+  split:
+    in:
+      input1: generate_text/output1
+    out:
+    - output1
+    run:
+      class: Operation
+      inputs:
+        input1: File
+      outputs:
+        output1:
+          type: File[]
+          curate:axis: rank3
+          curate:name: text_batch_{rank3}.txt
+    hints:
+      curate:function:
+        code: functions/split.py
+        entrypoint: main
+  map:
+    scatter:
+    - rank
+    - input1
+    scatterMethod: dotproduct
+    in:
+      rank: rank3
+      max_rank:
+        default: 3
+      input1: split/output1
+    out:
+    - output1
+    run:
+      class: Operation
+      inputs:
+        rank: int
+        max_rank: int
+        input1: File
+      outputs:
+        output1:
+          type: File
+          curate:name: map_counts_{rank3}.json
+    hints:
+      curate:function:
+        code: functions/map.py
+        entrypoint: main
+  shuffle:
+    in:
+      input1:
+        source: map/output1
+        curate:folder: true
+    out:
+    - output1
+    run:
+      class: Operation
+      inputs:
+        input1: File[]
+      outputs:
+        output1:
+          type: File[]
+          curate:axis: rank5
+          curate:name: shuffle_partition_{rank5}.json
+    hints:
+      curate:function:
+        code: functions/shuffle.py
+        entrypoint: main
+  reduce:
+    scatter:
+    - rank
+    - input1
+    scatterMethod: dotproduct
+    in:
+      rank: rank5
+      max_rank:
+        default: 5
+      input1: shuffle/output1
+    out:
+    - output1
+    run:
+      class: Operation
+      inputs:
+        rank: int
+        max_rank: int
+        input1: File
+      outputs:
+        output1:
+          type: File
+          curate:name: word_count_{rank5}.json
+    hints:
+      curate:function:
+        code: functions/reduce.py
+        entrypoint: main

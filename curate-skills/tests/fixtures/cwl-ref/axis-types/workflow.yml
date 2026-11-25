@@ -1,0 +1,85 @@
+cwlVersion: v1.2
+class: Workflow
+$namespaces:
+  curate: https://github.com/CURATE-skills/CURATE/blob/main/docs/CWL_IR.md#
+label: t
+requirements:
+  ScatterFeatureRequirement: {}
+hints:
+  DockerRequirement:
+    dockerPull: python:3.12-slim
+inputs:
+  r:
+    type: int[]
+    default:
+    - 1
+    - 2
+  w:
+    type: string[]
+    default:
+    - '2019'
+    - '2020'
+outputs:
+  c_json:
+    type: File
+    outputSource: c/o
+    curate:deliver_as: c.json
+steps:
+  a:
+    scatter: rank
+    in:
+      rank: r
+    out:
+    - o
+    run:
+      class: Operation
+      inputs:
+        rank: int
+      outputs:
+        o:
+          type: File
+          curate:name: a_{r}
+    hints:
+      curate:function:
+        code: functions/a.py
+        entrypoint: main
+  b:
+    scatter: w
+    in:
+      w: w
+    out:
+    - o
+    run:
+      class: Operation
+      inputs:
+        w: string
+      outputs:
+        o:
+          type: File
+          curate:name: b_{w}
+    hints:
+      curate:function:
+        code: functions/b.py
+        entrypoint: main
+  c:
+    in:
+      literal:
+        default: '{w}'
+      x: a/o
+      y: b/o
+    out:
+    - o
+    run:
+      class: Operation
+      inputs:
+        literal: string
+        x: File[]
+        y: File[]
+      outputs:
+        o:
+          type: File
+          curate:name: c.json
+    hints:
+      curate:function:
+        code: functions/c.py
+        entrypoint: main

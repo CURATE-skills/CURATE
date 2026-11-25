@@ -1,0 +1,228 @@
+{
+  "name": "mapreduce",
+  "description": "MapReduce word-count benchmark: generate text, split into N batches, N parallel mappers, shuffle/flatten, M parallel reducers (N=3, W=5000, M=5).",
+  "nodes": [
+    {
+      "name": "generate_text",
+      "description": "Dataset generation (entry step, no inputs). Generate the input text of W=5000 total words from the vocabulary [cat, dog, bird, horse, pig], each distributed evenly and shuffled randomly (so M=5 different words, 1000 occurrences each). W and the vocabulary are parameters (defaults W=5000, vocabulary [cat, dog, bird, horse, pig]; optional integer seed param, default unset = non-deterministic shuffle). When W is not divisible by the vocabulary size, distribute the remainder one extra occurrence to the first words so the total is exactly W. Write a single plain-text file of whitespace-separated words (single spaces, one line). This is the only step allowed to be specific to this vocabulary.",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "input_text.txt",
+          "type": "txt",
+          "description": "W whitespace-separated words, evenly distributed over the vocabulary and randomly shuffled",
+          "kind": "file",
+          "read": null
+        }
+      ],
+      "dependencies": [],
+      "secrets": [],
+      "rank": 1,
+      "source": "new",
+      "user_model_mode": null,
+      "catalog_id": null,
+      "code": "\"\"\"Generate the MapReduce word-count input text.\n\nW total words drawn evenly from a vocabulary (default [cat, dog, bird, horse, pig]),\nrandomly shuffled, written as one line of single-space-separated words.\n\"\"\"\n\nimport random\n\nDEFAULT_W = 5000\nDEFAULT_VOCABULARY = [\"cat\", \"dog\", \"bird\", \"horse\", \"pig\"]\n\n\ndef main(inputs: dict, outputs: dict, params: dict) -> None:\n    total_words = int(params.get(\"W\", DEFAULT_W))\n    vocabulary = list(params.get(\"vocabulary\", DEFAULT_VOCABULARY))\n    seed = params.get(\"seed\")\n\n    if total_words <= 0:\n        raise ValueError(f\"W must be a positive integer, got {total_words}\")\n    if not vocabulary:\n        raise ValueError(\"vocabulary must contain at least one word\")\n    if len(set(vocabulary)) != len(vocabulary):\n        raise ValueError(f\"vocabulary contains duplicate words: {vocabulary}\")\n    for word in vocabulary:\n        if not isinstance(word, str) or not word or any(c.isspace() for c in word):\n            raise ValueError(f\"vocabulary word must be a non-empty string without whitespace: {word!r}\")\n\n    base, remainder = divmod(total_words, len(vocabulary))\n    words = []\n    for i, word in enumerate(vocabulary):\n        count = base + (1 if i < remainder else 0)\n        words.extend([word] * count)\n\n    rng = random.Random(int(seed)) if seed is not None else random.Random()\n    rng.shuffle(words)\n\n    if len(words) != total_words:\n        raise RuntimeError(f\"generated {len(words)} words, expected {total_words}\")\n\n    with open(outputs[\"output1\"], \"w\", encoding=\"utf-8\") as fh:\n        fh.write(\" \".join(words))\n        fh.write(\"\\n\")\n\n    print(f\"generate_text: wrote {len(words)} words over {len(vocabulary)} vocabulary words \"\n          f\"({base} each, +1 for the first {remainder}) to {outputs['output1']}\")\n",
+      "tests": null,
+      "origin_kind": null,
+      "origin_name": null
+    },
+    {
+      "name": "split",
+      "description": "The split function partitions the input text into N batches (N=3, the number of mapping functions). Reads the whole input text, tokenizes on whitespace, and writes N contiguous, near-equal-size batches (sizes differ by at most one word, words preserved in order; the first W mod N batches get one extra word), one ranked batch file per map instance (batch r goes to map rank r), each as whitespace-separated words. N is taken from the number of output batch files (default 3). Must be fully generalizable to any vocabulary size and word frequency: no word list is assumed.",
+      "inputs": [
+        {
+          "name": "input_text.txt",
+          "type": "txt",
+          "description": "the full input text",
+          "kind": "file",
+          "read": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "batch_{rank}.txt",
+          "type": "txt",
+          "description": "batch r of the text, for map rank r",
+          "kind": "file",
+          "read": null
+        }
+      ],
+      "dependencies": [],
+      "secrets": [],
+      "rank": 1,
+      "source": "new",
+      "user_model_mode": null,
+      "catalog_id": null,
+      "code": "\"\"\"Split the MapReduce input text into N contiguous, near-equal word batches.\n\nN is the number of output batch paths (one per map rank). Words are kept in order;\nthe first (W mod N) batches get one extra word. Works for any vocabulary.\n\"\"\"\n\n\ndef main(inputs: dict, outputs: dict, params: dict) -> None:\n    batch_paths = outputs[\"output1\"]\n    if isinstance(batch_paths, str):\n        batch_paths = [batch_paths]\n    batch_paths = list(batch_paths)\n    n_batches = len(batch_paths)\n    if n_batches == 0:\n        raise ValueError(\"outputs['output1'] holds no batch paths; cannot split into 0 batches\")\n\n    with open(inputs[\"input1\"], \"r\", encoding=\"utf-8\") as fh:\n        words = fh.read().split()\n\n    if not words:\n        msg = f\"input text {inputs['input1']} contains no words\"\n        print(f\"split: ERROR {msg}\")\n        raise ValueError(msg)\n\n    total = len(words)\n    base, remainder = divmod(total, n_batches)\n\n    start = 0\n    for i, path in enumerate(batch_paths):\n        size = base + (1 if i < remainder else 0)\n        batch = words[start:start + size]\n        start += size\n        with open(path, \"w\", encoding=\"utf-8\") as fh:\n            fh.write(\" \".join(batch))\n            fh.write(\"\\n\")\n        print(f\"split: batch {i + 1}/{n_batches}: {len(batch)} words -> {path}\")\n\n    if start != total:\n        raise RuntimeError(f\"split assigned {start} words, expected {total}\")\n\n    print(f\"split: partitioned {total} words into {n_batches} batches \"\n          f\"({base} each, +1 for the first {remainder})\")\n",
+      "tests": null,
+      "origin_kind": null,
+      "origin_name": null
+    },
+    {
+      "name": "map",
+      "description": "N parallel map functions (N=3) count how often each word occurs in their text chunk. Each ranked instance reads the batch matching its rank (params['rank']), tokenizes on whitespace, and writes its per-chunk word-count result Y_i as a JSON object mapping word -> count for that chunk. Must be fully generalizable to vocabularies of any size and frequency (no hard-coded words; every distinct word found is counted, case-sensitive, no normalization). An empty batch yields an empty object.",
+      "inputs": [
+        {
+          "name": "batch_{rank}.txt",
+          "type": "txt",
+          "description": "this instance's text batch",
+          "kind": "file",
+          "read": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "map_counts_{rank}.json",
+          "type": "json",
+          "description": "Y_i: word -> count within this batch",
+          "kind": "file",
+          "read": null
+        }
+      ],
+      "dependencies": [],
+      "secrets": [],
+      "rank": 3,
+      "source": "new",
+      "user_model_mode": null,
+      "catalog_id": null,
+      "code": "\"\"\"MapReduce map step: count word occurrences in this rank's text batch.\n\nTokenizes on whitespace (case-sensitive, no normalization) and writes Y_i as a JSON\nobject mapping word -> count. Works for vocabularies of any size and frequency.\n\"\"\"\n\nimport json\nfrom collections import Counter\n\n\ndef main(inputs: dict, outputs: dict, params: dict) -> None:\n    rank = params.get(\"rank\")\n    max_rank = params.get(\"max_rank\")\n\n    in_path = inputs[\"input1\"]\n    out_path = outputs[\"output1\"]\n\n    with open(in_path, \"r\", encoding=\"utf-8\") as fh:\n        words = fh.read().split()\n\n    counts = Counter(words)\n    # Sorted keys for deterministic output.\n    result = {word: counts[word] for word in sorted(counts)}\n\n    with open(out_path, \"w\", encoding=\"utf-8\") as fh:\n        json.dump(result, fh, indent=2, sort_keys=True)\n        fh.write(\"\\n\")\n\n    print(f\"map: rank {rank}/{max_rank}: {len(words)} words, \"\n          f\"{len(result)} distinct -> {out_path}\")\n    for word, count in result.items():\n        print(f\"map: rank {rank}: {word} = {count}\")\n",
+      "tests": null,
+      "origin_kind": null,
+      "origin_name": null
+    },
+    {
+      "name": "shuffle",
+      "description": "Shuffle flattens the resulting array Y_i from all N mappers (the list of every ranked map output) into a flat list of (word, partial count) pairs and groups them by word, so that each of the M reducers gets the partial counts for its respective word. The available workflow primitives necessitate this shuffle function, not relying on the array Y_i itself but flattening it to enable the desired level of parallelism in reduce. The set of distinct words is discovered from the map outputs and sorted lexicographically; word k (0-based, in sorted order) is assigned to reducer rank (k mod M) + 1, where M is the number of output partition files (the reduce step's rank count, 5). It writes exactly M ranked partition files (one per reducer rank), each a JSON object mapping each assigned word -> list of its partial counts from the mappers; a partition with no assigned words is an empty object. With M=5 distinct words each reducer gets exactly one word. Must be fully generalizable to vocabularies of any size and frequency (no hard-coded words).",
+      "inputs": [
+        {
+          "name": "map_counts_{rank}.json",
+          "type": "json",
+          "description": "all N mapper results Y_1..Y_N",
+          "kind": "file",
+          "read": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "partition_{rank}.json",
+          "type": "json",
+          "description": "words assigned to reducer rank r -> list of partial counts",
+          "kind": "file",
+          "read": null
+        }
+      ],
+      "dependencies": [],
+      "secrets": [],
+      "rank": 1,
+      "source": "new",
+      "user_model_mode": null,
+      "catalog_id": null,
+      "code": "\"\"\"MapReduce shuffle step: flatten all mapper outputs Y_1..Y_N into (word, partial count)\npairs, group them by word, and partition the words across the M reducers.\n\nDistinct words are sorted lexicographically; word k (0-based) goes to reducer rank\n(k mod M) + 1. Each partition file is a JSON object word -> list of partial counts (in\nmapper rank order). Works for vocabularies of any size and frequency.\n\"\"\"\n\nimport json\n\n\ndef main(inputs: dict, outputs: dict, params: dict) -> None:\n    in_paths = inputs[\"input1\"]\n    out_paths = outputs[\"output1\"]\n\n    if isinstance(in_paths, str):\n        in_paths = [in_paths]\n    if isinstance(out_paths, str):\n        out_paths = [out_paths]\n\n    if not in_paths:\n        raise ValueError(\"shuffle: input1 (map outputs) holds no files\")\n    if not out_paths:\n        raise ValueError(\"shuffle: output1 (reducer partitions) holds no paths\")\n\n    # Flatten Y_i into a list of (word, partial count) pairs.\n    pairs = []\n    for path in in_paths:\n        with open(path, \"r\", encoding=\"utf-8\") as fh:\n            counts = json.load(fh)\n        if not isinstance(counts, dict):\n            raise ValueError(f\"shuffle: {path} is not a JSON object of word -> count\")\n        for word, count in counts.items():\n            if isinstance(count, bool) or not isinstance(count, int):\n                raise ValueError(\n                    f\"shuffle: {path}: count for {word!r} is not an integer: {count!r}\")\n            pairs.append((word, count))\n        print(f\"shuffle: read {len(counts)} words from {path}\")\n\n    # Group by word.\n    grouped = {}\n    for word, count in pairs:\n        grouped.setdefault(word, []).append(count)\n\n    m = len(out_paths)\n    partitions = [{} for _ in range(m)]\n    for k, word in enumerate(sorted(grouped)):\n        partitions[k % m][word] = grouped[word]\n\n    for r, (path, part) in enumerate(zip(out_paths, partitions), start=1):\n        with open(path, \"w\", encoding=\"utf-8\") as fh:\n            json.dump(part, fh, indent=2, sort_keys=True)\n            fh.write(\"\\n\")\n        print(f\"shuffle: partition {r}/{m}: {sorted(part)} -> {path}\")\n\n    print(f\"shuffle: {len(pairs)} pairs, {len(grouped)} distinct words, \"\n          f\"{m} partitions\")\n",
+      "tests": null,
+      "origin_kind": null,
+      "origin_name": null
+    },
+    {
+      "name": "reduce",
+      "description": "M reducers (M=5) count the total occurrences of their respective word in parallel, yielding Z_i. Each ranked instance reads the shuffled partition matching its rank (params['rank']), sums the list of partial counts for each word in it, and writes Z_i as a JSON object mapping word -> total occurrences (empty object if the partition is empty). Must be fully generalizable to vocabularies of any size and frequency (no hard-coded words; handles any number of words per partition).",
+      "inputs": [
+        {
+          "name": "partition_{rank}.json",
+          "type": "json",
+          "description": "this reducer's word -> partial counts",
+          "kind": "file",
+          "read": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "word_total_{rank}.json",
+          "type": "json",
+          "description": "Z_i: word -> total occurrences",
+          "kind": "file",
+          "read": null
+        }
+      ],
+      "dependencies": [],
+      "secrets": [],
+      "rank": 5,
+      "source": "new",
+      "user_model_mode": null,
+      "catalog_id": null,
+      "code": "\"\"\"MapReduce reduce step: reducer rank i reads its shuffled partition (word -> list of\npartial counts) and writes Z_i, a JSON object word -> total occurrences.\n\nWorks for vocabularies of any size and frequency; an empty partition yields {}.\n\"\"\"\n\nimport json\n\n\ndef main(inputs: dict, outputs: dict, params: dict) -> None:\n    rank = params.get(\"rank\")\n    max_rank = params.get(\"max_rank\")\n    in_path = inputs[\"input1\"]\n    out_path = outputs[\"output1\"]\n\n    with open(in_path, \"r\", encoding=\"utf-8\") as fh:\n        partition = json.load(fh)\n    if not isinstance(partition, dict):\n        raise ValueError(\n            f\"reduce[{rank}/{max_rank}]: {in_path} is not a JSON object of word -> counts\")\n\n    totals = {}\n    for word, counts in partition.items():\n        if isinstance(counts, bool) or isinstance(counts, int):\n            counts = [counts]\n        if not isinstance(counts, list):\n            raise ValueError(\n                f\"reduce[{rank}/{max_rank}]: counts for {word!r} is not a list: {counts!r}\")\n        total = 0\n        for c in counts:\n            if isinstance(c, bool) or not isinstance(c, int):\n                raise ValueError(\n                    f\"reduce[{rank}/{max_rank}]: partial count for {word!r} \"\n                    f\"is not an integer: {c!r}\")\n            total += c\n        totals[word] = total\n\n    with open(out_path, \"w\", encoding=\"utf-8\") as fh:\n        json.dump(totals, fh, indent=2, sort_keys=True)\n        fh.write(\"\\n\")\n\n    print(f\"reduce[{rank}/{max_rank}]: {len(totals)} words -> {totals} -> {out_path}\")\n",
+      "tests": null,
+      "origin_kind": null,
+      "origin_name": null
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "generate_text",
+      "to_node": "split",
+      "condition": null
+    },
+    {
+      "from_node": "split",
+      "to_node": "map",
+      "condition": null
+    },
+    {
+      "from_node": "map",
+      "to_node": "shuffle",
+      "condition": null
+    },
+    {
+      "from_node": "shuffle",
+      "to_node": "reduce",
+      "condition": null
+    }
+  ],
+  "data_flow": [
+    {
+      "from_node": "generate_text",
+      "to_node": "split",
+      "file": "input_text.txt",
+      "format": "txt",
+      "folder": "mapreduce"
+    },
+    {
+      "from_node": "split",
+      "to_node": "map",
+      "file": "batch_{rank}.txt",
+      "format": "txt",
+      "folder": "mapreduce"
+    },
+    {
+      "from_node": "map",
+      "to_node": "shuffle",
+      "file": "map_counts_{rank}.json",
+      "format": "json",
+      "folder": "mapreduce"
+    },
+    {
+      "from_node": "shuffle",
+      "to_node": "reduce",
+      "file": "partition_{rank}.json",
+      "format": "json",
+      "folder": "mapreduce"
+    }
+  ],
+  "entry": "generate_text",
+  "compute_target": "GH",
+  "data_store": "S3",
+  "folder": "mapreduce",
+  "assumptions": [
+    "\"each distributed evenly\" -> exactly W/5 = 1000 occurrences per word; if W is not divisible, the first words get one extra each so the total is exactly W",
+    "\"shuffled randomly\" -> random shuffle with an optional seed parameter; unseeded by default, so each run's text differs (counts do not)",
+    "\"partitions the input text into N batches\" -> contiguous near-equal word batches (sizes differ by at most one), not split by lines or bytes",
+    "word tokenization -> split on whitespace, case-sensitive, no punctuation stripping",
+    "\"M reducers ... their respective word\" generalized -> distinct words sorted alphabetically, word k goes to reducer (k mod M)+1; with more words than reducers a reducer handles several, with fewer some get an empty partition",
+    "M is fixed by the reduce step's rank count (5) at deploy time; the reducer count does not change at run time with the vocabulary"
+  ],
+  "presentation_assumptions": [
+    "generated text -> one plain-text file, single-space separated, one line",
+    "intermediate and final results -> JSON objects mapping word -> count (map), word -> list of partial counts (shuffle), word -> total (reduce)",
+    "final output -> one file per reducer (word_total_1..5.json), no extra combined summary step",
+    "S3 folder -> mapreduce"
+  ]
+}
