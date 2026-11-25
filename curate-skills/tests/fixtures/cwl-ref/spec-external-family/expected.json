@@ -1,0 +1,765 @@
+{
+ "jobs": {
+  "name": "T One",
+  "description": "x y z",
+  "defaults": {
+   "image": "docker:///python:3.12-slim",
+   "resources": {
+    "cpus": 1,
+    "memory_mb": 2048
+   }
+  },
+  "inputs": [
+   {
+    "file": "cfg.json",
+    "location": "file://<fixture>/inputs/cfg.json"
+   },
+   {
+    "file": "data_1.csv",
+    "location": "file://<fixture>/inputs/data_1.csv"
+   },
+   {
+    "file": "data_2.csv",
+    "location": "file://<fixture>/inputs/data_2.csv"
+   },
+   {
+    "file": "data_3.csv",
+    "location": "file://<fixture>/inputs/data_3.csv"
+   }
+  ],
+  "outputs": [
+   {
+    "file": "g__output1__sum.json",
+    "deliver_as": "results/sum.json"
+   },
+   {
+    "file": "g3__output1__1__z_1.json",
+    "deliver_as": "results/z_1.json"
+   },
+   {
+    "file": "g3__output1__2__z_2.json",
+    "deliver_as": "results/z_2.json"
+   },
+   {
+    "file": "g3__output1__3__z_3.json",
+    "deliver_as": "results/z_3.json"
+   }
+  ],
+  "nodes": [
+   {
+    "id": "m__1",
+    "_origin": "m",
+    "_assign": {
+     "rank3": "1"
+    },
+    "code": "functions/m.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": "data_1.csv",
+     "input2": "cfg.json"
+    },
+    "outputs": {
+     "output1": "m__output1__1__part_1.csv"
+    },
+    "params": {
+     "rank": 1,
+     "max_rank": 3
+    }
+   },
+   {
+    "id": "m__2",
+    "_origin": "m",
+    "_assign": {
+     "rank3": "2"
+    },
+    "code": "functions/m.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": "data_2.csv",
+     "input2": "cfg.json"
+    },
+    "outputs": {
+     "output1": "m__output1__2__part_2.csv"
+    },
+    "params": {
+     "rank": 2,
+     "max_rank": 3
+    }
+   },
+   {
+    "id": "m__3",
+    "_origin": "m",
+    "_assign": {
+     "rank3": "3"
+    },
+    "code": "functions/m.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": "data_3.csv",
+     "input2": "cfg.json"
+    },
+    "outputs": {
+     "output1": "m__output1__3__part_3.csv"
+    },
+    "params": {
+     "rank": 3,
+     "max_rank": 3
+    }
+   },
+   {
+    "id": "all3__1",
+    "_origin": "all3",
+    "_assign": {
+     "rank3": "1"
+    },
+    "code": "functions/all3.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": [
+      "m__output1__1__part_1.csv",
+      "m__output1__2__part_2.csv",
+      "m__output1__3__part_3.csv"
+     ]
+    },
+    "outputs": {
+     "output1": "all3__output1__1__seen_1.txt"
+    },
+    "params": {
+     "rank": 1,
+     "max_rank": 3
+    }
+   },
+   {
+    "id": "all3__2",
+    "_origin": "all3",
+    "_assign": {
+     "rank3": "2"
+    },
+    "code": "functions/all3.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": [
+      "m__output1__1__part_1.csv",
+      "m__output1__2__part_2.csv",
+      "m__output1__3__part_3.csv"
+     ]
+    },
+    "outputs": {
+     "output1": "all3__output1__2__seen_2.txt"
+    },
+    "params": {
+     "rank": 2,
+     "max_rank": 3
+    }
+   },
+   {
+    "id": "all3__3",
+    "_origin": "all3",
+    "_assign": {
+     "rank3": "3"
+    },
+    "code": "functions/all3.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": [
+      "m__output1__1__part_1.csv",
+      "m__output1__2__part_2.csv",
+      "m__output1__3__part_3.csv"
+     ]
+    },
+    "outputs": {
+     "output1": "all3__output1__3__seen_3.txt"
+    },
+    "params": {
+     "rank": 3,
+     "max_rank": 3
+    }
+   },
+   {
+    "id": "g",
+    "_origin": "g",
+    "_assign": {},
+    "code": "functions/g.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": {
+      "folder": [
+       "m__output1__1__part_1.csv",
+       "m__output1__2__part_2.csv",
+       "m__output1__3__part_3.csv"
+      ]
+     }
+    },
+    "outputs": {
+     "output1": "g__output1__sum.json"
+    },
+    "params": {}
+   },
+   {
+    "id": "g3__1",
+    "_origin": "g3",
+    "_assign": {
+     "rank3": "1"
+    },
+    "code": "functions/g3.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": {
+      "folder": [
+       "all3__output1__1__seen_1.txt",
+       "all3__output1__2__seen_2.txt",
+       "all3__output1__3__seen_3.txt"
+      ]
+     }
+    },
+    "outputs": {
+     "output1": "g3__output1__1__z_1.json"
+    },
+    "params": {
+     "rank": 1,
+     "max_rank": 3
+    }
+   },
+   {
+    "id": "g3__2",
+    "_origin": "g3",
+    "_assign": {
+     "rank3": "2"
+    },
+    "code": "functions/g3.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": {
+      "folder": [
+       "all3__output1__1__seen_1.txt",
+       "all3__output1__2__seen_2.txt",
+       "all3__output1__3__seen_3.txt"
+      ]
+     }
+    },
+    "outputs": {
+     "output1": "g3__output1__2__z_2.json"
+    },
+    "params": {
+     "rank": 2,
+     "max_rank": 3
+    }
+   },
+   {
+    "id": "g3__3",
+    "_origin": "g3",
+    "_assign": {
+     "rank3": "3"
+    },
+    "code": "functions/g3.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": {
+      "folder": [
+       "all3__output1__1__seen_1.txt",
+       "all3__output1__2__seen_2.txt",
+       "all3__output1__3__seen_3.txt"
+      ]
+     }
+    },
+    "outputs": {
+     "output1": "g3__output1__3__z_3.json"
+    },
+    "params": {
+     "rank": 3,
+     "max_rank": 3
+    }
+   }
+  ],
+  "_base": "<fixture>"
+ },
+ "pegasus": {
+  "ir": {
+   "ir_version": "0.2",
+   "expanded": true,
+   "name": "t",
+   "description": "x y z",
+   "defaults": {
+    "image": "docker:///python:3.12-slim",
+    "resources": {
+     "cpus": 1,
+     "memory_mb": 2048
+    }
+   },
+   "inputs": [
+    {
+     "file": "cfg.json",
+     "location": "inputs/cfg.json"
+    },
+    {
+     "file": "data_1.csv",
+     "location": "inputs/data_1.csv"
+    },
+    {
+     "file": "data_2.csv",
+     "location": "inputs/data_2.csv"
+    },
+    {
+     "file": "data_3.csv",
+     "location": "inputs/data_3.csv"
+    }
+   ],
+   "nodes": [
+    {
+     "id": "m__1",
+     "_origin": "m",
+     "_assign": {
+      "rank3": "1"
+     },
+     "code": "functions/m.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": "data_1.csv",
+      "input2": "cfg.json"
+     },
+     "outputs": {
+      "output1": "m__output1__1__part_1.csv"
+     },
+     "params": {
+      "rank": 1,
+      "max_rank": 3
+     }
+    },
+    {
+     "id": "m__2",
+     "_origin": "m",
+     "_assign": {
+      "rank3": "2"
+     },
+     "code": "functions/m.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": "data_2.csv",
+      "input2": "cfg.json"
+     },
+     "outputs": {
+      "output1": "m__output1__2__part_2.csv"
+     },
+     "params": {
+      "rank": 2,
+      "max_rank": 3
+     }
+    },
+    {
+     "id": "m__3",
+     "_origin": "m",
+     "_assign": {
+      "rank3": "3"
+     },
+     "code": "functions/m.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": "data_3.csv",
+      "input2": "cfg.json"
+     },
+     "outputs": {
+      "output1": "m__output1__3__part_3.csv"
+     },
+     "params": {
+      "rank": 3,
+      "max_rank": 3
+     }
+    },
+    {
+     "id": "all3__1",
+     "_origin": "all3",
+     "_assign": {
+      "rank3": "1"
+     },
+     "code": "functions/all3.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": [
+       "m__output1__1__part_1.csv",
+       "m__output1__2__part_2.csv",
+       "m__output1__3__part_3.csv"
+      ]
+     },
+     "outputs": {
+      "output1": "all3__output1__1__seen_1.txt"
+     },
+     "params": {
+      "rank": 1,
+      "max_rank": 3
+     }
+    },
+    {
+     "id": "all3__2",
+     "_origin": "all3",
+     "_assign": {
+      "rank3": "2"
+     },
+     "code": "functions/all3.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": [
+       "m__output1__1__part_1.csv",
+       "m__output1__2__part_2.csv",
+       "m__output1__3__part_3.csv"
+      ]
+     },
+     "outputs": {
+      "output1": "all3__output1__2__seen_2.txt"
+     },
+     "params": {
+      "rank": 2,
+      "max_rank": 3
+     }
+    },
+    {
+     "id": "all3__3",
+     "_origin": "all3",
+     "_assign": {
+      "rank3": "3"
+     },
+     "code": "functions/all3.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": [
+       "m__output1__1__part_1.csv",
+       "m__output1__2__part_2.csv",
+       "m__output1__3__part_3.csv"
+      ]
+     },
+     "outputs": {
+      "output1": "all3__output1__3__seen_3.txt"
+     },
+     "params": {
+      "rank": 3,
+      "max_rank": 3
+     }
+    },
+    {
+     "id": "g",
+     "_origin": "g",
+     "_assign": {},
+     "code": "functions/g.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": {
+       "folder": [
+        "m__output1__1__part_1.csv",
+        "m__output1__2__part_2.csv",
+        "m__output1__3__part_3.csv"
+       ]
+      }
+     },
+     "outputs": {
+      "output1": "g__output1__sum.json"
+     },
+     "params": {}
+    },
+    {
+     "id": "g3__1",
+     "_origin": "g3",
+     "_assign": {
+      "rank3": "1"
+     },
+     "code": "functions/g3.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": {
+       "folder": [
+        "all3__output1__1__seen_1.txt",
+        "all3__output1__2__seen_2.txt",
+        "all3__output1__3__seen_3.txt"
+       ]
+      }
+     },
+     "outputs": {
+      "output1": "g3__output1__1__z_1.json"
+     },
+     "params": {
+      "rank": 1,
+      "max_rank": 3
+     }
+    },
+    {
+     "id": "g3__2",
+     "_origin": "g3",
+     "_assign": {
+      "rank3": "2"
+     },
+     "code": "functions/g3.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": {
+       "folder": [
+        "all3__output1__1__seen_1.txt",
+        "all3__output1__2__seen_2.txt",
+        "all3__output1__3__seen_3.txt"
+       ]
+      }
+     },
+     "outputs": {
+      "output1": "g3__output1__2__z_2.json"
+     },
+     "params": {
+      "rank": 2,
+      "max_rank": 3
+     }
+    },
+    {
+     "id": "g3__3",
+     "_origin": "g3",
+     "_assign": {
+      "rank3": "3"
+     },
+     "code": "functions/g3.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": {
+       "folder": [
+        "all3__output1__1__seen_1.txt",
+        "all3__output1__2__seen_2.txt",
+        "all3__output1__3__seen_3.txt"
+       ]
+      }
+     },
+     "outputs": {
+      "output1": "g3__output1__3__z_3.json"
+     },
+     "params": {
+      "rank": 3,
+      "max_rank": 3
+     }
+    }
+   ],
+   "outputs": [
+    {
+     "file": "g__output1__sum.json",
+     "deliver_as": "results/sum.json"
+    },
+    {
+     "file": "g3__output1__1__z_1.json",
+     "deliver_as": "results/z_1.json"
+    },
+    {
+     "file": "g3__output1__2__z_2.json",
+     "deliver_as": "results/z_2.json"
+    },
+    {
+     "file": "g3__output1__3__z_3.json",
+     "deliver_as": "results/z_3.json"
+    }
+   ]
+  },
+  "copy": {},
+  "needed": [
+   "cfg.json",
+   "data_1.csv",
+   "data_2.csv",
+   "data_3.csv"
+  ]
+ },
+ "faasr": {
+  "workflow": {
+   "FunctionInvoke": "m",
+   "WorkflowName": "t",
+   "DefaultDataStore": "S3",
+   "LoggingDataStore": "S3",
+   "FaaSrLog": "FaaSrLog",
+   "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+   "ActionList": {
+    "m": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "m",
+     "Arguments": {
+      "folder": "tf",
+      "input1": "data_rank3_csv__{rank}.csv",
+      "input2": "cfg.json",
+      "output1": "m__output1__{rank}__part_{rank}.csv"
+     },
+     "InvokeNext": [
+      "all3(3)",
+      "g"
+     ]
+    },
+    "all3": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "all3",
+     "Arguments": {
+      "folder": "tf",
+      "input1": "m__output1__{rank}__part_{rank}.csv",
+      "output1": "all3__output1__{rank}__seen_{rank}.txt"
+     },
+     "InvokeNext": [
+      "g3(3)"
+     ]
+    },
+    "g": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "g",
+     "Arguments": {
+      "folder": "tf",
+      "input1": "m__output1__{rank}__part_{rank}.csv",
+      "output1": "g__output1__sum.json"
+     },
+     "InvokeNext": []
+    },
+    "g3": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "g3",
+     "Arguments": {
+      "folder": "tf",
+      "input1": "all3__output1__{rank}__seen_{rank}.txt",
+      "output1": "g3__output1__{rank}__z_{rank}.json"
+     },
+     "InvokeNext": []
+    }
+   },
+   "ActionContainers": {
+    "m": "ghcr.io/faasr/github-actions-python:latest",
+    "all3": "ghcr.io/faasr/github-actions-python:latest",
+    "g": "ghcr.io/faasr/github-actions-python:latest",
+    "g3": "ghcr.io/faasr/github-actions-python:latest"
+   },
+   "ComputeServers": {
+    "My_GitHub_Account": {
+     "FaaSType": "GitHubActions",
+     "UserName": "<FAASR_GH_USERNAME>",
+     "ActionRepoName": "<FAASR_ACTION_REPO>",
+     "Branch": "main",
+     "UseSecretStore": true
+    }
+   },
+   "DataStores": {
+    "S3": {
+     "Endpoint": "<FAASR_S3_ENDPOINT>",
+     "Bucket": "<FAASR_S3_BUCKET>",
+     "Region": "<FAASR_S3_REGION>",
+     "AccessKey": "S3_AccessKey",
+     "SecretKey": "S3_SecretKey",
+     "Writable": "TRUE"
+    }
+   },
+   "FunctionGitRepo": {
+    "m": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/m.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/m_main.py"
+    ],
+    "all3": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/all3.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/all3_main.py"
+    ],
+    "g": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/g.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/g_main.py"
+    ],
+    "g3": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/g3.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/g3_main.py"
+    ]
+   }
+  },
+  "names": {
+   "cfg_json": "cfg.json",
+   "data_rank3_csv": "data_rank3_csv__{rank}.csv",
+   "m/output1": "m__output1__{rank}__part_{rank}.csv",
+   "all3/output1": "all3__output1__{rank}__seen_{rank}.txt",
+   "g/output1": "g__output1__sum.json",
+   "g3/output1": "g3__output1__{rank}__z_{rank}.json"
+  },
+  "outputs": {
+   "files": [
+    {
+     "action": "m",
+     "file": "m__output1__1__part_1.csv"
+    },
+    {
+     "action": "m",
+     "file": "m__output1__2__part_2.csv"
+    },
+    {
+     "action": "m",
+     "file": "m__output1__3__part_3.csv"
+    },
+    {
+     "action": "all3",
+     "file": "all3__output1__1__seen_1.txt"
+    },
+    {
+     "action": "all3",
+     "file": "all3__output1__2__seen_2.txt"
+    },
+    {
+     "action": "all3",
+     "file": "all3__output1__3__seen_3.txt"
+    },
+    {
+     "action": "g",
+     "file": "g__output1__sum.json"
+    },
+    {
+     "action": "g3",
+     "file": "g3__output1__1__z_1.json"
+    },
+    {
+     "action": "g3",
+     "file": "g3__output1__2__z_2.json"
+    },
+    {
+     "action": "g3",
+     "file": "g3__output1__3__z_3.json"
+    }
+   ],
+   "deliverables": [
+    {
+     "output": "sum_json",
+     "file": "g__output1__sum.json",
+     "deliver_as": "results/sum.json"
+    },
+    {
+     "output": "z_rank3_json",
+     "file": "g3__output1__1__z_1.json",
+     "deliver_as": "results/z_1.json"
+    },
+    {
+     "output": "z_rank3_json",
+     "file": "g3__output1__2__z_2.json",
+     "deliver_as": "results/z_2.json"
+    },
+    {
+     "output": "z_rank3_json",
+     "file": "g3__output1__3__z_3.json",
+     "deliver_as": "results/z_3.json"
+    }
+   ]
+  },
+  "external_inputs": [
+   {
+    "input": "cfg_json",
+    "file": "cfg.json",
+    "location": "file://<fixture>/inputs/cfg.json",
+    "s3_path": "tf/cfg.json"
+   },
+   {
+    "input": "data_rank3_csv",
+    "file": "data_rank3_csv__1.csv",
+    "location": "file://<fixture>/inputs/data_1.csv",
+    "s3_path": "tf/data_rank3_csv__1.csv"
+   },
+   {
+    "input": "data_rank3_csv",
+    "file": "data_rank3_csv__2.csv",
+    "location": "file://<fixture>/inputs/data_2.csv",
+    "s3_path": "tf/data_rank3_csv__2.csv"
+   },
+   {
+    "input": "data_rank3_csv",
+    "file": "data_rank3_csv__3.csv",
+    "location": "file://<fixture>/inputs/data_3.csv",
+    "s3_path": "tf/data_rank3_csv__3.csv"
+   }
+  ]
+ }
+}

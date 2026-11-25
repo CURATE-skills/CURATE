@@ -1,0 +1,126 @@
+cwlVersion: v1.2
+class: Workflow
+$namespaces:
+  curate: https://github.com/CURATE-skills/CURATE/blob/main/docs/CWL_IR.md#
+label: t3
+doc: t3
+requirements:
+  ScatterFeatureRequirement: {}
+hints:
+  DockerRequirement:
+    dockerPull: python:3.12-slim
+  ResourceRequirement:
+    coresMin: 1
+    ramMin: 2048
+inputs:
+  rank2:
+    type: int[]
+    default:
+    - 1
+    - 2
+outputs:
+  a_rank2_txt:
+    type: File[]
+    outputSource: a/output1
+    curate:deliver_as: results/a_{rank2}.txt
+  b_rank2_txt:
+    type: File[]
+    outputSource: b/output1
+    curate:deliver_as: results/b_{rank2}.txt
+  d_txt:
+    type: File
+    outputSource: d/output1
+    curate:deliver_as: results/d.txt
+steps:
+  a:
+    scatter: rank
+    in:
+      rank: rank2
+      max_rank:
+        default: 2
+    out:
+    - output1
+    run:
+      class: Operation
+      inputs:
+        rank: int
+        max_rank: int
+      outputs:
+        output1:
+          type: File
+          curate:name: a_{rank2}.txt
+    hints:
+      curate:function:
+        code: functions/a.py
+        entrypoint: main
+      SoftwareRequirement:
+        packages:
+        - package: numpy
+        - package: pandas
+  b:
+    scatter: rank
+    in:
+      rank: rank2
+      max_rank:
+        default: 2
+    out:
+    - output1
+    run:
+      class: Operation
+      inputs:
+        rank: int
+        max_rank: int
+      outputs:
+        output1:
+          type: File
+          curate:name: b_{rank2}.txt
+    hints:
+      curate:function:
+        code: functions/b.py
+        entrypoint: main
+      curate:after:
+        steps:
+        - a
+      curate:secrets:
+        names:
+        - API_TOKEN
+        - B_KEY
+  c:
+    in: {}
+    out:
+    - output1
+    run:
+      class: Operation
+      inputs: {}
+      outputs:
+        output1:
+          type: File
+          curate:name: c.txt
+    hints:
+      curate:function:
+        code: functions/c.py
+        entrypoint: main
+      curate:after:
+        steps:
+        - b
+        - a
+  d:
+    in:
+      input1: c/output1
+    out:
+    - output1
+    run:
+      class: Operation
+      inputs:
+        input1: File
+      outputs:
+        output1:
+          type: File
+          curate:name: d.txt
+    hints:
+      curate:function:
+        code: functions/d.py
+        entrypoint: main
+      curate:run_if:
+        step: c
+        result: false

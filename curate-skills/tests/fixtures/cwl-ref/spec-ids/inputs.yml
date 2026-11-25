@@ -1,0 +1,9 @@
+f_1st_csv:
+  class: File
+  location: inputs/1st-csv
+f_1st_csv_2:
+  class: File
+  location: inputs/1st.csv
+p_txt:
+  class: File
+  location: inputs/p.txt_

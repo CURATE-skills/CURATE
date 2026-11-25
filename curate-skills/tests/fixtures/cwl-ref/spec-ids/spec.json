@@ -1,0 +1,31 @@
+{
+  "name": "t6",
+  "folder": "t",
+  "nodes": [
+    {
+      "name": "p",
+      "code": "def main(inputs, outputs, params):\n    pass\n",
+      "rank": 1,
+      "inputs": [
+        {
+          "name": "1st.csv"
+        },
+        {
+          "name": "1st-csv"
+        },
+        {
+          "name": "p.txt_"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "p_1.json"
+        },
+        {
+          "name": "p-1.json"
+        }
+      ]
+    }
+  ],
+  "edges": []
+}

@@ -1,0 +1,226 @@
+{
+ "jobs": {
+  "name": "t6",
+  "description": "t6",
+  "defaults": {
+   "image": "docker:///python:3.12-slim",
+   "resources": {
+    "cpus": 1,
+    "memory_mb": 2048
+   }
+  },
+  "inputs": [
+   {
+    "file": "1st-csv",
+    "location": "file://<fixture>/inputs/1st-csv"
+   },
+   {
+    "file": "1st.csv",
+    "location": "file://<fixture>/inputs/1st.csv"
+   },
+   {
+    "file": "p.txt_",
+    "location": "file://<fixture>/inputs/p.txt_"
+   }
+  ],
+  "outputs": [
+   {
+    "file": "p__output2__p-1.json",
+    "deliver_as": "results/p-1.json"
+   },
+   {
+    "file": "p__output1__p_1.json",
+    "deliver_as": "results/p_1.json"
+   }
+  ],
+  "nodes": [
+   {
+    "id": "p",
+    "_origin": "p",
+    "_assign": {},
+    "code": "functions/p.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": "1st.csv",
+     "input2": "1st-csv",
+     "input3": "p.txt_"
+    },
+    "outputs": {
+     "output1": "p__output1__p_1.json",
+     "output2": "p__output2__p-1.json"
+    },
+    "params": {}
+   }
+  ],
+  "_base": "<fixture>"
+ },
+ "pegasus": {
+  "ir": {
+   "ir_version": "0.2",
+   "expanded": true,
+   "name": "t",
+   "description": "t6",
+   "defaults": {
+    "image": "docker:///python:3.12-slim",
+    "resources": {
+     "cpus": 1,
+     "memory_mb": 2048
+    }
+   },
+   "inputs": [
+    {
+     "file": "1st-csv",
+     "location": "inputs/1st-csv"
+    },
+    {
+     "file": "1st.csv",
+     "location": "inputs/1st.csv"
+    },
+    {
+     "file": "p.txt_",
+     "location": "inputs/p.txt_"
+    }
+   ],
+   "nodes": [
+    {
+     "id": "p",
+     "_origin": "p",
+     "_assign": {},
+     "code": "functions/p.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": "1st.csv",
+      "input2": "1st-csv",
+      "input3": "p.txt_"
+     },
+     "outputs": {
+      "output1": "p__output1__p_1.json",
+      "output2": "p__output2__p-1.json"
+     },
+     "params": {}
+    }
+   ],
+   "outputs": [
+    {
+     "file": "p__output2__p-1.json",
+     "deliver_as": "results/p-1.json"
+    },
+    {
+     "file": "p__output1__p_1.json",
+     "deliver_as": "results/p_1.json"
+    }
+   ]
+  },
+  "copy": {},
+  "needed": [
+   "1st-csv",
+   "1st.csv",
+   "p.txt_"
+  ]
+ },
+ "faasr": {
+  "workflow": {
+   "FunctionInvoke": "p",
+   "WorkflowName": "t",
+   "DefaultDataStore": "S3",
+   "LoggingDataStore": "S3",
+   "FaaSrLog": "FaaSrLog",
+   "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+   "ActionList": {
+    "p": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "p",
+     "Arguments": {
+      "folder": "tf",
+      "input1": "1st.csv",
+      "input2": "1st-csv",
+      "input3": "p.txt_",
+      "output1": "p__output1__p_1.json",
+      "output2": "p__output2__p-1.json"
+     },
+     "InvokeNext": []
+    }
+   },
+   "ActionContainers": {
+    "p": "ghcr.io/faasr/github-actions-python:latest"
+   },
+   "ComputeServers": {
+    "My_GitHub_Account": {
+     "FaaSType": "GitHubActions",
+     "UserName": "<FAASR_GH_USERNAME>",
+     "ActionRepoName": "<FAASR_ACTION_REPO>",
+     "Branch": "main",
+     "UseSecretStore": true
+    }
+   },
+   "DataStores": {
+    "S3": {
+     "Endpoint": "<FAASR_S3_ENDPOINT>",
+     "Bucket": "<FAASR_S3_BUCKET>",
+     "Region": "<FAASR_S3_REGION>",
+     "AccessKey": "S3_AccessKey",
+     "SecretKey": "S3_SecretKey",
+     "Writable": "TRUE"
+    }
+   },
+   "FunctionGitRepo": {
+    "p": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/p.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/p_main.py"
+    ]
+   }
+  },
+  "names": {
+   "f_1st_csv": "1st-csv",
+   "f_1st_csv_2": "1st.csv",
+   "p_txt": "p.txt_",
+   "p/output1": "p__output1__p_1.json",
+   "p/output2": "p__output2__p-1.json"
+  },
+  "outputs": {
+   "files": [
+    {
+     "action": "p",
+     "file": "p__output1__p_1.json"
+    },
+    {
+     "action": "p",
+     "file": "p__output2__p-1.json"
+    }
+   ],
+   "deliverables": [
+    {
+     "output": "p_1_json",
+     "file": "p__output2__p-1.json",
+     "deliver_as": "results/p-1.json"
+    },
+    {
+     "output": "p_1_json_2",
+     "file": "p__output1__p_1.json",
+     "deliver_as": "results/p_1.json"
+    }
+   ]
+  },
+  "external_inputs": [
+   {
+    "input": "f_1st_csv",
+    "file": "1st-csv",
+    "location": "file://<fixture>/inputs/1st-csv",
+    "s3_path": "tf/1st-csv"
+   },
+   {
+    "input": "f_1st_csv_2",
+    "file": "1st.csv",
+    "location": "file://<fixture>/inputs/1st.csv",
+    "s3_path": "tf/1st.csv"
+   },
+   {
+    "input": "p_txt",
+    "file": "p.txt_",
+    "location": "file://<fixture>/inputs/p.txt_",
+    "s3_path": "tf/p.txt_"
+   }
+  ]
+ }
+}

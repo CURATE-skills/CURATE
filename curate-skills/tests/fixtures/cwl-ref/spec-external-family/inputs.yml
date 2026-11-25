@@ -1,0 +1,14 @@
+rank3:
+- 1
+- 2
+- 3
+cfg_json:
+  class: File
+  location: inputs/cfg.json
+data_rank3_csv:
+- class: File
+  location: inputs/data_1.csv
+- class: File
+  location: inputs/data_2.csv
+- class: File
+  location: inputs/data_3.csv

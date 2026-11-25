@@ -170,6 +170,10 @@ def main(argv=None) -> int:
     if "cwl" in a.what:
         for d in sorted(p for p in REF.iterdir() if (p / "spec.json").is_file()):
             plan.tree(d, spec_cwl_files(d))
+        if a.update and "expected" in a.what:  # the expected outputs are made from the CWL just written
+            n = apply(plan)
+            print(f"{n} CWL file(s) written; now the expected outputs")
+            plan = Plan()
     if "expected" in a.what:
         for d in sorted(p for p in REF.iterdir() if (p / "workflow.yml").is_file()):
             plan.file(d / "expected.json", dump(expected_of(d)))
@@ -179,23 +183,29 @@ def main(argv=None) -> int:
             raise SystemExit("`real` needs --ref <folder with weather-v1, weather-run, mapreduce-v1, mapreduce-run>")
         for which in REAL_RUNS:
             plan.tree(REAL / which, real_files(a.ref.expanduser(), which), keep=())
-    for path, data in plan.changes:
-        print(("delete " if data is None else "write  " if not path.exists() else "change ")
-              + str(path.relative_to(PLUGIN)))
+    if not a.update:
+        for path, data in plan.changes:
+            print(("delete " if data is None else "write  " if not path.exists() else "change ")
+                  + str(path.relative_to(PLUGIN)))
     if not plan.changes:
         print("all references match the current code")
         return 0
     if not a.update:
         print(f"{len(plan.changes)} reference file(s) would change; nothing written (pass --update to write them)")
         return 1
+    print(f"{apply(plan)} reference file(s) written")
+    return 0
+
+
+def apply(plan: Plan) -> int:
     for path, data in plan.changes:
+        print(("delete " if data is None else "write  ") + str(path.relative_to(PLUGIN)))
         if data is None:
             path.unlink()
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
-    print(f"{len(plan.changes)} reference file(s) written")
-    return 0
+    return len(plan.changes)
 
 
 if __name__ == "__main__":

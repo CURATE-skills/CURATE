@@ -1,0 +1,140 @@
+cwlVersion: v1.2
+class: Workflow
+$namespaces:
+  curate: https://github.com/CURATE-skills/CURATE/blob/main/docs/CWL_IR.md#
+label: T One
+doc: x y z
+requirements:
+  ScatterFeatureRequirement: {}
+hints:
+  DockerRequirement:
+    dockerPull: python:3.12-slim
+  ResourceRequirement:
+    coresMin: 1
+    ramMin: 2048
+inputs:
+  rank3:
+    type: int[]
+    default:
+    - 1
+    - 2
+    - 3
+  cfg_json:
+    type: File
+    default:
+      class: File
+      location: inputs/cfg.json
+  data_rank3_csv:
+    type: File[]
+    default:
+    - class: File
+      location: inputs/data_1.csv
+    - class: File
+      location: inputs/data_2.csv
+    - class: File
+      location: inputs/data_3.csv
+outputs:
+  sum_json:
+    type: File
+    outputSource: g/output1
+    curate:deliver_as: results/sum.json
+  z_rank3_json:
+    type: File[]
+    outputSource: g3/output1
+    curate:deliver_as: results/z_{rank3}.json
+steps:
+  m:
+    scatter:
+    - rank
+    - input1
+    scatterMethod: dotproduct
+    in:
+      rank: rank3
+      max_rank:
+        default: 3
+      input1: data_rank3_csv
+      input2: cfg_json
+    out:
+    - output1
+    run:
+      class: Operation
+      inputs:
+        rank: int
+        max_rank: int
+        input1: File
+        input2: File
+      outputs:
+        output1:
+          type: File
+          curate:name: part_{rank3}.csv
+    hints:
+      curate:function:
+        code: functions/m.py
+        entrypoint: main
+  all3:
+    scatter: rank
+    in:
+      rank: rank3
+      max_rank:
+        default: 3
+      input1: m/output1
+    out:
+    - output1
+    run:
+      class: Operation
+      inputs:
+        rank: int
+        max_rank: int
+        input1: File[]
+      outputs:
+        output1:
+          type: File
+          curate:name: seen_{rank3}.txt
+    hints:
+      curate:function:
+        code: functions/all3.py
+        entrypoint: main
+  g:
+    in:
+      input1:
+        source: m/output1
+        curate:folder: true
+    out:
+    - output1
+    run:
+      class: Operation
+      inputs:
+        input1: File[]
+      outputs:
+        output1:
+          type: File
+          curate:name: sum.json
+    hints:
+      curate:function:
+        code: functions/g.py
+        entrypoint: main
+  g3:
+    scatter: rank
+    in:
+      rank: rank3
+      max_rank:
+        default: 3
+      input1:
+        source: all3/output1
+        curate:folder: true
+    out:
+    - output1
+    run:
+      class: Operation
+      inputs:
+        rank: int
+        max_rank: int
+        input1: File[]
+      outputs:
+        output1:
+          type: File
+          curate:name: z_{rank3}.json
+    hints:
+      curate:function:
+        code: functions/g3.py
+        entrypoint: main

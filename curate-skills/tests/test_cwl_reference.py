@@ -43,11 +43,18 @@ def load(case):
     return d, wf, json.loads((d / "expected.json").read_text())
 
 
-def test_every_old_parity_case_has_a_reference():
+def test_every_case_has_a_reference():
     assert set(CASES) == {"diamond", "fanout", "e2-stages", "catalog-e2-mapreduce", "weather", "file-less-edge",
                           "list-folder-markers", "external-family", "two-axis-gather", "axis-types",
-                          "partial-gather"}
-    assert set(SPEC_CASES) == {"e2-stages", "catalog-e2-mapreduce", "weather", "file-less-edge"}
+                          "partial-gather", *SPEC_ONLY}
+    assert set(SPEC_CASES) == {"e2-stages", "catalog-e2-mapreduce", "weather", "file-less-edge", *SPEC_ONLY}
+
+
+# Specs for the shapes the cases above do not reach (an external {rank} family, read: all, a folder of
+# one plain file, ranked file-less edges, run_if, secrets, packages, id clashes), recorded when
+# spec_cwl stopped going through IR v0.2: both builders gave these byte-identical CWL.
+SPEC_ONLY = {"spec-external-family", "spec-plain-folder", "spec-edges-conditions", "spec-conditional-no-file",
+             "spec-ids"}
 
 
 @pytest.mark.parametrize("case", CASES)

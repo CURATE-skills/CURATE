@@ -1,0 +1,50 @@
+{
+  "name": "t4",
+  "folder": "t",
+  "nodes": [
+    {
+      "name": "a",
+      "code": "def main(inputs, outputs, params):\n    pass\n",
+      "rank": 1,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "a.txt"
+        }
+      ]
+    },
+    {
+      "name": "b",
+      "code": "def main(inputs, outputs, params):\n    pass\n",
+      "rank": 1,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "b.txt"
+        }
+      ]
+    },
+    {
+      "name": "c",
+      "code": "def main(inputs, outputs, params):\n    pass\n",
+      "rank": 1,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "c.txt"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "a",
+      "to_node": "c",
+      "condition": "True"
+    },
+    {
+      "from_node": "b",
+      "to_node": "c"
+    }
+  ]
+}

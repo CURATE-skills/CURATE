@@ -1,0 +1,252 @@
+{
+ "jobs": {
+  "name": "t2",
+  "description": "t2",
+  "defaults": {
+   "image": "docker:///python:3.12-slim",
+   "resources": {
+    "cpus": 1,
+    "memory_mb": 2048
+   }
+  },
+  "inputs": [],
+  "outputs": [
+   {
+    "file": "h__output1__p.txt",
+    "deliver_as": "results/p.txt"
+   }
+  ],
+  "nodes": [
+   {
+    "id": "w",
+    "_origin": "w",
+    "_assign": {},
+    "code": "functions/w.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "output1": "w__output1__notes.txt"
+    },
+    "params": {}
+   },
+   {
+    "id": "g",
+    "_origin": "g",
+    "_assign": {},
+    "code": "functions/g.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": {
+      "folder": [
+       "w__output1__notes.txt"
+      ]
+     }
+    },
+    "outputs": {
+     "output1": "g__output1__o.txt"
+    },
+    "params": {}
+   },
+   {
+    "id": "h",
+    "_origin": "h",
+    "_assign": {},
+    "code": "functions/h.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": "g__output1__o.txt"
+    },
+    "outputs": {
+     "output1": "h__output1__p.txt"
+    },
+    "params": {}
+   }
+  ],
+  "_base": "<fixture>"
+ },
+ "pegasus": {
+  "ir": {
+   "ir_version": "0.2",
+   "expanded": true,
+   "name": "t",
+   "description": "t2",
+   "defaults": {
+    "image": "docker:///python:3.12-slim",
+    "resources": {
+     "cpus": 1,
+     "memory_mb": 2048
+    }
+   },
+   "inputs": [],
+   "nodes": [
+    {
+     "id": "w",
+     "_origin": "w",
+     "_assign": {},
+     "code": "functions/w.py",
+     "entrypoint": "main",
+     "inputs": {},
+     "outputs": {
+      "output1": "w__output1__notes.txt"
+     },
+     "params": {}
+    },
+    {
+     "id": "g",
+     "_origin": "g",
+     "_assign": {},
+     "code": "functions/g.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": {
+       "folder": [
+        "w__output1__notes.txt"
+       ]
+      }
+     },
+     "outputs": {
+      "output1": "g__output1__o.txt"
+     },
+     "params": {}
+    },
+    {
+     "id": "h",
+     "_origin": "h",
+     "_assign": {},
+     "code": "functions/h.py",
+     "entrypoint": "main",
+     "inputs": {
+      "input1": "g__output1__o.txt"
+     },
+     "outputs": {
+      "output1": "h__output1__p.txt"
+     },
+     "params": {}
+    }
+   ],
+   "outputs": [
+    {
+     "file": "h__output1__p.txt",
+     "deliver_as": "results/p.txt"
+    }
+   ]
+  },
+  "copy": {},
+  "needed": []
+ },
+ "faasr": {
+  "workflow": {
+   "FunctionInvoke": "w",
+   "WorkflowName": "t",
+   "DefaultDataStore": "S3",
+   "LoggingDataStore": "S3",
+   "FaaSrLog": "FaaSrLog",
+   "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+   "ActionList": {
+    "w": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "w",
+     "Arguments": {
+      "folder": "tf",
+      "output1": "w__output1__notes.txt"
+     },
+     "InvokeNext": [
+      "g"
+     ]
+    },
+    "g": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "g",
+     "Arguments": {
+      "folder": "tf",
+      "input1": "w__output1__notes.txt",
+      "output1": "g__output1__o.txt"
+     },
+     "InvokeNext": [
+      "h"
+     ]
+    },
+    "h": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "h",
+     "Arguments": {
+      "folder": "tf",
+      "input1": "g__output1__o.txt",
+      "output1": "h__output1__p.txt"
+     },
+     "InvokeNext": []
+    }
+   },
+   "ActionContainers": {
+    "w": "ghcr.io/faasr/github-actions-python:latest",
+    "g": "ghcr.io/faasr/github-actions-python:latest",
+    "h": "ghcr.io/faasr/github-actions-python:latest"
+   },
+   "ComputeServers": {
+    "My_GitHub_Account": {
+     "FaaSType": "GitHubActions",
+     "UserName": "<FAASR_GH_USERNAME>",
+     "ActionRepoName": "<FAASR_ACTION_REPO>",
+     "Branch": "main",
+     "UseSecretStore": true
+    }
+   },
+   "DataStores": {
+    "S3": {
+     "Endpoint": "<FAASR_S3_ENDPOINT>",
+     "Bucket": "<FAASR_S3_BUCKET>",
+     "Region": "<FAASR_S3_REGION>",
+     "AccessKey": "S3_AccessKey",
+     "SecretKey": "S3_SecretKey",
+     "Writable": "TRUE"
+    }
+   },
+   "FunctionGitRepo": {
+    "w": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/w.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/w_main.py"
+    ],
+    "g": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/g.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/g_main.py"
+    ],
+    "h": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/h.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/h_main.py"
+    ]
+   }
+  },
+  "names": {
+   "w/output1": "w__output1__notes.txt",
+   "g/output1": "g__output1__o.txt",
+   "h/output1": "h__output1__p.txt"
+  },
+  "outputs": {
+   "files": [
+    {
+     "action": "w",
+     "file": "w__output1__notes.txt"
+    },
+    {
+     "action": "g",
+     "file": "g__output1__o.txt"
+    },
+    {
+     "action": "h",
+     "file": "h__output1__p.txt"
+    }
+   ],
+   "deliverables": [
+    {
+     "output": "p_txt",
+     "file": "h__output1__p.txt",
+     "deliver_as": "results/p.txt"
+    }
+   ]
+  },
+  "external_inputs": []
+ }
+}

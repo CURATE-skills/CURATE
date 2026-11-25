@@ -1,0 +1,58 @@
+{
+  "name": "t2",
+  "folder": "t",
+  "nodes": [
+    {
+      "name": "w",
+      "code": "def main(inputs, outputs, params):\n    pass\n",
+      "rank": 1,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "notes.txt"
+        }
+      ]
+    },
+    {
+      "name": "g",
+      "code": "def main(inputs, outputs, params):\n    pass\n",
+      "rank": 1,
+      "inputs": [
+        {
+          "name": "notes.txt",
+          "kind": "folder"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "o.txt"
+        }
+      ]
+    },
+    {
+      "name": "h",
+      "code": "def main(inputs, outputs, params):\n    pass\n",
+      "rank": 1,
+      "inputs": [
+        {
+          "name": "o.txt"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "p.txt"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "w",
+      "to_node": "g"
+    },
+    {
+      "from_node": "g",
+      "to_node": "h"
+    }
+  ]
+}

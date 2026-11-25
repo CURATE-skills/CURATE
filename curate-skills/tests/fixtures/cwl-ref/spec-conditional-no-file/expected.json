@@ -1,0 +1,87 @@
+{
+ "jobs": {
+  "name": "t4",
+  "description": "t4",
+  "defaults": {
+   "image": "docker:///python:3.12-slim",
+   "resources": {
+    "cpus": 1,
+    "memory_mb": 2048
+   }
+  },
+  "inputs": [],
+  "outputs": [
+   {
+    "file": "a__output1__a.txt",
+    "deliver_as": "results/a.txt"
+   },
+   {
+    "file": "b__output1__b.txt",
+    "deliver_as": "results/b.txt"
+   },
+   {
+    "file": "c__output1__c.txt",
+    "deliver_as": "results/c.txt"
+   }
+  ],
+  "nodes": [
+   {
+    "id": "a",
+    "_origin": "a",
+    "_assign": {},
+    "code": "functions/a.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "output1": "a__output1__a.txt"
+    },
+    "params": {}
+   },
+   {
+    "id": "b",
+    "_origin": "b",
+    "_assign": {},
+    "code": "functions/b.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "output1": "b__output1__b.txt"
+    },
+    "params": {}
+   },
+   {
+    "id": "c",
+    "_origin": "c",
+    "_assign": {},
+    "code": "functions/c.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "output1": "c__output1__c.txt"
+    },
+    "params": {},
+    "after": [
+     "b",
+     "a"
+    ],
+    "run_if": {
+     "after": [
+      "a"
+     ],
+     "result": true
+    }
+   }
+  ],
+  "_base": "<fixture>"
+ },
+ "pegasus": {
+  "problems": [
+   "step c runs only if a returns True (curate:run_if): Pegasus runs a fixed DAG in which every step runs, so it cannot honour the condition. Deploy to FaaSr instead."
+  ]
+ },
+ "faasr": {
+  "problems": [
+   "FaaSr starts one action; the workflow has 2 first steps (a, b)"
+  ]
+ }
+}

@@ -1,0 +1,63 @@
+cwlVersion: v1.2
+class: Workflow
+$namespaces:
+  curate: https://github.com/CURATE-skills/CURATE/blob/main/docs/CWL_IR.md#
+label: t6
+doc: t6
+hints:
+  DockerRequirement:
+    dockerPull: python:3.12-slim
+  ResourceRequirement:
+    coresMin: 1
+    ramMin: 2048
+inputs:
+  f_1st_csv:
+    type: File
+    default:
+      class: File
+      location: inputs/1st-csv
+  f_1st_csv_2:
+    type: File
+    default:
+      class: File
+      location: inputs/1st.csv
+  p_txt:
+    type: File
+    default:
+      class: File
+      location: inputs/p.txt_
+outputs:
+  p_1_json:
+    type: File
+    outputSource: p/output2
+    curate:deliver_as: results/p-1.json
+  p_1_json_2:
+    type: File
+    outputSource: p/output1
+    curate:deliver_as: results/p_1.json
+steps:
+  p:
+    in:
+      input1: f_1st_csv_2
+      input2: f_1st_csv
+      input3: p_txt
+    out:
+    - output1
+    - output2
+    run:
+      class: Operation
+      inputs:
+        input1: File
+        input2: File
+        input3: File
+      outputs:
+        output1:
+          type: File
+          curate:name: p_1.json
+        output2:
+          type: File
+          curate:name: p-1.json
+    hints:
+      curate:function:
+        code: functions/p.py
+        entrypoint: main

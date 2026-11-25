@@ -1,0 +1,81 @@
+{
+  "name": "t3",
+  "folder": "t",
+  "nodes": [
+    {
+      "name": "a",
+      "code": "def main(inputs, outputs, params):\n    pass\n",
+      "rank": 2,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "a_{rank}.txt"
+        }
+      ],
+      "dependencies": [
+        "numpy",
+        "pandas"
+      ]
+    },
+    {
+      "name": "b",
+      "code": "def main(inputs, outputs, params):\n    pass\n",
+      "rank": 2,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "b_{rank}.txt"
+        }
+      ],
+      "secrets": [
+        "API_TOKEN",
+        "B_KEY"
+      ]
+    },
+    {
+      "name": "c",
+      "code": "def main(inputs, outputs, params):\n    pass\n",
+      "rank": 1,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "c.txt"
+        }
+      ]
+    },
+    {
+      "name": "d",
+      "code": "def main(inputs, outputs, params):\n    pass\n",
+      "rank": 1,
+      "inputs": [
+        {
+          "name": "c.txt"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "d.txt"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "a",
+      "to_node": "b"
+    },
+    {
+      "from_node": "b",
+      "to_node": "c"
+    },
+    {
+      "from_node": "a",
+      "to_node": "c"
+    },
+    {
+      "from_node": "c",
+      "to_node": "d",
+      "condition": "False"
+    }
+  ]
+}

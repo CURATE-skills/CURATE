@@ -1,0 +1,87 @@
+{
+  "name": "T One",
+  "description": "x  y\n z",
+  "folder": "t",
+  "nodes": [
+    {
+      "name": "m",
+      "code": "def main(inputs, outputs, params):\n    pass\n",
+      "rank": 3,
+      "inputs": [
+        {
+          "name": "data_{rank}.csv"
+        },
+        {
+          "name": "cfg.json"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "part_{rank}.csv"
+        }
+      ]
+    },
+    {
+      "name": "all3",
+      "code": "def main(inputs, outputs, params):\n    pass\n",
+      "rank": 3,
+      "inputs": [
+        {
+          "name": "part_{rank}.csv",
+          "read": "all"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "seen_{rank}.txt"
+        }
+      ]
+    },
+    {
+      "name": "g",
+      "code": "def main(inputs, outputs, params):\n    pass\n",
+      "rank": 1,
+      "inputs": [
+        {
+          "name": "part_{rank}.csv",
+          "kind": "folder"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sum.json"
+        }
+      ]
+    },
+    {
+      "name": "g3",
+      "code": "def main(inputs, outputs, params):\n    pass\n",
+      "rank": 3,
+      "inputs": [
+        {
+          "name": "seen_{rank}.txt",
+          "kind": "folder"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "z_{rank}.json"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "m",
+      "to_node": "all3"
+    },
+    {
+      "from_node": "m",
+      "to_node": "g"
+    },
+    {
+      "from_node": "all3",
+      "to_node": "g3"
+    }
+  ]
+}

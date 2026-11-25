@@ -1,0 +1,356 @@
+{
+ "jobs": {
+  "name": "t3",
+  "description": "t3",
+  "defaults": {
+   "image": "docker:///python:3.12-slim",
+   "resources": {
+    "cpus": 1,
+    "memory_mb": 2048
+   }
+  },
+  "inputs": [],
+  "outputs": [
+   {
+    "file": "a__output1__1__a_1.txt",
+    "deliver_as": "results/a_1.txt"
+   },
+   {
+    "file": "a__output1__2__a_2.txt",
+    "deliver_as": "results/a_2.txt"
+   },
+   {
+    "file": "b__output1__1__b_1.txt",
+    "deliver_as": "results/b_1.txt"
+   },
+   {
+    "file": "b__output1__2__b_2.txt",
+    "deliver_as": "results/b_2.txt"
+   },
+   {
+    "file": "d__output1__d.txt",
+    "deliver_as": "results/d.txt"
+   }
+  ],
+  "nodes": [
+   {
+    "id": "a__1",
+    "_origin": "a",
+    "_assign": {
+     "rank2": "1"
+    },
+    "code": "functions/a.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "output1": "a__output1__1__a_1.txt"
+    },
+    "params": {
+     "rank": 1,
+     "max_rank": 2
+    },
+    "packages": [
+     "numpy",
+     "pandas"
+    ]
+   },
+   {
+    "id": "a__2",
+    "_origin": "a",
+    "_assign": {
+     "rank2": "2"
+    },
+    "code": "functions/a.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "output1": "a__output1__2__a_2.txt"
+    },
+    "params": {
+     "rank": 2,
+     "max_rank": 2
+    },
+    "packages": [
+     "numpy",
+     "pandas"
+    ]
+   },
+   {
+    "id": "b__1",
+    "_origin": "b",
+    "_assign": {
+     "rank2": "1"
+    },
+    "code": "functions/b.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "output1": "b__output1__1__b_1.txt"
+    },
+    "params": {
+     "rank": 1,
+     "max_rank": 2
+    },
+    "after": [
+     "a__1",
+     "a__2"
+    ],
+    "secrets": [
+     "API_TOKEN",
+     "B_KEY"
+    ]
+   },
+   {
+    "id": "b__2",
+    "_origin": "b",
+    "_assign": {
+     "rank2": "2"
+    },
+    "code": "functions/b.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "output1": "b__output1__2__b_2.txt"
+    },
+    "params": {
+     "rank": 2,
+     "max_rank": 2
+    },
+    "after": [
+     "a__1",
+     "a__2"
+    ],
+    "secrets": [
+     "API_TOKEN",
+     "B_KEY"
+    ]
+   },
+   {
+    "id": "c",
+    "_origin": "c",
+    "_assign": {},
+    "code": "functions/c.py",
+    "entrypoint": "main",
+    "inputs": {},
+    "outputs": {
+     "output1": "c__output1__c.txt"
+    },
+    "params": {},
+    "after": [
+     "b__1",
+     "b__2",
+     "a__1",
+     "a__2"
+    ]
+   },
+   {
+    "id": "d",
+    "_origin": "d",
+    "_assign": {},
+    "code": "functions/d.py",
+    "entrypoint": "main",
+    "inputs": {
+     "input1": "c__output1__c.txt"
+    },
+    "outputs": {
+     "output1": "d__output1__d.txt"
+    },
+    "params": {},
+    "after": [
+     "c"
+    ],
+    "run_if": {
+     "after": [
+      "c"
+     ],
+     "result": false
+    }
+   }
+  ],
+  "_base": "<fixture>"
+ },
+ "pegasus": {
+  "problems": [
+   "step d runs only if c returns False (curate:run_if): Pegasus runs a fixed DAG in which every step runs, so it cannot honour the condition. Deploy to FaaSr instead."
+  ]
+ },
+ "faasr": {
+  "workflow": {
+   "FunctionInvoke": "a",
+   "WorkflowName": "t",
+   "DefaultDataStore": "S3",
+   "LoggingDataStore": "S3",
+   "FaaSrLog": "FaaSrLog",
+   "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+   "ActionList": {
+    "a": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "a",
+     "Arguments": {
+      "folder": "tf",
+      "output1": "a__output1__{rank}__a_{rank}.txt"
+     },
+     "InvokeNext": [
+      "b(2)",
+      "c"
+     ]
+    },
+    "b": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "b",
+     "Arguments": {
+      "folder": "tf",
+      "output1": "b__output1__{rank}__b_{rank}.txt"
+     },
+     "InvokeNext": [
+      "c"
+     ]
+    },
+    "c": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "c",
+     "Arguments": {
+      "folder": "tf",
+      "output1": "c__output1__c.txt"
+     },
+     "InvokeNext": [
+      {
+       "False": [
+        "d"
+       ]
+      }
+     ]
+    },
+    "d": {
+     "FaaSServer": "My_GitHub_Account",
+     "Type": "Python",
+     "FunctionName": "d",
+     "Arguments": {
+      "folder": "tf",
+      "input1": "c__output1__c.txt",
+      "output1": "d__output1__d.txt"
+     },
+     "InvokeNext": []
+    }
+   },
+   "ActionContainers": {
+    "a": "ghcr.io/faasr/github-actions-python:latest",
+    "b": "ghcr.io/faasr/github-actions-python:latest",
+    "c": "ghcr.io/faasr/github-actions-python:latest",
+    "d": "ghcr.io/faasr/github-actions-python:latest"
+   },
+   "ComputeServers": {
+    "My_GitHub_Account": {
+     "FaaSType": "GitHubActions",
+     "UserName": "<FAASR_GH_USERNAME>",
+     "ActionRepoName": "<FAASR_ACTION_REPO>",
+     "Branch": "main",
+     "UseSecretStore": true
+    }
+   },
+   "DataStores": {
+    "S3": {
+     "Endpoint": "<FAASR_S3_ENDPOINT>",
+     "Bucket": "<FAASR_S3_BUCKET>",
+     "Region": "<FAASR_S3_REGION>",
+     "AccessKey": "S3_AccessKey",
+     "SecretKey": "S3_SecretKey",
+     "Writable": "TRUE"
+    }
+   },
+   "FunctionGitRepo": {
+    "a": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/a.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/a_main.py"
+    ],
+    "b": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/b.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/b_main.py"
+    ],
+    "c": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/c.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/c_main.py"
+    ],
+    "d": [
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/d.py",
+     "<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>/main/functions/d_main.py"
+    ]
+   },
+   "PyPIPackageDownloads": {
+    "a": [
+     "numpy",
+     "pandas"
+    ]
+   },
+   "Secrets": [
+    "API_TOKEN",
+    "B_KEY"
+   ]
+  },
+  "names": {
+   "a/output1": "a__output1__{rank}__a_{rank}.txt",
+   "b/output1": "b__output1__{rank}__b_{rank}.txt",
+   "c/output1": "c__output1__c.txt",
+   "d/output1": "d__output1__d.txt"
+  },
+  "outputs": {
+   "files": [
+    {
+     "action": "a",
+     "file": "a__output1__1__a_1.txt"
+    },
+    {
+     "action": "a",
+     "file": "a__output1__2__a_2.txt"
+    },
+    {
+     "action": "b",
+     "file": "b__output1__1__b_1.txt"
+    },
+    {
+     "action": "b",
+     "file": "b__output1__2__b_2.txt"
+    },
+    {
+     "action": "c",
+     "file": "c__output1__c.txt"
+    },
+    {
+     "action": "d",
+     "file": "d__output1__d.txt"
+    }
+   ],
+   "deliverables": [
+    {
+     "output": "a_rank2_txt",
+     "file": "a__output1__1__a_1.txt",
+     "deliver_as": "results/a_1.txt"
+    },
+    {
+     "output": "a_rank2_txt",
+     "file": "a__output1__2__a_2.txt",
+     "deliver_as": "results/a_2.txt"
+    },
+    {
+     "output": "b_rank2_txt",
+     "file": "b__output1__1__b_1.txt",
+     "deliver_as": "results/b_1.txt"
+    },
+    {
+     "output": "b_rank2_txt",
+     "file": "b__output1__2__b_2.txt",
+     "deliver_as": "results/b_2.txt"
+    },
+    {
+     "output": "d_txt",
+     "file": "d__output1__d.txt",
+     "deliver_as": "results/d.txt"
+    }
+   ]
+  },
+  "external_inputs": []
+ }
+}
