@@ -1,6 +1,6 @@
 # /// script
 # requires-python = "==3.13.*"
-# dependencies = ["FaaSr_py==0.1.13", "PyGithub>=2.8.1", "requests", "pydantic==2.11.7", "cwl-utils==0.47", "pyyaml==6.0.2"]  # FaaSr_py pins boto3
+# dependencies = ["FaaSr_py==0.1.13", "PyGithub>=2.8.1", "requests", "pydantic==2.11.7", "cwl-utils==0.47", "pyyaml==6.0.2", "pegasus-wms.api==5.1.3"]  # FaaSr_py pins boto3
 # ///
 # Copyright (c) 2026 Nolan Cutler. MIT License; see NOTICE.
 # Follows CURATE-prototype's run monitor (src/faasr_agents/faasr/runtime/, vendored in

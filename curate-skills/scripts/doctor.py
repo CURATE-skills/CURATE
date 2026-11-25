@@ -119,7 +119,7 @@ def check_uv_envs(r: Report, uv: str | None):
     if not uv:
         r.add("core", "Python 3.13 + packages", "fail", "not checked: uv is missing (see above).")
         return
-    # The stage scripts (spec.py's header: pydantic, rank-bm25, cwl-utils, pyyaml, boto3) and the FaaSr_py
+    # The stage scripts (spec.py's header: pydantic, rank-bm25, cwl-utils, pyyaml, boto3, pegasus-wms.api) and the FaaSr_py
     # validator, each in its own uv env,
     # exactly as the skills run them. Both are read-only; the validator gets an empty workflow.
     code, out, err = _run([uv, "run", "--quiet", str(SCRIPT_DIR / "spec.py"), "--help"], timeout=UV_TIMEOUT)
@@ -133,7 +133,7 @@ def check_uv_envs(r: Report, uv: str | None):
         res, val_ok = {}, False
     if stage_ok and val_ok:
         r.add("core", "Python 3.13 + packages", "ok", "uv provides Python 3.13 with the stage packages "
-              f"(pydantic, rank-bm25, cwl-utils, pyyaml, boto3) and {FAASR_PY} (cached for later runs)")
+              f"(pydantic, rank-bm25, cwl-utils, pyyaml, boto3, pegasus-wms.api) and {FAASR_PY} (cached for later runs)")
         return
     what = ([] if stage_ok else [f"stage scripts: {_tail(err)}"]) + \
            ([] if val_ok else [f"FaaSr_py: {res.get('error') or _tail(err2)}"])
@@ -536,7 +536,7 @@ def s3_probe() -> int:
 # ── pegasus ──────────────────────────────────────────────────────────────────
 
 PLUGIN_DIR = SCRIPT_DIR.parent
-IR_TOOLS = ("curate_ir/validate.py", "curate_ir/expand.py", "curate_ir/backends/pegasus_backend.py",
+IR_TOOLS = ("curate_ir/backends/pegasus_backend.py",
             "curate_ir/runner/curate_run.py")
 PEGASUS_RUNTIMES = ("docker", "singularity")
 DEFAULT_PEGASUS_IMAGE = envfile.DEFAULT_PEGASUS_IMAGE

@@ -85,15 +85,15 @@ def _where(rec: dict) -> dict:
     """Paths on the Pegasus host for the backend's status/collect."""
     if rec.get("host"):
         root = rec["remote_dir"]
-        folder = Path(rec.get("ir_dir") or "ir").name  # "ir", or "bundle" for a versioned run
-        return {"host": rec["host"], "ir": f"{root}/{folder}/ir.yaml", "work": rec["work_dir"],
+        folder = Path(rec.get("ir_dir") or "bundle").name  # the Pegasus folder (the execution run's bundle/)
+        return {"host": rec["host"], "workflow": f"{root}/{folder}/workflow.yml", "work": rec["work_dir"],
                 "backend": f"{root}/curate_ir/backends/pegasus_backend.py"}
-    return {"host": None, "ir": str(Path(rec["ir_dir"]) / "ir.yaml"), "work": rec["work_dir"],
+    return {"host": None, "workflow": str(Path(rec["ir_dir"]) / "workflow.yml"), "work": rec["work_dir"],
             "backend": str(IR_TOOLS / "backends" / "pegasus_backend.py")}
 
 
 def _backend(w: dict, cmd: str, timeout=300) -> dict:
-    code, out, err = hostcmd.on(w["host"], f"python3 {q(w['backend'])} {cmd} {q(w['ir'])} --work {q(w['work'])}",
+    code, out, err = hostcmd.on(w["host"], f"python3 {q(w['backend'])} {cmd} {q(w['workflow'])} --work {q(w['work'])}",
                                 runner=RUN, timeout=timeout)
     try:
         return json.loads(out[out.index("{"):])

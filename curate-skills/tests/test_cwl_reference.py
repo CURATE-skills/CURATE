@@ -4,7 +4,8 @@ same cases stay covered once the IR v0.2 code is gone.
 
 Each case is a CWL folder (workflow.yml, inputs.yml, functions/, input files) with expected.json:
   jobs     cwl/expand_cwl.py's expansion: every job, its files, params and order
-  pegasus  the Pegasus build (or the problems it refuses the workflow with)
+  pegasus  the Pegasus build: its native workflow.yml, files to copy, files needed (or the problems
+           it refuses the workflow with)
   faasr    the FaaSr build: workflow, generated names, outputs, external inputs (or problems)
 and, for e2-stages, runs.json: what both bundles write when they run (see the last test).
 The spec cases (spec.json present) also check that spec_cwl builds that CWL byte for byte.
@@ -69,7 +70,7 @@ def test_pegasus_build_matches_the_reference(case):
     d, wf, want = load(case)
     try:
         b = CP.build(wf, "t")
-        got = norm({k: b[k] for k in ("ir", "copy", "needed")}, d)
+        got = norm({k: b[k] for k in ("workflow", "copy", "needed")}, d)
     except CP.BuildError as e:
         got = {"problems": e.problems}
     assert got == want["pegasus"]
@@ -133,7 +134,7 @@ def test_the_e2_runs_match_the_reference(tmp_path):
     assert {k.split("/", 1)[1]: sha(p) for k, p in objects.items() if "word_count_" in k} == want["results_sha256"]
 
     folder = CP.write_folder(tmp_path / "pegasus", CP.build(wf, "t-flow"))
-    files = run_locally(folder / "ir.yaml", tmp_path / "jobs")
+    files = run_locally(folder / "workflow.yml", tmp_path / "jobs")
     assert sorted(files) == want["pegasus_files"]
     assert {k: sha(p) for k, p in files.items() if "word_count_" in k} == want["results_sha256"]
 
@@ -147,7 +148,7 @@ def test_diamond_and_fanout_give_the_same_result(tmp_path):
     for case in ("diamond", "fanout"):
         _, wf, _ = load(case)
         folder = CP.write_folder(tmp_path / case, CP.build(wf, case))
-        files = run_locally(folder / "ir.yaml", tmp_path / f"{case}-jobs")
+        files = run_locally(folder / "workflow.yml", tmp_path / f"{case}-jobs")
         (got[case],) = [p.read_bytes() for k, p in files.items() if k.endswith("__ice_phenology_result.json")]
     assert got["diamond"] and got["diamond"] == got["fanout"]
 

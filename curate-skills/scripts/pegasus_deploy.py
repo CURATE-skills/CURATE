@@ -1,6 +1,6 @@
 # /// script
 # requires-python = "==3.13.*"
-# dependencies = ["pydantic==2.11.7", "rank-bm25==0.2.2", "pyyaml==6.0.2", "boto3==1.37.11", "cwl-utils==0.47"]
+# dependencies = ["pydantic==2.11.7", "rank-bm25==0.2.2", "pyyaml==6.0.2", "boto3==1.37.11", "cwl-utils==0.47", "pegasus-wms.api==5.1.3"]
 # ///
 """The Pegasus target's deploy steps, for a run whose Gate 4 chose "Approve & run on Pegasus".
 
@@ -13,8 +13,8 @@
 preflight is read-only. Each step without --confirmed writes nothing and returns
 `needs_confirmation` with a `plan`; the stage asks the user, then repeats it with --confirmed.
 
-  prepare  writes <run>/pegasus/ir/ (ir.yaml, functions/, inputs/ with the files from --inputs)
-           and validates it (curate_ir/validate.py).
+  prepare  writes the execution run's bundle/ (workflow.yml: the Pegasus workflow, scripts/cwl_pegasus.py;
+           functions/; inputs/ with the files from --inputs) and checks it (cwl_pegasus.validate_folder).
   copy     CURATE_PEGASUS_HOST only: creates <host>:~/curate-runs/<run_id>/ and copies ir/ and
            the plugin's curate_ir/ into it.
   launch   pegasus_backend.py submit, here or over ssh: plans and submits to HTCondor and returns
@@ -144,15 +144,15 @@ def _layout(run: Path, s: dict, st: dict) -> dict:
                         "this run has no Pegasus execution run (it is opened when Gate 4 or \"Start this run?\" "
                         "chooses Pegasus); approve Gate 4 again with --deploy pegasus")
     # the folder is the execution run's bundle, and the host path its full reference
-    local, ir_dir, ref = Path(ex["dir"]), Path(ex["bundle_dir"]), ex["reference"]
+    local, ir_dir, ref = Path(ex["dir"]), Path(ex["bundle_dir"]), ex["reference"]  # ir_dir: the Pegasus folder
     out = {"local": local, "ir_dir": ir_dir, "where": st["host"] or "local", "reference": ref}
     if st["host"]:
         remote = rec.get("remote_dir")  # absolute, known after copy
         shown = remote or f"~/{REMOTE_ROOT}/{ref}"
-        out.update(remote_dir=remote, shown_remote=shown, ir_on_host=f"{shown}/{ir_dir.name}/ir.yaml",
+        out.update(remote_dir=remote, shown_remote=shown, workflow_on_host=f"{shown}/{ir_dir.name}/workflow.yml",
                    work=f"{shown}/work", backend=f"{shown}/curate_ir/backends/pegasus_backend.py")
     else:
-        out.update(remote_dir=None, ir_on_host=str(ir_dir / "ir.yaml"), work=str(local / "work"),
+        out.update(remote_dir=None, workflow_on_host=str(ir_dir / "workflow.yml"), work=str(local / "work"),
                    backend=str(IR_TOOLS / "backends" / "pegasus_backend.py"))
     return out
 
@@ -231,7 +231,7 @@ def preflight(run: str, inputs_dir=None) -> dict:
         state_ = "exists — refused" if lay["ir_dir"].exists() else "new"
         if lay["ir_dir"].exists():
             problems.append(f"{lay['ir_dir']} already exists; nothing is overwritten")
-        lines.append(f"- writes `{lay['ir_dir']}/` (ir.yaml, functions/ {plan['functions']} files, inputs/): {state_}")
+        lines.append(f"- writes `{lay['ir_dir']}/` (workflow.yml, functions/ {plan['functions']} files, inputs/): {state_}")
         problems += _inputs(plan["inputs"], inputs_dir)
     if st["host"]:
         if "copy" in done:
@@ -261,7 +261,7 @@ def preflight(run: str, inputs_dir=None) -> dict:
 def _plan(step: str, run_p: Path, s: dict, st: dict, lay: dict) -> dict:
     where = st["host"] or "this machine"
     if step == "prepare":
-        paths = [f"{lay['ir_dir']}/ir.yaml", f"{lay['ir_dir']}/functions/", f"{lay['ir_dir']}/inputs/"]
+        paths = [f"{lay['ir_dir']}/workflow.yml", f"{lay['ir_dir']}/functions/", f"{lay['ir_dir']}/inputs/"]
     elif step == "copy":
         paths = [f"{st['host']}:{lay['shown_remote']}/{lay['ir_dir'].name}/", f"{st['host']}:{lay['shown_remote']}/curate_ir/"]
     else:
@@ -342,7 +342,7 @@ def _prepare_versioned(run_p, s, st, lay, inputs_dir, spec) -> dict:
         shutil.copy2(Path(inputs_dir) / f, ir_dir / "inputs" / f)
     v = cwl_pegasus.validate_folder(ir_dir)
     if v["errors"]:
-        raise StepError("the IR did not validate: " + " | ".join(v["errors"]))
+        raise StepError("the Pegasus workflow folder is not valid: " + " | ".join(v["errors"]))
     return {"execution": X.finish_pegasus(s, ex), "record": {"name": name, "host": st["host"], "runtime": st["runtime"], "image": st["image"],
                        "image_source": st["image_source"], "reference": ex["reference"],
                        "ir_dir": str(ir_dir), "inputs_from": str(Path(inputs_dir).resolve()) if inputs_dir else None,
@@ -385,7 +385,7 @@ def _launch(run_p, s, st, lay, overwrite_own, inputs_dir) -> dict:
         if code != 0:
             raise StepError(f"could not remove this run's own {work} ({_tail(err, 2)})")
     _log(run_p, "launch", where, work)
-    cmd = (f"{PEGASUS_PY} {q(lay['backend'])} submit {q(lay['ir_on_host'])} --work {q(work)} "
+    cmd = (f"{PEGASUS_PY} {q(lay['backend'])} submit {q(lay['workflow_on_host'])} --work {q(work)} "
            f"--runtime {q(st['runtime'])}")
     code, out, err = _on(host, cmd, timeout=600)
     if code != 0:

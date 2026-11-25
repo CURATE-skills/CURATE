@@ -120,7 +120,7 @@ def test_preflight_local(peg_run, fake):
                                      "runtime docker")
     ir, _, ref = ex(peg_run)
     assert ir.parent.parent.parent.name == state(peg_run)["workflow_id"] and ref.startswith(state(peg_run)["workflow_id"] + "/")
-    assert f"- writes `{ir}/` (ir.yaml, functions/ 5 files, inputs/): new" in out["summary"]
+    assert f"- writes `{ir}/` (workflow.yml, functions/ 5 files, inputs/): new" in out["summary"]
     assert "- input files: none" in out["summary"]
     assert not ir.parent.exists()  # read-only
 
@@ -132,7 +132,7 @@ def test_each_step_asks_first_then_runs(peg_run, fake):
     assert not ir.parent.exists()
     out = PD.step(str(peg_run), "prepare", confirmed=True)
     assert out["ok"] and out["progress"] == "prepared" and out["next_step"] == "launch"
-    assert (ir / "ir.yaml").is_file() and len(list((ir / "functions").iterdir())) == 5
+    assert (ir / "workflow.yml").is_file() and len(list((ir / "functions").iterdir())) == 5
     assert (ir.parent / "manifest.json").is_file()  # built from the approved version, then the manifest
     import ids
     assert ids.check_manifest(ir.parent, state(peg_run)["version_hash"])["target"] == "pegasus"
@@ -243,7 +243,7 @@ def test_remote_host_copy_and_launch(peg_run, fake, monkeypatch):
     assert plan["paths"] == [f"maxwell:~/curate-runs/{rid}/bundle/", f"maxwell:~/curate-runs/{rid}/curate_ir/"]
     run_steps(peg_run, "copy")
     remote = fake.home / "curate-runs" / rid
-    assert (remote / "bundle" / "ir.yaml").is_file() and (remote / "curate_ir" / "backends" / "pegasus_backend.py").is_file()
+    assert (remote / "bundle" / "workflow.yml").is_file() and (remote / "curate_ir" / "backends" / "pegasus_backend.py").is_file()
     out = run_steps(peg_run, "launch")
     assert out["progress"] == "prepared · copied · launched"
     rec = state(peg_run)["pegasus"]
@@ -292,21 +292,21 @@ def backend(cmd, ir, work):
 
 
 def tiny_ir(tmp_path):
-    d = tmp_path / "ir"
-    (d / "functions").mkdir(parents=True)
-    for n in ("a", "b"):
-        (d / "functions" / f"{n}.py").write_text("def main(inputs, outputs, params):\n    pass\n")
-    (d / "ir.yaml").write_text("""ir_version: "0.2"
-name: wf
-defaults: {image: "docker:///python:3.12-slim"}
-axes: {r: ["1", "2"]}
-nodes:
-  - {id: a, code: functions/a.py, outputs: {o: a.txt}}
-  - {id: b, code: functions/b.py, for_each: [r], inputs: {i: a.txt}, outputs: {o: "b_{r}.txt"}}
-outputs:
-  - {file: "b_{r}.txt", deliver_as: "results/b_{r}.txt"}
-""")
-    return d / "ir.yaml"
+    """A small Pegasus folder built the real way (spec -> spec_cwl -> cwl_pegasus): step a, then b ×2."""
+    import cwl_pegasus as CP
+    import spec_cwl
+    from curate_models import WorkflowSpec
+    sys.path.insert(0, str(IR_DIR))
+    from cwl.validate import validate
+    code = "def main(inputs, outputs, params):\n    pass\n"
+    spec = WorkflowSpec.model_validate({"name": "wf", "folder": "wf", "nodes": [
+        {"name": "a", "code": code, "inputs": [], "outputs": [{"name": "a.txt"}]},
+        {"name": "b", "code": code, "rank": 2, "inputs": [{"name": "a.txt"}], "outputs": [{"name": "b_{rank}.txt"}]}],
+        "edges": [{"from_node": "a", "to_node": "b"}]})
+    cwl = spec_cwl.write(spec_cwl.build(spec), tmp_path / "cwl")
+    wf, errors, _ = validate(cwl / "workflow.yml", cwl / "inputs.yml")
+    assert errors == []
+    return CP.write_folder(tmp_path / "bundle", CP.build(wf, "wf")) / "workflow.yml"
 
 
 def test_backend_status_and_collect(tmp_path):
@@ -328,11 +328,12 @@ def test_backend_status_and_collect(tmp_path):
         f.write("11/18/26 10:05:00 **** condor_scheduniv_exec.155.0 (condor_DAGMAN) pid 1 EXITING WITH STATUS 1\n")
     assert json.loads(backend("status", ir, work).stdout)["state"] == "failure"
     (work / "output").mkdir()
-    (work / "output" / "b_1.txt").write_text("one")
+    b1, b2 = "b__output1__1__b_1.txt", "b__output1__2__b_2.txt"  # the generated names
+    (work / "output" / b1).write_text("one")
     p = backend("collect", ir, work)
     rep = json.loads(p.stdout)
     assert p.returncode == 1 and rep["status"] == "failure (DAGMan status 1)"
-    assert rep["delivered"] == ["results/b_1.txt"] and rep["missing"] == ["b_2.txt"]
+    assert rep["delivered"] == ["results/b_1.txt"] and rep["missing"] == [b2]
     assert (work / "deliver" / "results" / "b_1.txt").read_text() == "one"
     assert json.loads((work / "run-report.json").read_text())["jobs"]["b__2"] == "failed"
 

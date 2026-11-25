@@ -155,7 +155,7 @@ def test_normal_pegasus_option_unchanged(source_run, capsys):  # noqa: F811
     assert s["pegasus"] is None and "image" not in s["history"][-1] and s["deploy_choice"] == "pegasus"
 
 
-# ── pinned at prepare: state.pegasus and ir.yaml ──
+# ── pinned at prepare: state.pegasus and the workflow's transformations ──
 
 @pytest.fixture
 def chosen(source_run, capsys, monkeypatch, tmp_path):  # noqa: F811
@@ -172,8 +172,9 @@ def test_prepare_pins_the_chosen_image(chosen, monkeypatch):
     run_steps(chosen, "prepare")
     rec = state(chosen)["pegasus"]
     assert rec["image"] == "docker:///me/tools:2" and rec["image_source"] == "chosen at Gate 4, this run only"
-    ir = yaml.safe_load((Path(state(chosen)["execution"]["bundle_dir"]) / "ir.yaml").read_text())
-    assert ir["defaults"]["image"] == "docker:///me/tools:2"
+    import cwl_pegasus as CP
+    wf = yaml.safe_load((Path(state(chosen)["execution"]["bundle_dir"]) / "workflow.yml").read_text())
+    assert {t["image"] for t in CP.metadata(wf)["transformations"].values()} == {"docker:///me/tools:2"}
     # CURATE_PEGASUS_IMAGE does not matter for a run with its own image; the runtime still does
     monkeypatch.setenv("CURATE_PEGASUS_IMAGE", "docker:///something/else:9")
     assert PD.preflight(str(chosen))["ok"]

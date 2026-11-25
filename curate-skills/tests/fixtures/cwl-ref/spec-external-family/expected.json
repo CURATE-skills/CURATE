@@ -274,278 +274,499 @@
   "_base": "<fixture>"
  },
  "pegasus": {
-  "ir": {
-   "ir_version": "0.2",
-   "expanded": true,
+  "workflow": {
+   "pegasus": "5.0.4",
    "name": "t",
-   "description": "x y z",
-   "defaults": {
-    "image": "docker:///python:3.12-slim",
-    "resources": {
-     "cpus": 1,
-     "memory_mb": 2048
-    }
+   "metadata": {
+    "curate.transformations": "{\"m\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}, \"all3\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}, \"g\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}, \"g3\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}}",
+    "curate.replicas": "{\"cfg.json\": \"inputs/cfg.json\", \"data_1.csv\": \"inputs/data_1.csv\", \"data_2.csv\": \"inputs/data_2.csv\", \"data_3.csv\": \"inputs/data_3.csv\", \"code__m__m.py\": \"functions/m.py\", \"code__all3__all3.py\": \"functions/all3.py\", \"code__g__g.py\": \"functions/g.py\", \"code__g3__g3.py\": \"functions/g3.py\"}",
+    "curate.deliverables": "[{\"file\": \"g__output1__sum.json\", \"deliver_as\": \"results/sum.json\"}, {\"file\": \"g3__output1__1__z_1.json\", \"deliver_as\": \"results/z_1.json\"}, {\"file\": \"g3__output1__2__z_2.json\", \"deliver_as\": \"results/z_2.json\"}, {\"file\": \"g3__output1__3__z_3.json\", \"deliver_as\": \"results/z_3.json\"}]"
    },
-   "inputs": [
+   "jobs": [
     {
-     "file": "cfg.json",
-     "location": "inputs/cfg.json"
+     "type": "job",
+     "name": "m",
+     "id": "m__1",
+     "arguments": [
+      "--code",
+      "code__m__m.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=data_1.csv",
+      "--in",
+      "input2=cfg.json",
+      "--out",
+      "output1=m__output1__1__part_1.csv",
+      "--params-json",
+      "'{\"rank\": 1, \"max_rank\": 3}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__m__m.py",
+       "type": "input"
+      },
+      {
+       "lfn": "data_1.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "cfg.json",
+       "type": "input"
+      },
+      {
+       "lfn": "m__output1__1__part_1.csv",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
     },
     {
-     "file": "data_1.csv",
-     "location": "inputs/data_1.csv"
+     "type": "job",
+     "name": "m",
+     "id": "m__2",
+     "arguments": [
+      "--code",
+      "code__m__m.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=data_2.csv",
+      "--in",
+      "input2=cfg.json",
+      "--out",
+      "output1=m__output1__2__part_2.csv",
+      "--params-json",
+      "'{\"rank\": 2, \"max_rank\": 3}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__m__m.py",
+       "type": "input"
+      },
+      {
+       "lfn": "data_2.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "cfg.json",
+       "type": "input"
+      },
+      {
+       "lfn": "m__output1__2__part_2.csv",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
     },
     {
-     "file": "data_2.csv",
-     "location": "inputs/data_2.csv"
+     "type": "job",
+     "name": "m",
+     "id": "m__3",
+     "arguments": [
+      "--code",
+      "code__m__m.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=data_3.csv",
+      "--in",
+      "input2=cfg.json",
+      "--out",
+      "output1=m__output1__3__part_3.csv",
+      "--params-json",
+      "'{\"rank\": 3, \"max_rank\": 3}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__m__m.py",
+       "type": "input"
+      },
+      {
+       "lfn": "data_3.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "cfg.json",
+       "type": "input"
+      },
+      {
+       "lfn": "m__output1__3__part_3.csv",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
     },
     {
-     "file": "data_3.csv",
-     "location": "inputs/data_3.csv"
+     "type": "job",
+     "name": "all3",
+     "id": "all3__1",
+     "arguments": [
+      "--code",
+      "code__all3__all3.py",
+      "--entrypoint",
+      "main",
+      "--in-list",
+      "input1=m__output1__1__part_1.csv",
+      "--in-list",
+      "input1=m__output1__2__part_2.csv",
+      "--in-list",
+      "input1=m__output1__3__part_3.csv",
+      "--out",
+      "output1=all3__output1__1__seen_1.txt",
+      "--params-json",
+      "'{\"rank\": 1, \"max_rank\": 3}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__all3__all3.py",
+       "type": "input"
+      },
+      {
+       "lfn": "m__output1__1__part_1.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "m__output1__2__part_2.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "m__output1__3__part_3.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "all3__output1__1__seen_1.txt",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "all3",
+     "id": "all3__2",
+     "arguments": [
+      "--code",
+      "code__all3__all3.py",
+      "--entrypoint",
+      "main",
+      "--in-list",
+      "input1=m__output1__1__part_1.csv",
+      "--in-list",
+      "input1=m__output1__2__part_2.csv",
+      "--in-list",
+      "input1=m__output1__3__part_3.csv",
+      "--out",
+      "output1=all3__output1__2__seen_2.txt",
+      "--params-json",
+      "'{\"rank\": 2, \"max_rank\": 3}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__all3__all3.py",
+       "type": "input"
+      },
+      {
+       "lfn": "m__output1__1__part_1.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "m__output1__2__part_2.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "m__output1__3__part_3.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "all3__output1__2__seen_2.txt",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "all3",
+     "id": "all3__3",
+     "arguments": [
+      "--code",
+      "code__all3__all3.py",
+      "--entrypoint",
+      "main",
+      "--in-list",
+      "input1=m__output1__1__part_1.csv",
+      "--in-list",
+      "input1=m__output1__2__part_2.csv",
+      "--in-list",
+      "input1=m__output1__3__part_3.csv",
+      "--out",
+      "output1=all3__output1__3__seen_3.txt",
+      "--params-json",
+      "'{\"rank\": 3, \"max_rank\": 3}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__all3__all3.py",
+       "type": "input"
+      },
+      {
+       "lfn": "m__output1__1__part_1.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "m__output1__2__part_2.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "m__output1__3__part_3.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "all3__output1__3__seen_3.txt",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "g",
+     "id": "g",
+     "arguments": [
+      "--code",
+      "code__g__g.py",
+      "--entrypoint",
+      "main",
+      "--in-dir",
+      "input1=m__output1__1__part_1.csv",
+      "--in-dir",
+      "input1=m__output1__2__part_2.csv",
+      "--in-dir",
+      "input1=m__output1__3__part_3.csv",
+      "--out",
+      "output1=g__output1__sum.json",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__g__g.py",
+       "type": "input"
+      },
+      {
+       "lfn": "m__output1__1__part_1.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "m__output1__2__part_2.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "m__output1__3__part_3.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "g__output1__sum.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "g3",
+     "id": "g3__1",
+     "arguments": [
+      "--code",
+      "code__g3__g3.py",
+      "--entrypoint",
+      "main",
+      "--in-dir",
+      "input1=all3__output1__1__seen_1.txt",
+      "--in-dir",
+      "input1=all3__output1__2__seen_2.txt",
+      "--in-dir",
+      "input1=all3__output1__3__seen_3.txt",
+      "--out",
+      "output1=g3__output1__1__z_1.json",
+      "--params-json",
+      "'{\"rank\": 1, \"max_rank\": 3}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__g3__g3.py",
+       "type": "input"
+      },
+      {
+       "lfn": "all3__output1__1__seen_1.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "all3__output1__2__seen_2.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "all3__output1__3__seen_3.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "g3__output1__1__z_1.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "g3",
+     "id": "g3__2",
+     "arguments": [
+      "--code",
+      "code__g3__g3.py",
+      "--entrypoint",
+      "main",
+      "--in-dir",
+      "input1=all3__output1__1__seen_1.txt",
+      "--in-dir",
+      "input1=all3__output1__2__seen_2.txt",
+      "--in-dir",
+      "input1=all3__output1__3__seen_3.txt",
+      "--out",
+      "output1=g3__output1__2__z_2.json",
+      "--params-json",
+      "'{\"rank\": 2, \"max_rank\": 3}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__g3__g3.py",
+       "type": "input"
+      },
+      {
+       "lfn": "all3__output1__1__seen_1.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "all3__output1__2__seen_2.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "all3__output1__3__seen_3.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "g3__output1__2__z_2.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "g3",
+     "id": "g3__3",
+     "arguments": [
+      "--code",
+      "code__g3__g3.py",
+      "--entrypoint",
+      "main",
+      "--in-dir",
+      "input1=all3__output1__1__seen_1.txt",
+      "--in-dir",
+      "input1=all3__output1__2__seen_2.txt",
+      "--in-dir",
+      "input1=all3__output1__3__seen_3.txt",
+      "--out",
+      "output1=g3__output1__3__z_3.json",
+      "--params-json",
+      "'{\"rank\": 3, \"max_rank\": 3}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__g3__g3.py",
+       "type": "input"
+      },
+      {
+       "lfn": "all3__output1__1__seen_1.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "all3__output1__2__seen_2.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "all3__output1__3__seen_3.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "g3__output1__3__z_3.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
     }
    ],
-   "nodes": [
+   "jobDependencies": [
     {
      "id": "m__1",
-     "_origin": "m",
-     "_assign": {
-      "rank3": "1"
-     },
-     "code": "functions/m.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "data_1.csv",
-      "input2": "cfg.json"
-     },
-     "outputs": {
-      "output1": "m__output1__1__part_1.csv"
-     },
-     "params": {
-      "rank": 1,
-      "max_rank": 3
-     }
+     "children": [
+      "all3__1",
+      "all3__2",
+      "all3__3",
+      "g"
+     ]
     },
     {
      "id": "m__2",
-     "_origin": "m",
-     "_assign": {
-      "rank3": "2"
-     },
-     "code": "functions/m.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "data_2.csv",
-      "input2": "cfg.json"
-     },
-     "outputs": {
-      "output1": "m__output1__2__part_2.csv"
-     },
-     "params": {
-      "rank": 2,
-      "max_rank": 3
-     }
+     "children": [
+      "all3__1",
+      "all3__2",
+      "all3__3",
+      "g"
+     ]
     },
     {
      "id": "m__3",
-     "_origin": "m",
-     "_assign": {
-      "rank3": "3"
-     },
-     "code": "functions/m.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "data_3.csv",
-      "input2": "cfg.json"
-     },
-     "outputs": {
-      "output1": "m__output1__3__part_3.csv"
-     },
-     "params": {
-      "rank": 3,
-      "max_rank": 3
-     }
+     "children": [
+      "all3__1",
+      "all3__2",
+      "all3__3",
+      "g"
+     ]
     },
     {
      "id": "all3__1",
-     "_origin": "all3",
-     "_assign": {
-      "rank3": "1"
-     },
-     "code": "functions/all3.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": [
-       "m__output1__1__part_1.csv",
-       "m__output1__2__part_2.csv",
-       "m__output1__3__part_3.csv"
-      ]
-     },
-     "outputs": {
-      "output1": "all3__output1__1__seen_1.txt"
-     },
-     "params": {
-      "rank": 1,
-      "max_rank": 3
-     }
+     "children": [
+      "g3__1",
+      "g3__2",
+      "g3__3"
+     ]
     },
     {
      "id": "all3__2",
-     "_origin": "all3",
-     "_assign": {
-      "rank3": "2"
-     },
-     "code": "functions/all3.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": [
-       "m__output1__1__part_1.csv",
-       "m__output1__2__part_2.csv",
-       "m__output1__3__part_3.csv"
-      ]
-     },
-     "outputs": {
-      "output1": "all3__output1__2__seen_2.txt"
-     },
-     "params": {
-      "rank": 2,
-      "max_rank": 3
-     }
+     "children": [
+      "g3__1",
+      "g3__2",
+      "g3__3"
+     ]
     },
     {
      "id": "all3__3",
-     "_origin": "all3",
-     "_assign": {
-      "rank3": "3"
-     },
-     "code": "functions/all3.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": [
-       "m__output1__1__part_1.csv",
-       "m__output1__2__part_2.csv",
-       "m__output1__3__part_3.csv"
-      ]
-     },
-     "outputs": {
-      "output1": "all3__output1__3__seen_3.txt"
-     },
-     "params": {
-      "rank": 3,
-      "max_rank": 3
-     }
-    },
-    {
-     "id": "g",
-     "_origin": "g",
-     "_assign": {},
-     "code": "functions/g.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": {
-       "folder": [
-        "m__output1__1__part_1.csv",
-        "m__output1__2__part_2.csv",
-        "m__output1__3__part_3.csv"
-       ]
-      }
-     },
-     "outputs": {
-      "output1": "g__output1__sum.json"
-     },
-     "params": {}
-    },
-    {
-     "id": "g3__1",
-     "_origin": "g3",
-     "_assign": {
-      "rank3": "1"
-     },
-     "code": "functions/g3.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": {
-       "folder": [
-        "all3__output1__1__seen_1.txt",
-        "all3__output1__2__seen_2.txt",
-        "all3__output1__3__seen_3.txt"
-       ]
-      }
-     },
-     "outputs": {
-      "output1": "g3__output1__1__z_1.json"
-     },
-     "params": {
-      "rank": 1,
-      "max_rank": 3
-     }
-    },
-    {
-     "id": "g3__2",
-     "_origin": "g3",
-     "_assign": {
-      "rank3": "2"
-     },
-     "code": "functions/g3.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": {
-       "folder": [
-        "all3__output1__1__seen_1.txt",
-        "all3__output1__2__seen_2.txt",
-        "all3__output1__3__seen_3.txt"
-       ]
-      }
-     },
-     "outputs": {
-      "output1": "g3__output1__2__z_2.json"
-     },
-     "params": {
-      "rank": 2,
-      "max_rank": 3
-     }
-    },
-    {
-     "id": "g3__3",
-     "_origin": "g3",
-     "_assign": {
-      "rank3": "3"
-     },
-     "code": "functions/g3.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": {
-       "folder": [
-        "all3__output1__1__seen_1.txt",
-        "all3__output1__2__seen_2.txt",
-        "all3__output1__3__seen_3.txt"
-       ]
-      }
-     },
-     "outputs": {
-      "output1": "g3__output1__3__z_3.json"
-     },
-     "params": {
-      "rank": 3,
-      "max_rank": 3
-     }
-    }
-   ],
-   "outputs": [
-    {
-     "file": "g__output1__sum.json",
-     "deliver_as": "results/sum.json"
-    },
-    {
-     "file": "g3__output1__1__z_1.json",
-     "deliver_as": "results/z_1.json"
-    },
-    {
-     "file": "g3__output1__2__z_2.json",
-     "deliver_as": "results/z_2.json"
-    },
-    {
-     "file": "g3__output1__3__z_3.json",
-     "deliver_as": "results/z_3.json"
+     "children": [
+      "g3__1",
+      "g3__2",
+      "g3__3"
+     ]
     }
    ]
   },

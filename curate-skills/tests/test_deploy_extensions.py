@@ -66,7 +66,7 @@ def test_deploy_paths_keep_the_stub_tests_extensions(tmp_path, which):
 
     # Pegasus: every job's paths
     seen = set()
-    for job in CP.build(wf, "t")["ir"]["nodes"]:
+    for job in CP.build(wf, "t")["jobs"]:
         step = job["_origin"]
         for slot, value in list(job["inputs"].items()) + list(job["outputs"].items()):
             if (step, slot) not in want:
@@ -93,7 +93,7 @@ def test_the_weather_plot_keeps_png(tmp_path):
     """The case found on maxwell: the plot's output must end in .png at deploy too."""
     data = json.loads(SPECS["weather"].read_text())
     wf = cwl_of("weather")
-    plot = next(j for j in CP.build(wf, "t")["ir"]["nodes"] if j["_origin"] == "plot_weather_comparison")
+    plot = next(j for j in CP.build(wf, "t")["jobs"] if j["_origin"] == "plot_weather_comparison")
     assert plot["outputs"]["output1"] == "plot_weather_comparison__output1__corvallis_winter_comparison.png"
     spec = WorkflowSpec.model_validate(data)
     built = CF.build(wf, spec.name, spec.folder, spec.compute_target, spec.data_store)

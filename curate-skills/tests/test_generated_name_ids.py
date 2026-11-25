@@ -60,7 +60,7 @@ def test_generated_names_use_the_workflow_ids(tmp_path, which):
         check(name, *src.split("/"), ids, f"FaaSr {src}")
 
     seen = set()
-    for job in CP.build(wf, "t")["ir"]["nodes"]:
+    for job in CP.build(wf, "t")["jobs"]:
         sid = job["_origin"]
         for slot, value in job["outputs"].items():
             if slot not in ids[sid]:

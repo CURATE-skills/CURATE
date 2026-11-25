@@ -9,7 +9,7 @@ The function is called as main(inputs, outputs, params); inputs/outputs map logi
 local paths:
 
   --in name=file        a path (str)
-  --in-list name=file   (repeatable) a list of paths: how IR v0.2 gathers a fan-out's outputs
+  --in-list name=file   (repeatable) a list of paths: a gather of a fan-out's outputs
   --in-dir name=file    (repeatable) a folder input: the files are linked into a directory
                         (_curate_in/<name>/) and the function gets that directory's path
   --out name=file       a path the function must write

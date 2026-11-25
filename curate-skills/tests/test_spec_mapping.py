@@ -39,13 +39,13 @@ def pegasus(tmp_path, spec) -> tuple[dict, Path]:
     """({job id: job}, the Pegasus folder) for a spec."""
     built = CP.build(workflow(tmp_path, spec), "t")
     folder = CP.write_folder(tmp_path / "pegasus", built)
-    return {n["id"]: n for n in built["ir"]["nodes"]}, folder
+    return {n["id"]: n for n in built["jobs"]}, folder
 
 
 def run(tmp_path, spec) -> dict:
     """Every file the jobs write, by the spec's own file name with {rank} filled ({name: path})."""
     _, folder = pegasus(tmp_path, spec)
-    files = run_locally(folder / "ir.yaml", tmp_path / "jobs")
+    files = run_locally(folder / "workflow.yml", tmp_path / "jobs")
     return {spec_name(k): v for k, v in files.items()}
 
 
@@ -260,8 +260,9 @@ def test_workflow_inputs_and_deliverables(tmp_path):
                     node("b", NOTHING, ["out_{rank}.txt"], ["sum.json"])])
     built = CP.build(workflow(tmp_path, spec), "t")
     assert built["needed"] == ["in_1.csv", "in_2.csv"]
-    assert [i["file"] for i in built["ir"]["inputs"]] == ["in_1.csv", "in_2.csv"]
-    assert [o["deliver_as"] for o in built["ir"]["outputs"]] == ["results/sum.json"]
+    assert [f for f, p in CP.metadata(built["workflow"])["replicas"].items() if p.startswith("inputs/")] == \
+        ["in_1.csv", "in_2.csv"]
+    assert [o["deliver_as"] for o in built["deliverables"]] == ["results/sum.json"]
 
 
 def test_edge_without_a_file_makes_the_later_step_wait_for_all_copies(tmp_path):

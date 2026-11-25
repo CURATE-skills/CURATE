@@ -101,9 +101,9 @@ def plan(s: dict, st: dict) -> dict:
             b = X.pegasus_built(s, s["run_dir"], name, st["image"])
         except X.ExecutionError as e:
             return {"ok": False, "name": name, "problems": e.problems}
-        return {"ok": True, "name": name, "jobs": len(b["ir"]["nodes"]), "functions": len(b["functions"]),
-                "inputs": b["needed"], "deliverables": [o["deliver_as"] for o in b["ir"]["outputs"]],
-                "deliverable_files": len(b["ir"]["outputs"]), "warnings": b["warnings"]}
+        return {"ok": True, "name": name, "jobs": len(b["jobs"]), "functions": len(b["functions"]),
+                "inputs": b["needed"], "deliverables": [o["deliver_as"] for o in b["deliverables"]],
+                "deliverable_files": len(b["deliverables"]), "warnings": b["warnings"]}
     return {"ok": False, "name": run_ir_name(spec.name, s.get("run_id", "")),
             "problems": [f"no workflow draft yet: run /curate-skills:curate-emit --run {s.get('run_id')}"]}
 
@@ -141,7 +141,8 @@ def plan_lines(s: dict, st: dict) -> list[str]:
         out += [f"  - {x}" for x in p["problems"]]
         return out
     out += [f"- Workflow: `{p['name']}`, {p['jobs']} jobs, image `{st['image']}`, runtime {st['runtime']}",
-            f"- Writes: `{local}/ir.yaml`, `{local}/functions/` ({p['functions']} files), `{local}/inputs/`",
+            f"- Writes: `{local}/workflow.yml` (the Pegasus workflow), `{local}/functions/` ({p['functions']} files), "
+            f"`{local}/inputs/`",
             "- Input files you must provide: " + (", ".join(f"`{f}`" for f in p["inputs"]) or "none"),
             "- Delivered: " + (", ".join(f"`{d}`" for d in p["deliverables"]) or "nothing")]
     out += [f"- Note: {w}" for w in p["warnings"]]

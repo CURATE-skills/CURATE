@@ -65,69 +65,121 @@
   "_base": "<fixture>"
  },
  "pegasus": {
-  "ir": {
-   "ir_version": "0.2",
-   "expanded": true,
+  "workflow": {
+   "pegasus": "5.0.4",
    "name": "t",
-   "description": "t2",
-   "defaults": {
-    "image": "docker:///python:3.12-slim",
-    "resources": {
-     "cpus": 1,
-     "memory_mb": 2048
-    }
+   "metadata": {
+    "curate.transformations": "{\"w\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}, \"g\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}, \"h\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}}",
+    "curate.replicas": "{\"code__w__w.py\": \"functions/w.py\", \"code__g__g.py\": \"functions/g.py\", \"code__h__h.py\": \"functions/h.py\"}",
+    "curate.deliverables": "[{\"file\": \"h__output1__p.txt\", \"deliver_as\": \"results/p.txt\"}]"
    },
-   "inputs": [],
-   "nodes": [
+   "jobs": [
+    {
+     "type": "job",
+     "name": "w",
+     "id": "w",
+     "arguments": [
+      "--code",
+      "code__w__w.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "output1=w__output1__notes.txt",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__w__w.py",
+       "type": "input"
+      },
+      {
+       "lfn": "w__output1__notes.txt",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "g",
+     "id": "g",
+     "arguments": [
+      "--code",
+      "code__g__g.py",
+      "--entrypoint",
+      "main",
+      "--in-dir",
+      "input1=w__output1__notes.txt",
+      "--out",
+      "output1=g__output1__o.txt",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__g__g.py",
+       "type": "input"
+      },
+      {
+       "lfn": "w__output1__notes.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "g__output1__o.txt",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "h",
+     "id": "h",
+     "arguments": [
+      "--code",
+      "code__h__h.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=g__output1__o.txt",
+      "--out",
+      "output1=h__output1__p.txt",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__h__h.py",
+       "type": "input"
+      },
+      {
+       "lfn": "g__output1__o.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "h__output1__p.txt",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    }
+   ],
+   "jobDependencies": [
     {
      "id": "w",
-     "_origin": "w",
-     "_assign": {},
-     "code": "functions/w.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "output1": "w__output1__notes.txt"
-     },
-     "params": {}
+     "children": [
+      "g"
+     ]
     },
     {
      "id": "g",
-     "_origin": "g",
-     "_assign": {},
-     "code": "functions/g.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": {
-       "folder": [
-        "w__output1__notes.txt"
-       ]
-      }
-     },
-     "outputs": {
-      "output1": "g__output1__o.txt"
-     },
-     "params": {}
-    },
-    {
-     "id": "h",
-     "_origin": "h",
-     "_assign": {},
-     "code": "functions/h.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "g__output1__o.txt"
-     },
-     "outputs": {
-      "output1": "h__output1__p.txt"
-     },
-     "params": {}
-    }
-   ],
-   "outputs": [
-    {
-     "file": "h__output1__p.txt",
-     "deliver_as": "results/p.txt"
+     "children": [
+      "h"
+     ]
     }
    ]
   },

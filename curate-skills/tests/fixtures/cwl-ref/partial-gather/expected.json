@@ -173,177 +173,304 @@
   "_base": "<fixture>"
  },
  "pegasus": {
-  "ir": {
-   "ir_version": "0.2",
-   "expanded": true,
+  "workflow": {
+   "pegasus": "5.0.4",
    "name": "t",
-   "description": "t",
-   "defaults": {
-    "image": "docker:///python:3.12-slim"
+   "metadata": {
+    "curate.transformations": "{\"detect\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {}}, \"assemble\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {}}}",
+    "curate.replicas": "{\"code__detect__detect.py\": \"functions/detect.py\", \"code__assemble__assemble.py\": \"functions/assemble.py\"}",
+    "curate.deliverables": "[{\"file\": \"assemble__row__2019__row_2019.json\", \"deliver_as\": \"results/row_2019.json\"}, {\"file\": \"assemble__row__2020__row_2020.json\", \"deliver_as\": \"results/row_2020.json\"}]"
    },
-   "inputs": [],
-   "nodes": [
+   "jobs": [
+    {
+     "type": "job",
+     "name": "detect",
+     "id": "detect__2019__a",
+     "arguments": [
+      "--code",
+      "code__detect__detect.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "ice=detect__ice__2019__a__ice_2019_a.json",
+      "--params-json",
+      "'{\"winter\": \"2019\", \"station\": \"a\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__detect__detect.py",
+       "type": "input"
+      },
+      {
+       "lfn": "detect__ice__2019__a__ice_2019_a.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "detect",
+     "id": "detect__2019__b",
+     "arguments": [
+      "--code",
+      "code__detect__detect.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "ice=detect__ice__2019__b__ice_2019_b.json",
+      "--params-json",
+      "'{\"winter\": \"2019\", \"station\": \"b\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__detect__detect.py",
+       "type": "input"
+      },
+      {
+       "lfn": "detect__ice__2019__b__ice_2019_b.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "detect",
+     "id": "detect__2019__c",
+     "arguments": [
+      "--code",
+      "code__detect__detect.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "ice=detect__ice__2019__c__ice_2019_c.json",
+      "--params-json",
+      "'{\"winter\": \"2019\", \"station\": \"c\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__detect__detect.py",
+       "type": "input"
+      },
+      {
+       "lfn": "detect__ice__2019__c__ice_2019_c.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "detect",
+     "id": "detect__2020__a",
+     "arguments": [
+      "--code",
+      "code__detect__detect.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "ice=detect__ice__2020__a__ice_2020_a.json",
+      "--params-json",
+      "'{\"winter\": \"2020\", \"station\": \"a\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__detect__detect.py",
+       "type": "input"
+      },
+      {
+       "lfn": "detect__ice__2020__a__ice_2020_a.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "detect",
+     "id": "detect__2020__b",
+     "arguments": [
+      "--code",
+      "code__detect__detect.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "ice=detect__ice__2020__b__ice_2020_b.json",
+      "--params-json",
+      "'{\"winter\": \"2020\", \"station\": \"b\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__detect__detect.py",
+       "type": "input"
+      },
+      {
+       "lfn": "detect__ice__2020__b__ice_2020_b.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "detect",
+     "id": "detect__2020__c",
+     "arguments": [
+      "--code",
+      "code__detect__detect.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "ice=detect__ice__2020__c__ice_2020_c.json",
+      "--params-json",
+      "'{\"winter\": \"2020\", \"station\": \"c\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__detect__detect.py",
+       "type": "input"
+      },
+      {
+       "lfn": "detect__ice__2020__c__ice_2020_c.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "assemble",
+     "id": "assemble__2019",
+     "arguments": [
+      "--code",
+      "code__assemble__assemble.py",
+      "--entrypoint",
+      "main",
+      "--in-list",
+      "ice=detect__ice__2019__a__ice_2019_a.json",
+      "--in-list",
+      "ice=detect__ice__2019__b__ice_2019_b.json",
+      "--in-list",
+      "ice=detect__ice__2019__c__ice_2019_c.json",
+      "--out",
+      "row=assemble__row__2019__row_2019.json",
+      "--params-json",
+      "'{\"winter\": \"2019\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__assemble__assemble.py",
+       "type": "input"
+      },
+      {
+       "lfn": "detect__ice__2019__a__ice_2019_a.json",
+       "type": "input"
+      },
+      {
+       "lfn": "detect__ice__2019__b__ice_2019_b.json",
+       "type": "input"
+      },
+      {
+       "lfn": "detect__ice__2019__c__ice_2019_c.json",
+       "type": "input"
+      },
+      {
+       "lfn": "assemble__row__2019__row_2019.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "assemble",
+     "id": "assemble__2020",
+     "arguments": [
+      "--code",
+      "code__assemble__assemble.py",
+      "--entrypoint",
+      "main",
+      "--in-list",
+      "ice=detect__ice__2020__a__ice_2020_a.json",
+      "--in-list",
+      "ice=detect__ice__2020__b__ice_2020_b.json",
+      "--in-list",
+      "ice=detect__ice__2020__c__ice_2020_c.json",
+      "--out",
+      "row=assemble__row__2020__row_2020.json",
+      "--params-json",
+      "'{\"winter\": \"2020\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__assemble__assemble.py",
+       "type": "input"
+      },
+      {
+       "lfn": "detect__ice__2020__a__ice_2020_a.json",
+       "type": "input"
+      },
+      {
+       "lfn": "detect__ice__2020__b__ice_2020_b.json",
+       "type": "input"
+      },
+      {
+       "lfn": "detect__ice__2020__c__ice_2020_c.json",
+       "type": "input"
+      },
+      {
+       "lfn": "assemble__row__2020__row_2020.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    }
+   ],
+   "jobDependencies": [
     {
      "id": "detect__2019__a",
-     "_origin": "detect",
-     "_assign": {
-      "winter": "2019",
-      "station": "a"
-     },
-     "code": "functions/detect.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "ice": "detect__ice__2019__a__ice_2019_a.json"
-     },
-     "params": {
-      "winter": "2019",
-      "station": "a"
-     }
+     "children": [
+      "assemble__2019"
+     ]
     },
     {
      "id": "detect__2019__b",
-     "_origin": "detect",
-     "_assign": {
-      "winter": "2019",
-      "station": "b"
-     },
-     "code": "functions/detect.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "ice": "detect__ice__2019__b__ice_2019_b.json"
-     },
-     "params": {
-      "winter": "2019",
-      "station": "b"
-     }
+     "children": [
+      "assemble__2019"
+     ]
     },
     {
      "id": "detect__2019__c",
-     "_origin": "detect",
-     "_assign": {
-      "winter": "2019",
-      "station": "c"
-     },
-     "code": "functions/detect.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "ice": "detect__ice__2019__c__ice_2019_c.json"
-     },
-     "params": {
-      "winter": "2019",
-      "station": "c"
-     }
+     "children": [
+      "assemble__2019"
+     ]
     },
     {
      "id": "detect__2020__a",
-     "_origin": "detect",
-     "_assign": {
-      "winter": "2020",
-      "station": "a"
-     },
-     "code": "functions/detect.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "ice": "detect__ice__2020__a__ice_2020_a.json"
-     },
-     "params": {
-      "winter": "2020",
-      "station": "a"
-     }
+     "children": [
+      "assemble__2020"
+     ]
     },
     {
      "id": "detect__2020__b",
-     "_origin": "detect",
-     "_assign": {
-      "winter": "2020",
-      "station": "b"
-     },
-     "code": "functions/detect.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "ice": "detect__ice__2020__b__ice_2020_b.json"
-     },
-     "params": {
-      "winter": "2020",
-      "station": "b"
-     }
+     "children": [
+      "assemble__2020"
+     ]
     },
     {
      "id": "detect__2020__c",
-     "_origin": "detect",
-     "_assign": {
-      "winter": "2020",
-      "station": "c"
-     },
-     "code": "functions/detect.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "ice": "detect__ice__2020__c__ice_2020_c.json"
-     },
-     "params": {
-      "winter": "2020",
-      "station": "c"
-     }
-    },
-    {
-     "id": "assemble__2019",
-     "_origin": "assemble",
-     "_assign": {
-      "winter": "2019"
-     },
-     "code": "functions/assemble.py",
-     "entrypoint": "main",
-     "inputs": {
-      "ice": [
-       "detect__ice__2019__a__ice_2019_a.json",
-       "detect__ice__2019__b__ice_2019_b.json",
-       "detect__ice__2019__c__ice_2019_c.json"
-      ]
-     },
-     "outputs": {
-      "row": "assemble__row__2019__row_2019.json"
-     },
-     "params": {
-      "winter": "2019"
-     }
-    },
-    {
-     "id": "assemble__2020",
-     "_origin": "assemble",
-     "_assign": {
-      "winter": "2020"
-     },
-     "code": "functions/assemble.py",
-     "entrypoint": "main",
-     "inputs": {
-      "ice": [
-       "detect__ice__2020__a__ice_2020_a.json",
-       "detect__ice__2020__b__ice_2020_b.json",
-       "detect__ice__2020__c__ice_2020_c.json"
-      ]
-     },
-     "outputs": {
-      "row": "assemble__row__2020__row_2020.json"
-     },
-     "params": {
-      "winter": "2020"
-     }
-    }
-   ],
-   "outputs": [
-    {
-     "file": "assemble__row__2019__row_2019.json",
-     "deliver_as": "results/row_2019.json"
-    },
-    {
-     "file": "assemble__row__2020__row_2020.json",
-     "deliver_as": "results/row_2020.json"
+     "children": [
+      "assemble__2020"
+     ]
     }
    ]
   },

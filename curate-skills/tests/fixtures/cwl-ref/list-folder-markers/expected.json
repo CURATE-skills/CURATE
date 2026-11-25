@@ -104,108 +104,214 @@
   "_base": "<fixture>"
  },
  "pegasus": {
-  "ir": {
-   "ir_version": "0.2",
-   "expanded": true,
+  "workflow": {
+   "pegasus": "5.0.4",
    "name": "t",
-   "description": "t",
-   "defaults": {
-    "image": "docker:///python:3.12-slim"
+   "metadata": {
+    "curate.transformations": "{\"split\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {}}, \"use\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {}}, \"extra\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {}}, \"all\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {}}}",
+    "curate.replicas": "{\"code__split__split.py\": \"functions/split.py\", \"code__use__use.py\": \"functions/use.py\", \"code__extra__extra.py\": \"functions/extra.py\", \"code__all__all.py\": \"functions/all.py\"}",
+    "curate.deliverables": "[{\"file\": \"all__o__summary.json\", \"deliver_as\": \"summary.json\"}]"
    },
-   "inputs": [],
-   "nodes": [
+   "jobs": [
     {
+     "type": "job",
+     "name": "split",
      "id": "split",
-     "_origin": "split",
-     "_assign": {},
-     "code": "functions/split.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "b": [
-       "split__b__1__batch_1.txt",
-       "split__b__2__batch_2.txt"
-      ]
-     },
-     "params": {}
-    },
-    {
-     "id": "use__1",
-     "_origin": "use",
-     "_assign": {
-      "r": "1"
-     },
-     "code": "functions/use.py",
-     "entrypoint": "main",
-     "inputs": {
-      "b": "split__b__1__batch_1.txt"
-     },
-     "outputs": {
-      "o": "use__o__1__part_1.csv"
-     },
-     "params": {
-      "rank": 1
-     }
-    },
-    {
-     "id": "use__2",
-     "_origin": "use",
-     "_assign": {
-      "r": "2"
-     },
-     "code": "functions/use.py",
-     "entrypoint": "main",
-     "inputs": {
-      "b": "split__b__2__batch_2.txt"
-     },
-     "outputs": {
-      "o": "use__o__2__part_2.csv"
-     },
-     "params": {
-      "rank": 2
-     }
-    },
-    {
-     "id": "extra",
-     "_origin": "extra",
-     "_assign": {},
-     "code": "functions/extra.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "x": "extra__x__part_x.csv"
-     },
-     "params": {}
-    },
-    {
-     "id": "all",
-     "_origin": "all",
-     "_assign": {},
-     "code": "functions/all.py",
-     "entrypoint": "main",
-     "inputs": {
-      "parts": {
-       "folder": [
-        "use__o__1__part_1.csv",
-        "use__o__2__part_2.csv",
-        "extra__x__part_x.csv"
-       ]
+     "arguments": [
+      "--code",
+      "code__split__split.py",
+      "--entrypoint",
+      "main",
+      "--out-list",
+      "b=split__b__1__batch_1.txt",
+      "--out-list",
+      "b=split__b__2__batch_2.txt",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__split__split.py",
+       "type": "input"
+      },
+      {
+       "lfn": "split__b__1__batch_1.txt",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      },
+      {
+       "lfn": "split__b__2__batch_2.txt",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
       }
-     },
-     "outputs": {
-      "o": "all__o__summary.json"
-     },
-     "params": {},
-     "after": [
-      "use__1",
-      "use__2"
+     ]
+    },
+    {
+     "type": "job",
+     "name": "use",
+     "id": "use__1",
+     "arguments": [
+      "--code",
+      "code__use__use.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "b=split__b__1__batch_1.txt",
+      "--out",
+      "o=use__o__1__part_1.csv",
+      "--params-json",
+      "'{\"rank\": 1}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__use__use.py",
+       "type": "input"
+      },
+      {
+       "lfn": "split__b__1__batch_1.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "use__o__1__part_1.csv",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "use",
+     "id": "use__2",
+     "arguments": [
+      "--code",
+      "code__use__use.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "b=split__b__2__batch_2.txt",
+      "--out",
+      "o=use__o__2__part_2.csv",
+      "--params-json",
+      "'{\"rank\": 2}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__use__use.py",
+       "type": "input"
+      },
+      {
+       "lfn": "split__b__2__batch_2.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "use__o__2__part_2.csv",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "extra",
+     "id": "extra",
+     "arguments": [
+      "--code",
+      "code__extra__extra.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "x=extra__x__part_x.csv",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__extra__extra.py",
+       "type": "input"
+      },
+      {
+       "lfn": "extra__x__part_x.csv",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "all",
+     "id": "all",
+     "arguments": [
+      "--code",
+      "code__all__all.py",
+      "--entrypoint",
+      "main",
+      "--in-dir",
+      "parts=use__o__1__part_1.csv",
+      "--in-dir",
+      "parts=use__o__2__part_2.csv",
+      "--in-dir",
+      "parts=extra__x__part_x.csv",
+      "--out",
+      "o=all__o__summary.json",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__all__all.py",
+       "type": "input"
+      },
+      {
+       "lfn": "use__o__1__part_1.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "use__o__2__part_2.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "extra__x__part_x.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "all__o__summary.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
      ]
     }
    ],
-   "outputs": [
+   "jobDependencies": [
     {
-     "file": "all__o__summary.json",
-     "deliver_as": "summary.json"
+     "id": "split",
+     "children": [
+      "use__1",
+      "use__2"
+     ]
+    },
+    {
+     "id": "use__1",
+     "children": [
+      "all"
+     ]
+    },
+    {
+     "id": "use__2",
+     "children": [
+      "all"
+     ]
+    },
+    {
+     "id": "extra",
+     "children": [
+      "all"
+     ]
     }
    ]
   },

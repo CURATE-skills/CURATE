@@ -198,7 +198,7 @@ def test_remote_status_collect_and_fetch(peg_run, monkeypatch, tmp_path):  # noq
     assert (outdir / "results" / "word_count_1.json").is_file() and (outdir / "run-report.json").is_file()
     ssh = [c for c in host.calls if c[0] == "ssh"]
     assert ssh and all(c[1:6] == ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "maxwell"] for c in ssh)
-    assert f"{rec['remote_dir']}/curate_ir/backends/pegasus_backend.py status {rec['remote_dir']}/bundle/ir.yaml" in ssh[0][-1]
+    assert f"{rec['remote_dir']}/curate_ir/backends/pegasus_backend.py status {rec['remote_dir']}/bundle/workflow.yml" in ssh[0][-1]
     scp = [c for c in host.calls if c[0] == "scp"]
     assert [c[-2] for c in scp] == [f"maxwell:{rec['work_dir']}/run-report.json", f"maxwell:{rec['work_dir']}/deliver"]
     assert (res / "run-report.json").is_file() and (res / "deliver" / "results" / "word_count_1.json").is_file()

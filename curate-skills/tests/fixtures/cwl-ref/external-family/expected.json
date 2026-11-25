@@ -82,88 +82,83 @@
   "_base": "<fixture>"
  },
  "pegasus": {
-  "ir": {
-   "ir_version": "0.2",
-   "expanded": true,
+  "workflow": {
+   "pegasus": "5.0.4",
    "name": "t",
-   "description": "t",
-   "defaults": {
-    "image": "docker:///python:3.12-slim"
+   "metadata": {
+    "curate.transformations": "{\"m\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {}}}",
+    "curate.replicas": "{\"data_a.csv\": \"inputs/data_a.csv\", \"data_b.csv\": \"inputs/data_b.csv\", \"code__m__m.py\": \"functions/m.py\"}",
+    "curate.deliverables": "[{\"file\": \"m__o__a__o_a.json\", \"deliver_as\": \"results/a/o.json\"}, {\"file\": \"m__o__b__o_b.json\", \"deliver_as\": \"results/b/o.json\"}]"
    },
-   "inputs": [
+   "jobs": [
     {
-     "file": "data_a.csv",
-     "location": "inputs/data_a.csv"
-    },
-    {
-     "file": "data_b.csv",
-     "location": "inputs/data_b.csv"
-    }
-   ],
-   "nodes": [
-    {
+     "type": "job",
+     "name": "m",
      "id": "m__a",
-     "_origin": "m",
-     "_assign": {
-      "w": "a"
-     },
-     "code": "functions/m.py",
-     "entrypoint": "main",
-     "inputs": {
-      "d": "data_a.csv"
-     },
-     "outputs": {
-      "o": "m__o__a__o_a.json"
-     },
-     "params": {
-      "w": "a",
-      "f": 0.5,
-      "ks": [
-       1,
-       2
-      ],
-      "n": 3,
-      "on": true,
-      "tag": "x"
-     }
+     "arguments": [
+      "--code",
+      "code__m__m.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "d=data_a.csv",
+      "--out",
+      "o=m__o__a__o_a.json",
+      "--params-json",
+      "'{\"w\": \"a\", \"f\": 0.5, \"ks\": [1, 2], \"n\": 3, \"on\": true, \"tag\": \"x\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__m__m.py",
+       "type": "input"
+      },
+      {
+       "lfn": "data_a.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "m__o__a__o_a.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
     },
     {
+     "type": "job",
+     "name": "m",
      "id": "m__b",
-     "_origin": "m",
-     "_assign": {
-      "w": "b"
-     },
-     "code": "functions/m.py",
-     "entrypoint": "main",
-     "inputs": {
-      "d": "data_b.csv"
-     },
-     "outputs": {
-      "o": "m__o__b__o_b.json"
-     },
-     "params": {
-      "w": "b",
-      "f": 0.5,
-      "ks": [
-       1,
-       2
-      ],
-      "n": 3,
-      "on": true,
-      "tag": "x"
-     }
+     "arguments": [
+      "--code",
+      "code__m__m.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "d=data_b.csv",
+      "--out",
+      "o=m__o__b__o_b.json",
+      "--params-json",
+      "'{\"w\": \"b\", \"f\": 0.5, \"ks\": [1, 2], \"n\": 3, \"on\": true, \"tag\": \"x\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__m__m.py",
+       "type": "input"
+      },
+      {
+       "lfn": "data_b.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "m__o__b__o_b.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
     }
    ],
-   "outputs": [
-    {
-     "file": "m__o__a__o_a.json",
-     "deliver_as": "results/a/o.json"
-    },
-    {
-     "file": "m__o__b__o_b.json",
-     "deliver_as": "results/b/o.json"
-    }
-   ]
+   "jobDependencies": []
   },
   "copy": {},
   "needed": [

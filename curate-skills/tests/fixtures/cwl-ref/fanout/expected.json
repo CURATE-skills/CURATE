@@ -207,211 +207,421 @@
   "_base": "<fixture>"
  },
  "pegasus": {
-  "ir": {
-   "ir_version": "0.2",
-   "expanded": true,
+  "workflow": {
+   "pegasus": "5.0.4",
    "name": "t",
-   "description": "Same synthetic data as the diamond, computed per winter in parallel (1 -> N -> N -> 1)",
-   "defaults": {
-    "image": "docker:///python:3.12-slim",
-    "resources": {
-     "cpus": 1,
-     "memory_mb": 1024
-    }
+   "metadata": {
+    "curate.transformations": "{\"load_data\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 1024}}, \"detect_ice\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 1024}}, \"add_duration\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 1024}}, \"assemble\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 1024}}}",
+    "curate.replicas": "{\"params.json\": \"inputs/params.json\", \"code__load_data__load_data.py\": \"functions/load_data.py\", \"code__detect_ice__detect_ice.py\": \"functions/detect_ice.py\", \"code__add_duration__add_duration.py\": \"functions/add_duration.py\", \"code__assemble__assemble.py\": \"functions/assemble.py\"}",
+    "curate.deliverables": "[{\"file\": \"assemble__result__ice_phenology_result.json\", \"deliver_as\": \"results/ice_phenology_result.json\"}]"
    },
-   "inputs": [
+   "jobs": [
     {
-     "file": "params.json",
-     "location": "inputs/params.json"
+     "type": "job",
+     "name": "load_data",
+     "id": "load_data",
+     "arguments": [
+      "--code",
+      "code__load_data__load_data.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "params=params.json",
+      "--out",
+      "daily=load_data__daily__daily.csv",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__load_data__load_data.py",
+       "type": "input"
+      },
+      {
+       "lfn": "params.json",
+       "type": "input"
+      },
+      {
+       "lfn": "load_data__daily__daily.csv",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "detect_ice",
+     "id": "detect_ice__2019",
+     "arguments": [
+      "--code",
+      "code__detect_ice__detect_ice.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "daily=load_data__daily__daily.csv",
+      "--out",
+      "ice=detect_ice__ice__2019__ice_2019.json",
+      "--params-json",
+      "'{\"winter\": \"2019\", \"run_days\": 5}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__detect_ice__detect_ice.py",
+       "type": "input"
+      },
+      {
+       "lfn": "load_data__daily__daily.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "detect_ice__ice__2019__ice_2019.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "detect_ice",
+     "id": "detect_ice__2020",
+     "arguments": [
+      "--code",
+      "code__detect_ice__detect_ice.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "daily=load_data__daily__daily.csv",
+      "--out",
+      "ice=detect_ice__ice__2020__ice_2020.json",
+      "--params-json",
+      "'{\"winter\": \"2020\", \"run_days\": 5}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__detect_ice__detect_ice.py",
+       "type": "input"
+      },
+      {
+       "lfn": "load_data__daily__daily.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "detect_ice__ice__2020__ice_2020.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "detect_ice",
+     "id": "detect_ice__2021",
+     "arguments": [
+      "--code",
+      "code__detect_ice__detect_ice.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "daily=load_data__daily__daily.csv",
+      "--out",
+      "ice=detect_ice__ice__2021__ice_2021.json",
+      "--params-json",
+      "'{\"winter\": \"2021\", \"run_days\": 5}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__detect_ice__detect_ice.py",
+       "type": "input"
+      },
+      {
+       "lfn": "load_data__daily__daily.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "detect_ice__ice__2021__ice_2021.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "detect_ice",
+     "id": "detect_ice__2022",
+     "arguments": [
+      "--code",
+      "code__detect_ice__detect_ice.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "daily=load_data__daily__daily.csv",
+      "--out",
+      "ice=detect_ice__ice__2022__ice_2022.json",
+      "--params-json",
+      "'{\"winter\": \"2022\", \"run_days\": 5}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__detect_ice__detect_ice.py",
+       "type": "input"
+      },
+      {
+       "lfn": "load_data__daily__daily.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "detect_ice__ice__2022__ice_2022.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "add_duration",
+     "id": "add_duration__2019",
+     "arguments": [
+      "--code",
+      "code__add_duration__add_duration.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "ice=detect_ice__ice__2019__ice_2019.json",
+      "--out",
+      "row=add_duration__row__2019__row_2019.json",
+      "--params-json",
+      "'{\"winter\": \"2019\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__add_duration__add_duration.py",
+       "type": "input"
+      },
+      {
+       "lfn": "detect_ice__ice__2019__ice_2019.json",
+       "type": "input"
+      },
+      {
+       "lfn": "add_duration__row__2019__row_2019.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "add_duration",
+     "id": "add_duration__2020",
+     "arguments": [
+      "--code",
+      "code__add_duration__add_duration.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "ice=detect_ice__ice__2020__ice_2020.json",
+      "--out",
+      "row=add_duration__row__2020__row_2020.json",
+      "--params-json",
+      "'{\"winter\": \"2020\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__add_duration__add_duration.py",
+       "type": "input"
+      },
+      {
+       "lfn": "detect_ice__ice__2020__ice_2020.json",
+       "type": "input"
+      },
+      {
+       "lfn": "add_duration__row__2020__row_2020.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "add_duration",
+     "id": "add_duration__2021",
+     "arguments": [
+      "--code",
+      "code__add_duration__add_duration.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "ice=detect_ice__ice__2021__ice_2021.json",
+      "--out",
+      "row=add_duration__row__2021__row_2021.json",
+      "--params-json",
+      "'{\"winter\": \"2021\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__add_duration__add_duration.py",
+       "type": "input"
+      },
+      {
+       "lfn": "detect_ice__ice__2021__ice_2021.json",
+       "type": "input"
+      },
+      {
+       "lfn": "add_duration__row__2021__row_2021.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "add_duration",
+     "id": "add_duration__2022",
+     "arguments": [
+      "--code",
+      "code__add_duration__add_duration.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "ice=detect_ice__ice__2022__ice_2022.json",
+      "--out",
+      "row=add_duration__row__2022__row_2022.json",
+      "--params-json",
+      "'{\"winter\": \"2022\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__add_duration__add_duration.py",
+       "type": "input"
+      },
+      {
+       "lfn": "detect_ice__ice__2022__ice_2022.json",
+       "type": "input"
+      },
+      {
+       "lfn": "add_duration__row__2022__row_2022.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "assemble",
+     "id": "assemble",
+     "arguments": [
+      "--code",
+      "code__assemble__assemble.py",
+      "--entrypoint",
+      "main",
+      "--in-list",
+      "rows=add_duration__row__2019__row_2019.json",
+      "--in-list",
+      "rows=add_duration__row__2020__row_2020.json",
+      "--in-list",
+      "rows=add_duration__row__2021__row_2021.json",
+      "--in-list",
+      "rows=add_duration__row__2022__row_2022.json",
+      "--out",
+      "result=assemble__result__ice_phenology_result.json",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__assemble__assemble.py",
+       "type": "input"
+      },
+      {
+       "lfn": "add_duration__row__2019__row_2019.json",
+       "type": "input"
+      },
+      {
+       "lfn": "add_duration__row__2020__row_2020.json",
+       "type": "input"
+      },
+      {
+       "lfn": "add_duration__row__2021__row_2021.json",
+       "type": "input"
+      },
+      {
+       "lfn": "add_duration__row__2022__row_2022.json",
+       "type": "input"
+      },
+      {
+       "lfn": "assemble__result__ice_phenology_result.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
     }
    ],
-   "nodes": [
+   "jobDependencies": [
     {
      "id": "load_data",
-     "_origin": "load_data",
-     "_assign": {},
-     "code": "functions/load_data.py",
-     "entrypoint": "main",
-     "inputs": {
-      "params": "params.json"
-     },
-     "outputs": {
-      "daily": "load_data__daily__daily.csv"
-     },
-     "params": {}
+     "children": [
+      "detect_ice__2019",
+      "detect_ice__2020",
+      "detect_ice__2021",
+      "detect_ice__2022"
+     ]
     },
     {
      "id": "detect_ice__2019",
-     "_origin": "detect_ice",
-     "_assign": {
-      "winter": "2019"
-     },
-     "code": "functions/detect_ice.py",
-     "entrypoint": "main",
-     "inputs": {
-      "daily": "load_data__daily__daily.csv"
-     },
-     "outputs": {
-      "ice": "detect_ice__ice__2019__ice_2019.json"
-     },
-     "params": {
-      "winter": "2019",
-      "run_days": 5
-     }
+     "children": [
+      "add_duration__2019"
+     ]
     },
     {
      "id": "detect_ice__2020",
-     "_origin": "detect_ice",
-     "_assign": {
-      "winter": "2020"
-     },
-     "code": "functions/detect_ice.py",
-     "entrypoint": "main",
-     "inputs": {
-      "daily": "load_data__daily__daily.csv"
-     },
-     "outputs": {
-      "ice": "detect_ice__ice__2020__ice_2020.json"
-     },
-     "params": {
-      "winter": "2020",
-      "run_days": 5
-     }
+     "children": [
+      "add_duration__2020"
+     ]
     },
     {
      "id": "detect_ice__2021",
-     "_origin": "detect_ice",
-     "_assign": {
-      "winter": "2021"
-     },
-     "code": "functions/detect_ice.py",
-     "entrypoint": "main",
-     "inputs": {
-      "daily": "load_data__daily__daily.csv"
-     },
-     "outputs": {
-      "ice": "detect_ice__ice__2021__ice_2021.json"
-     },
-     "params": {
-      "winter": "2021",
-      "run_days": 5
-     }
+     "children": [
+      "add_duration__2021"
+     ]
     },
     {
      "id": "detect_ice__2022",
-     "_origin": "detect_ice",
-     "_assign": {
-      "winter": "2022"
-     },
-     "code": "functions/detect_ice.py",
-     "entrypoint": "main",
-     "inputs": {
-      "daily": "load_data__daily__daily.csv"
-     },
-     "outputs": {
-      "ice": "detect_ice__ice__2022__ice_2022.json"
-     },
-     "params": {
-      "winter": "2022",
-      "run_days": 5
-     }
+     "children": [
+      "add_duration__2022"
+     ]
     },
     {
      "id": "add_duration__2019",
-     "_origin": "add_duration",
-     "_assign": {
-      "winter": "2019"
-     },
-     "code": "functions/add_duration.py",
-     "entrypoint": "main",
-     "inputs": {
-      "ice": "detect_ice__ice__2019__ice_2019.json"
-     },
-     "outputs": {
-      "row": "add_duration__row__2019__row_2019.json"
-     },
-     "params": {
-      "winter": "2019"
-     }
+     "children": [
+      "assemble"
+     ]
     },
     {
      "id": "add_duration__2020",
-     "_origin": "add_duration",
-     "_assign": {
-      "winter": "2020"
-     },
-     "code": "functions/add_duration.py",
-     "entrypoint": "main",
-     "inputs": {
-      "ice": "detect_ice__ice__2020__ice_2020.json"
-     },
-     "outputs": {
-      "row": "add_duration__row__2020__row_2020.json"
-     },
-     "params": {
-      "winter": "2020"
-     }
+     "children": [
+      "assemble"
+     ]
     },
     {
      "id": "add_duration__2021",
-     "_origin": "add_duration",
-     "_assign": {
-      "winter": "2021"
-     },
-     "code": "functions/add_duration.py",
-     "entrypoint": "main",
-     "inputs": {
-      "ice": "detect_ice__ice__2021__ice_2021.json"
-     },
-     "outputs": {
-      "row": "add_duration__row__2021__row_2021.json"
-     },
-     "params": {
-      "winter": "2021"
-     }
+     "children": [
+      "assemble"
+     ]
     },
     {
      "id": "add_duration__2022",
-     "_origin": "add_duration",
-     "_assign": {
-      "winter": "2022"
-     },
-     "code": "functions/add_duration.py",
-     "entrypoint": "main",
-     "inputs": {
-      "ice": "detect_ice__ice__2022__ice_2022.json"
-     },
-     "outputs": {
-      "row": "add_duration__row__2022__row_2022.json"
-     },
-     "params": {
-      "winter": "2022"
-     }
-    },
-    {
-     "id": "assemble",
-     "_origin": "assemble",
-     "_assign": {},
-     "code": "functions/assemble.py",
-     "entrypoint": "main",
-     "inputs": {
-      "rows": [
-       "add_duration__row__2019__row_2019.json",
-       "add_duration__row__2020__row_2020.json",
-       "add_duration__row__2021__row_2021.json",
-       "add_duration__row__2022__row_2022.json"
-      ]
-     },
-     "outputs": {
-      "result": "assemble__result__ice_phenology_result.json"
-     },
-     "params": {}
-    }
-   ],
-   "outputs": [
-    {
-     "file": "assemble__result__ice_phenology_result.json",
-     "deliver_as": "results/ice_phenology_result.json"
+     "children": [
+      "assemble"
+     ]
     }
    ]
   },

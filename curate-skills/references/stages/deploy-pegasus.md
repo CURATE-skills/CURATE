@@ -11,8 +11,9 @@ Running on Pegasus writes files on this machine (and, with `CURATE_PEGASUS_HOST`
 submits jobs to HTCondor. For a run whose Gate 4 published a version, everything goes to that
 version's execution run, `<project>/.curate/workflows/<workflow-id>/runs/<run-id>/` (prepare builds
 `bundle/` there from the approved version and writes `manifest.json`), and on the host to
-`~/curate-runs/<workflow-id>/<run-id>/`. Runs approved before versions use `<run>/pegasus/` and
-`~/curate-runs/<run_id>/`. **Each step is the user's decision, asked right before it runs.** A yes to
+`~/curate-runs/<workflow-id>/<run-id>/`. The folder holds `workflow.yml`, Pegasus's own workflow
+(no host paths); the host writes its catalogs at launch. Runs approved before versions are refused.
+**Each step is the user's decision, asked right before it runs.** A yes to
 one step is never a yes to the next, and nothing said earlier replaces asking.
 
 Settings (`CURATE_PEGASUS_HOST`, `CURATE_PEGASUS_RUNTIME`, `CURATE_PEGASUS_IMAGE`) are read by the

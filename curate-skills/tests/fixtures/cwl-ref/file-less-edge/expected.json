@@ -109,113 +109,138 @@
   "_base": "<fixture>"
  },
  "pegasus": {
-  "ir": {
-   "ir_version": "0.2",
-   "expanded": true,
+  "workflow": {
+   "pegasus": "5.0.4",
    "name": "t",
-   "description": "t_flow",
-   "defaults": {
-    "image": "docker:///python:3.12-slim",
-    "resources": {
-     "cpus": 1,
-     "memory_mb": 2048
-    }
+   "metadata": {
+    "curate.transformations": "{\"a\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}, \"b\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}}",
+    "curate.replicas": "{\"code__a__a.py\": \"functions/a.py\", \"code__b__b.py\": \"functions/b.py\"}",
+    "curate.deliverables": "[{\"file\": \"a__output1__1__p_1.txt\", \"deliver_as\": \"results/p_1.txt\"}, {\"file\": \"a__output1__2__p_2.txt\", \"deliver_as\": \"results/p_2.txt\"}, {\"file\": \"b__output1__1__q_1.txt\", \"deliver_as\": \"results/q_1.txt\"}, {\"file\": \"b__output1__2__q_2.txt\", \"deliver_as\": \"results/q_2.txt\"}]"
    },
-   "inputs": [],
-   "nodes": [
+   "jobs": [
     {
+     "type": "job",
+     "name": "a",
      "id": "a__1",
-     "_origin": "a",
-     "_assign": {
-      "rank2": "1"
-     },
-     "code": "functions/a.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "output1": "a__output1__1__p_1.txt"
-     },
-     "params": {
-      "rank": 1,
-      "max_rank": 2
-     }
-    },
-    {
-     "id": "a__2",
-     "_origin": "a",
-     "_assign": {
-      "rank2": "2"
-     },
-     "code": "functions/a.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "output1": "a__output1__2__p_2.txt"
-     },
-     "params": {
-      "rank": 2,
-      "max_rank": 2
-     }
-    },
-    {
-     "id": "b__1",
-     "_origin": "b",
-     "_assign": {
-      "rank2": "1"
-     },
-     "code": "functions/b.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "output1": "b__output1__1__q_1.txt"
-     },
-     "params": {
-      "rank": 1,
-      "max_rank": 2
-     },
-     "after": [
-      "a__1",
-      "a__2"
+     "arguments": [
+      "--code",
+      "code__a__a.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "output1=a__output1__1__p_1.txt",
+      "--params-json",
+      "'{\"rank\": 1, \"max_rank\": 2}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__a__a.py",
+       "type": "input"
+      },
+      {
+       "lfn": "a__output1__1__p_1.txt",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
      ]
     },
     {
+     "type": "job",
+     "name": "a",
+     "id": "a__2",
+     "arguments": [
+      "--code",
+      "code__a__a.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "output1=a__output1__2__p_2.txt",
+      "--params-json",
+      "'{\"rank\": 2, \"max_rank\": 2}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__a__a.py",
+       "type": "input"
+      },
+      {
+       "lfn": "a__output1__2__p_2.txt",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "b",
+     "id": "b__1",
+     "arguments": [
+      "--code",
+      "code__b__b.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "output1=b__output1__1__q_1.txt",
+      "--params-json",
+      "'{\"rank\": 1, \"max_rank\": 2}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__b__b.py",
+       "type": "input"
+      },
+      {
+       "lfn": "b__output1__1__q_1.txt",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "b",
      "id": "b__2",
-     "_origin": "b",
-     "_assign": {
-      "rank2": "2"
-     },
-     "code": "functions/b.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "output1": "b__output1__2__q_2.txt"
-     },
-     "params": {
-      "rank": 2,
-      "max_rank": 2
-     },
-     "after": [
-      "a__1",
-      "a__2"
+     "arguments": [
+      "--code",
+      "code__b__b.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "output1=b__output1__2__q_2.txt",
+      "--params-json",
+      "'{\"rank\": 2, \"max_rank\": 2}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__b__b.py",
+       "type": "input"
+      },
+      {
+       "lfn": "b__output1__2__q_2.txt",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
      ]
     }
    ],
-   "outputs": [
+   "jobDependencies": [
     {
-     "file": "a__output1__1__p_1.txt",
-     "deliver_as": "results/p_1.txt"
+     "id": "a__1",
+     "children": [
+      "b__1",
+      "b__2"
+     ]
     },
     {
-     "file": "a__output1__2__p_2.txt",
-     "deliver_as": "results/p_2.txt"
-    },
-    {
-     "file": "b__output1__1__q_1.txt",
-     "deliver_as": "results/q_1.txt"
-    },
-    {
-     "file": "b__output1__2__q_2.txt",
-     "deliver_as": "results/q_2.txt"
+     "id": "a__2",
+     "children": [
+      "b__1",
+      "b__2"
+     ]
     }
    ]
   },

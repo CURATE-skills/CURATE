@@ -55,61 +55,70 @@
   "_base": "<fixture>"
  },
  "pegasus": {
-  "ir": {
-   "ir_version": "0.2",
-   "expanded": true,
+  "workflow": {
+   "pegasus": "5.0.4",
    "name": "t",
-   "description": "t6",
-   "defaults": {
-    "image": "docker:///python:3.12-slim",
-    "resources": {
-     "cpus": 1,
-     "memory_mb": 2048
-    }
+   "metadata": {
+    "curate.transformations": "{\"p\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}}",
+    "curate.replicas": "{\"1st-csv\": \"inputs/1st-csv\", \"1st.csv\": \"inputs/1st.csv\", \"p.txt_\": \"inputs/p.txt_\", \"code__p__p.py\": \"functions/p.py\"}",
+    "curate.deliverables": "[{\"file\": \"p__output2__p-1.json\", \"deliver_as\": \"results/p-1.json\"}, {\"file\": \"p__output1__p_1.json\", \"deliver_as\": \"results/p_1.json\"}]"
    },
-   "inputs": [
+   "jobs": [
     {
-     "file": "1st-csv",
-     "location": "inputs/1st-csv"
-    },
-    {
-     "file": "1st.csv",
-     "location": "inputs/1st.csv"
-    },
-    {
-     "file": "p.txt_",
-     "location": "inputs/p.txt_"
-    }
-   ],
-   "nodes": [
-    {
+     "type": "job",
+     "name": "p",
      "id": "p",
-     "_origin": "p",
-     "_assign": {},
-     "code": "functions/p.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "1st.csv",
-      "input2": "1st-csv",
-      "input3": "p.txt_"
-     },
-     "outputs": {
-      "output1": "p__output1__p_1.json",
-      "output2": "p__output2__p-1.json"
-     },
-     "params": {}
+     "arguments": [
+      "--code",
+      "code__p__p.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=1st.csv",
+      "--in",
+      "input2=1st-csv",
+      "--in",
+      "input3=p.txt_",
+      "--out",
+      "output1=p__output1__p_1.json",
+      "--out",
+      "output2=p__output2__p-1.json",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__p__p.py",
+       "type": "input"
+      },
+      {
+       "lfn": "1st.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "1st-csv",
+       "type": "input"
+      },
+      {
+       "lfn": "p.txt_",
+       "type": "input"
+      },
+      {
+       "lfn": "p__output1__p_1.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      },
+      {
+       "lfn": "p__output2__p-1.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
     }
    ],
-   "outputs": [
-    {
-     "file": "p__output2__p-1.json",
-     "deliver_as": "results/p-1.json"
-    },
-    {
-     "file": "p__output1__p_1.json",
-     "deliver_as": "results/p_1.json"
-    }
-   ]
+   "jobDependencies": []
   },
   "copy": {},
   "needed": [

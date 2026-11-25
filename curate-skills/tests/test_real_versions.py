@@ -4,8 +4,10 @@ references (fixtures/real/<workflow>/):
   spec.json       the spec Gate 4 approved in the run that published the version
   version/        the published version folder (workflow.yml, inputs.yml, functions/)
   identity.json   workflow id, content hash, version hash, and the runs below
-  pegasus-ir.yaml the Pegasus bundle of the phase-7 Pegasus run (weather: the host image path
-                  replaced by a neutral one, passed to the build the same way)
+  pegasus-ir.yaml the Pegasus bundle of the phase-7 Pegasus run, the expanded IR v0.2 jobs the old
+                  backend planned (weather: the host image path replaced by a neutral one, passed to
+                  the build the same way); kept as the record of what ran
+  pegasus-workflow.yml  the native Pegasus workflow the version builds today (scripts/cwl_pegasus.py)
   faasr-bundle/   the FaaSr bundle of the phase-7 FaaSr run
 
 Rebuilding the approved spec gives the published workflow.yml byte for byte (publish's identity
@@ -72,13 +74,19 @@ def test_rebuilding_the_approved_spec_gives_the_published_version_byte_for_byte(
 
 
 @pytest.mark.parametrize("which", WORKFLOWS)
-def test_the_version_builds_the_pegasus_bundle_that_ran(which):
+def test_the_version_builds_the_pegasus_jobs_that_ran(which):
+    """The jobs the version expands to today are exactly the phase-7 run's (its ir.yaml nodes: ids, steps,
+    every file, params, order), with its deliverables and image; the native workflow is the reference."""
+    import cwl_pegasus as CP
     d, spec, ident = ref(which)
-    want = yaml.safe_load((d / "pegasus-ir.yaml").read_text())
+    ran = yaml.safe_load((d / "pegasus-ir.yaml").read_text())
     s = {"version_dir": str(d / "version"), "spec": spec}
-    got = X.pegasus_built(s, None, ident["pegasus"]["name"], ident["pegasus"]["image"])["ir"]
-    assert got == want
-    assert len(want["nodes"]) == {"weather": 5, "mapreduce": 11}[which]
+    built = X.pegasus_built(s, None, ident["pegasus"]["name"], ident["pegasus"]["image"])
+    assert built["jobs"] == ran["nodes"]
+    assert built["deliverables"] == ran["outputs"]
+    assert {t["image"] for t in CP.metadata(built["workflow"])["transformations"].values()} == {ran["defaults"]["image"]}
+    assert built["workflow"]["name"] == ran["name"] and len(ran["nodes"]) == {"weather": 5, "mapreduce": 11}[which]
+    assert CP.dump(built["workflow"]) == (d / "pegasus-workflow.yml").read_text()
 
 
 @pytest.mark.parametrize("which", WORKFLOWS)

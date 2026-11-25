@@ -74,10 +74,10 @@ def test_gate4_summary_local(source_run, capsys):
     assert "- input files you must provide: none" in sec
     # no file lists at the gate, for either target
     for listing in ("### Deploy would write", "### Pegasus run would write", "Files in the workflow draft", "- Writes:",
-                    "ir.yaml", "functions/", "word_count_{rank5}"):
+                    "workflow.yml", "functions/", "word_count_{rank5}"):
         assert listing not in md, listing
     full = (source_run / "review" / "gate4.md").read_text()  # the review file keeps them
-    assert "### Pegasus run would write" in full and "ir.yaml" in full and "### Deploy would write" in full
+    assert "### Pegasus run would write" in full and "workflow.yml" in full and "### Deploy would write" in full
 
 
 def test_gate4_summary_remote_and_setting_image(source_run, capsys, monkeypatch):

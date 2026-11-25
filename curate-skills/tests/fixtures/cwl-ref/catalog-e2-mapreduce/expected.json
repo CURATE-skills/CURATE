@@ -245,249 +245,475 @@
   "_base": "<fixture>"
  },
  "pegasus": {
-  "ir": {
-   "ir_version": "0.2",
-   "expanded": true,
+  "workflow": {
+   "pegasus": "5.0.4",
    "name": "t",
-   "description": "MapReduce word counting benchmark: generate text, split into N=3 batches, N parallel mappers, shuffle (flatten), M=5 parallel reducers.",
-   "defaults": {
-    "image": "docker:///python:3.12-slim",
-    "resources": {
-     "cpus": 1,
-     "memory_mb": 2048
-    }
+   "metadata": {
+    "curate.transformations": "{\"generate_text\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}, \"split\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}, \"map\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}, \"shuffle\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}, \"reduce\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}}",
+    "curate.replicas": "{\"code__generate_text__generate_text.py\": \"functions/generate_text.py\", \"code__split__split.py\": \"functions/split.py\", \"code__map__map.py\": \"functions/map.py\", \"code__shuffle__shuffle.py\": \"functions/shuffle.py\", \"code__reduce__reduce.py\": \"functions/reduce.py\"}",
+    "curate.deliverables": "[{\"file\": \"reduce__output1__1__word_count_1.json\", \"deliver_as\": \"results/word_count_1.json\"}, {\"file\": \"reduce__output1__2__word_count_2.json\", \"deliver_as\": \"results/word_count_2.json\"}, {\"file\": \"reduce__output1__3__word_count_3.json\", \"deliver_as\": \"results/word_count_3.json\"}, {\"file\": \"reduce__output1__4__word_count_4.json\", \"deliver_as\": \"results/word_count_4.json\"}, {\"file\": \"reduce__output1__5__word_count_5.json\", \"deliver_as\": \"results/word_count_5.json\"}]"
    },
-   "inputs": [],
-   "nodes": [
+   "jobs": [
+    {
+     "type": "job",
+     "name": "generate_text",
+     "id": "generate_text",
+     "arguments": [
+      "--code",
+      "code__generate_text__generate_text.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "output1=generate_text__output1__input_text.txt",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__generate_text__generate_text.py",
+       "type": "input"
+      },
+      {
+       "lfn": "generate_text__output1__input_text.txt",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "split",
+     "id": "split",
+     "arguments": [
+      "--code",
+      "code__split__split.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=generate_text__output1__input_text.txt",
+      "--out-list",
+      "output1=split__output1__1__text_batch_1.txt",
+      "--out-list",
+      "output1=split__output1__2__text_batch_2.txt",
+      "--out-list",
+      "output1=split__output1__3__text_batch_3.txt",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__split__split.py",
+       "type": "input"
+      },
+      {
+       "lfn": "generate_text__output1__input_text.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "split__output1__1__text_batch_1.txt",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      },
+      {
+       "lfn": "split__output1__2__text_batch_2.txt",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      },
+      {
+       "lfn": "split__output1__3__text_batch_3.txt",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "map",
+     "id": "map__1",
+     "arguments": [
+      "--code",
+      "code__map__map.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=split__output1__1__text_batch_1.txt",
+      "--out",
+      "output1=map__output1__1__map_counts_1.json",
+      "--params-json",
+      "'{\"rank\": 1, \"max_rank\": 3}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__map__map.py",
+       "type": "input"
+      },
+      {
+       "lfn": "split__output1__1__text_batch_1.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "map__output1__1__map_counts_1.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "map",
+     "id": "map__2",
+     "arguments": [
+      "--code",
+      "code__map__map.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=split__output1__2__text_batch_2.txt",
+      "--out",
+      "output1=map__output1__2__map_counts_2.json",
+      "--params-json",
+      "'{\"rank\": 2, \"max_rank\": 3}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__map__map.py",
+       "type": "input"
+      },
+      {
+       "lfn": "split__output1__2__text_batch_2.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "map__output1__2__map_counts_2.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "map",
+     "id": "map__3",
+     "arguments": [
+      "--code",
+      "code__map__map.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=split__output1__3__text_batch_3.txt",
+      "--out",
+      "output1=map__output1__3__map_counts_3.json",
+      "--params-json",
+      "'{\"rank\": 3, \"max_rank\": 3}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__map__map.py",
+       "type": "input"
+      },
+      {
+       "lfn": "split__output1__3__text_batch_3.txt",
+       "type": "input"
+      },
+      {
+       "lfn": "map__output1__3__map_counts_3.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "shuffle",
+     "id": "shuffle",
+     "arguments": [
+      "--code",
+      "code__shuffle__shuffle.py",
+      "--entrypoint",
+      "main",
+      "--in-dir",
+      "input1=map__output1__1__map_counts_1.json",
+      "--in-dir",
+      "input1=map__output1__2__map_counts_2.json",
+      "--in-dir",
+      "input1=map__output1__3__map_counts_3.json",
+      "--out-list",
+      "output1=shuffle__output1__1__shuffle_partition_1.json",
+      "--out-list",
+      "output1=shuffle__output1__2__shuffle_partition_2.json",
+      "--out-list",
+      "output1=shuffle__output1__3__shuffle_partition_3.json",
+      "--out-list",
+      "output1=shuffle__output1__4__shuffle_partition_4.json",
+      "--out-list",
+      "output1=shuffle__output1__5__shuffle_partition_5.json",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__shuffle__shuffle.py",
+       "type": "input"
+      },
+      {
+       "lfn": "map__output1__1__map_counts_1.json",
+       "type": "input"
+      },
+      {
+       "lfn": "map__output1__2__map_counts_2.json",
+       "type": "input"
+      },
+      {
+       "lfn": "map__output1__3__map_counts_3.json",
+       "type": "input"
+      },
+      {
+       "lfn": "shuffle__output1__1__shuffle_partition_1.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      },
+      {
+       "lfn": "shuffle__output1__2__shuffle_partition_2.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      },
+      {
+       "lfn": "shuffle__output1__3__shuffle_partition_3.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      },
+      {
+       "lfn": "shuffle__output1__4__shuffle_partition_4.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      },
+      {
+       "lfn": "shuffle__output1__5__shuffle_partition_5.json",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "reduce",
+     "id": "reduce__1",
+     "arguments": [
+      "--code",
+      "code__reduce__reduce.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=shuffle__output1__1__shuffle_partition_1.json",
+      "--out",
+      "output1=reduce__output1__1__word_count_1.json",
+      "--params-json",
+      "'{\"rank\": 1, \"max_rank\": 5}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__reduce__reduce.py",
+       "type": "input"
+      },
+      {
+       "lfn": "shuffle__output1__1__shuffle_partition_1.json",
+       "type": "input"
+      },
+      {
+       "lfn": "reduce__output1__1__word_count_1.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "reduce",
+     "id": "reduce__2",
+     "arguments": [
+      "--code",
+      "code__reduce__reduce.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=shuffle__output1__2__shuffle_partition_2.json",
+      "--out",
+      "output1=reduce__output1__2__word_count_2.json",
+      "--params-json",
+      "'{\"rank\": 2, \"max_rank\": 5}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__reduce__reduce.py",
+       "type": "input"
+      },
+      {
+       "lfn": "shuffle__output1__2__shuffle_partition_2.json",
+       "type": "input"
+      },
+      {
+       "lfn": "reduce__output1__2__word_count_2.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "reduce",
+     "id": "reduce__3",
+     "arguments": [
+      "--code",
+      "code__reduce__reduce.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=shuffle__output1__3__shuffle_partition_3.json",
+      "--out",
+      "output1=reduce__output1__3__word_count_3.json",
+      "--params-json",
+      "'{\"rank\": 3, \"max_rank\": 5}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__reduce__reduce.py",
+       "type": "input"
+      },
+      {
+       "lfn": "shuffle__output1__3__shuffle_partition_3.json",
+       "type": "input"
+      },
+      {
+       "lfn": "reduce__output1__3__word_count_3.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "reduce",
+     "id": "reduce__4",
+     "arguments": [
+      "--code",
+      "code__reduce__reduce.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=shuffle__output1__4__shuffle_partition_4.json",
+      "--out",
+      "output1=reduce__output1__4__word_count_4.json",
+      "--params-json",
+      "'{\"rank\": 4, \"max_rank\": 5}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__reduce__reduce.py",
+       "type": "input"
+      },
+      {
+       "lfn": "shuffle__output1__4__shuffle_partition_4.json",
+       "type": "input"
+      },
+      {
+       "lfn": "reduce__output1__4__word_count_4.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "reduce",
+     "id": "reduce__5",
+     "arguments": [
+      "--code",
+      "code__reduce__reduce.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=shuffle__output1__5__shuffle_partition_5.json",
+      "--out",
+      "output1=reduce__output1__5__word_count_5.json",
+      "--params-json",
+      "'{\"rank\": 5, \"max_rank\": 5}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__reduce__reduce.py",
+       "type": "input"
+      },
+      {
+       "lfn": "shuffle__output1__5__shuffle_partition_5.json",
+       "type": "input"
+      },
+      {
+       "lfn": "reduce__output1__5__word_count_5.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    }
+   ],
+   "jobDependencies": [
     {
      "id": "generate_text",
-     "_origin": "generate_text",
-     "_assign": {},
-     "code": "functions/generate_text.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "output1": "generate_text__output1__input_text.txt"
-     },
-     "params": {}
+     "children": [
+      "split"
+     ]
     },
     {
      "id": "split",
-     "_origin": "split",
-     "_assign": {},
-     "code": "functions/split.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "generate_text__output1__input_text.txt"
-     },
-     "outputs": {
-      "output1": [
-       "split__output1__1__text_batch_1.txt",
-       "split__output1__2__text_batch_2.txt",
-       "split__output1__3__text_batch_3.txt"
-      ]
-     },
-     "params": {}
+     "children": [
+      "map__1",
+      "map__2",
+      "map__3"
+     ]
     },
     {
      "id": "map__1",
-     "_origin": "map",
-     "_assign": {
-      "rank3": "1"
-     },
-     "code": "functions/map.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "split__output1__1__text_batch_1.txt"
-     },
-     "outputs": {
-      "output1": "map__output1__1__map_counts_1.json"
-     },
-     "params": {
-      "rank": 1,
-      "max_rank": 3
-     }
+     "children": [
+      "shuffle"
+     ]
     },
     {
      "id": "map__2",
-     "_origin": "map",
-     "_assign": {
-      "rank3": "2"
-     },
-     "code": "functions/map.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "split__output1__2__text_batch_2.txt"
-     },
-     "outputs": {
-      "output1": "map__output1__2__map_counts_2.json"
-     },
-     "params": {
-      "rank": 2,
-      "max_rank": 3
-     }
+     "children": [
+      "shuffle"
+     ]
     },
     {
      "id": "map__3",
-     "_origin": "map",
-     "_assign": {
-      "rank3": "3"
-     },
-     "code": "functions/map.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "split__output1__3__text_batch_3.txt"
-     },
-     "outputs": {
-      "output1": "map__output1__3__map_counts_3.json"
-     },
-     "params": {
-      "rank": 3,
-      "max_rank": 3
-     }
+     "children": [
+      "shuffle"
+     ]
     },
     {
      "id": "shuffle",
-     "_origin": "shuffle",
-     "_assign": {},
-     "code": "functions/shuffle.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": {
-       "folder": [
-        "map__output1__1__map_counts_1.json",
-        "map__output1__2__map_counts_2.json",
-        "map__output1__3__map_counts_3.json"
-       ]
-      }
-     },
-     "outputs": {
-      "output1": [
-       "shuffle__output1__1__shuffle_partition_1.json",
-       "shuffle__output1__2__shuffle_partition_2.json",
-       "shuffle__output1__3__shuffle_partition_3.json",
-       "shuffle__output1__4__shuffle_partition_4.json",
-       "shuffle__output1__5__shuffle_partition_5.json"
-      ]
-     },
-     "params": {}
-    },
-    {
-     "id": "reduce__1",
-     "_origin": "reduce",
-     "_assign": {
-      "rank5": "1"
-     },
-     "code": "functions/reduce.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "shuffle__output1__1__shuffle_partition_1.json"
-     },
-     "outputs": {
-      "output1": "reduce__output1__1__word_count_1.json"
-     },
-     "params": {
-      "rank": 1,
-      "max_rank": 5
-     }
-    },
-    {
-     "id": "reduce__2",
-     "_origin": "reduce",
-     "_assign": {
-      "rank5": "2"
-     },
-     "code": "functions/reduce.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "shuffle__output1__2__shuffle_partition_2.json"
-     },
-     "outputs": {
-      "output1": "reduce__output1__2__word_count_2.json"
-     },
-     "params": {
-      "rank": 2,
-      "max_rank": 5
-     }
-    },
-    {
-     "id": "reduce__3",
-     "_origin": "reduce",
-     "_assign": {
-      "rank5": "3"
-     },
-     "code": "functions/reduce.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "shuffle__output1__3__shuffle_partition_3.json"
-     },
-     "outputs": {
-      "output1": "reduce__output1__3__word_count_3.json"
-     },
-     "params": {
-      "rank": 3,
-      "max_rank": 5
-     }
-    },
-    {
-     "id": "reduce__4",
-     "_origin": "reduce",
-     "_assign": {
-      "rank5": "4"
-     },
-     "code": "functions/reduce.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "shuffle__output1__4__shuffle_partition_4.json"
-     },
-     "outputs": {
-      "output1": "reduce__output1__4__word_count_4.json"
-     },
-     "params": {
-      "rank": 4,
-      "max_rank": 5
-     }
-    },
-    {
-     "id": "reduce__5",
-     "_origin": "reduce",
-     "_assign": {
-      "rank5": "5"
-     },
-     "code": "functions/reduce.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "shuffle__output1__5__shuffle_partition_5.json"
-     },
-     "outputs": {
-      "output1": "reduce__output1__5__word_count_5.json"
-     },
-     "params": {
-      "rank": 5,
-      "max_rank": 5
-     }
-    }
-   ],
-   "outputs": [
-    {
-     "file": "reduce__output1__1__word_count_1.json",
-     "deliver_as": "results/word_count_1.json"
-    },
-    {
-     "file": "reduce__output1__2__word_count_2.json",
-     "deliver_as": "results/word_count_2.json"
-    },
-    {
-     "file": "reduce__output1__3__word_count_3.json",
-     "deliver_as": "results/word_count_3.json"
-    },
-    {
-     "file": "reduce__output1__4__word_count_4.json",
-     "deliver_as": "results/word_count_4.json"
-    },
-    {
-     "file": "reduce__output1__5__word_count_5.json",
-     "deliver_as": "results/word_count_5.json"
+     "children": [
+      "reduce__1",
+      "reduce__2",
+      "reduce__3",
+      "reduce__4",
+      "reduce__5"
+     ]
     }
    ]
   },

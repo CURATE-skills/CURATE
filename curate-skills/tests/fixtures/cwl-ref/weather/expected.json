@@ -126,130 +126,213 @@
   "_base": "<fixture>"
  },
  "pegasus": {
-  "ir": {
-   "ir_version": "0.2",
-   "expanded": true,
+  "workflow": {
+   "pegasus": "5.0.4",
    "name": "t",
-   "description": "Compare winter 2025 weather in Corvallis, Oregon (GHCN-Daily station USC00351862) against the previous 10-year daily average for PRCP, TMIN and TMAX.",
-   "defaults": {
-    "image": "docker:///python:3.12-slim",
-    "resources": {
-     "cpus": 1,
-     "memory_mb": 2048
-    }
+   "metadata": {
+    "curate.transformations": "{\"download_ghcn_station\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}, \"process_weather_variable\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}, \"plot_weather_comparison\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 2048}}}",
+    "curate.replicas": "{\"code__download_ghcn_station__download_ghcn_station.py\": \"functions/download_ghcn_station.py\", \"code__process_weather_variable__process_weather_variable.py\": \"functions/process_weather_variable.py\", \"code__plot_weather_comparison__plot_weather_comparison.py\": \"functions/plot_weather_comparison.py\"}",
+    "curate.deliverables": "[{\"file\": \"plot_weather_comparison__output1__corvallis_winter_comparison.png\", \"deliver_as\": \"results/corvallis_winter_comparison.png\"}]"
    },
-   "inputs": [],
-   "nodes": [
+   "jobs": [
+    {
+     "type": "job",
+     "name": "download_ghcn_station",
+     "id": "download_ghcn_station",
+     "arguments": [
+      "--code",
+      "code__download_ghcn_station__download_ghcn_station.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "output1=download_ghcn_station__output1__USC00351862_daily.csv",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__download_ghcn_station__download_ghcn_station.py",
+       "type": "input"
+      },
+      {
+       "lfn": "download_ghcn_station__output1__USC00351862_daily.csv",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "process_weather_variable",
+     "id": "process_weather_variable__1",
+     "arguments": [
+      "--code",
+      "code__process_weather_variable__process_weather_variable.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=download_ghcn_station__output1__USC00351862_daily.csv",
+      "--out",
+      "output1=process_weather_variable__output1__1__winter_comparison_1.csv",
+      "--params-json",
+      "'{\"rank\": 1, \"max_rank\": 3}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__process_weather_variable__process_weather_variable.py",
+       "type": "input"
+      },
+      {
+       "lfn": "download_ghcn_station__output1__USC00351862_daily.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "process_weather_variable__output1__1__winter_comparison_1.csv",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "process_weather_variable",
+     "id": "process_weather_variable__2",
+     "arguments": [
+      "--code",
+      "code__process_weather_variable__process_weather_variable.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=download_ghcn_station__output1__USC00351862_daily.csv",
+      "--out",
+      "output1=process_weather_variable__output1__2__winter_comparison_2.csv",
+      "--params-json",
+      "'{\"rank\": 2, \"max_rank\": 3}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__process_weather_variable__process_weather_variable.py",
+       "type": "input"
+      },
+      {
+       "lfn": "download_ghcn_station__output1__USC00351862_daily.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "process_weather_variable__output1__2__winter_comparison_2.csv",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "process_weather_variable",
+     "id": "process_weather_variable__3",
+     "arguments": [
+      "--code",
+      "code__process_weather_variable__process_weather_variable.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "input1=download_ghcn_station__output1__USC00351862_daily.csv",
+      "--out",
+      "output1=process_weather_variable__output1__3__winter_comparison_3.csv",
+      "--params-json",
+      "'{\"rank\": 3, \"max_rank\": 3}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__process_weather_variable__process_weather_variable.py",
+       "type": "input"
+      },
+      {
+       "lfn": "download_ghcn_station__output1__USC00351862_daily.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "process_weather_variable__output1__3__winter_comparison_3.csv",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "plot_weather_comparison",
+     "id": "plot_weather_comparison",
+     "arguments": [
+      "--code",
+      "code__plot_weather_comparison__plot_weather_comparison.py",
+      "--entrypoint",
+      "main",
+      "--in-dir",
+      "input1=process_weather_variable__output1__1__winter_comparison_1.csv",
+      "--in-dir",
+      "input1=process_weather_variable__output1__2__winter_comparison_2.csv",
+      "--in-dir",
+      "input1=process_weather_variable__output1__3__winter_comparison_3.csv",
+      "--out",
+      "output1=plot_weather_comparison__output1__corvallis_winter_comparison.png",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__plot_weather_comparison__plot_weather_comparison.py",
+       "type": "input"
+      },
+      {
+       "lfn": "process_weather_variable__output1__1__winter_comparison_1.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "process_weather_variable__output1__2__winter_comparison_2.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "process_weather_variable__output1__3__winter_comparison_3.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "plot_weather_comparison__output1__corvallis_winter_comparison.png",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    }
+   ],
+   "jobDependencies": [
     {
      "id": "download_ghcn_station",
-     "_origin": "download_ghcn_station",
-     "_assign": {},
-     "code": "functions/download_ghcn_station.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "output1": "download_ghcn_station__output1__USC00351862_daily.csv"
-     },
-     "params": {},
-     "packages": [
-      "requests"
+     "children": [
+      "process_weather_variable__1",
+      "process_weather_variable__2",
+      "process_weather_variable__3"
      ]
     },
     {
      "id": "process_weather_variable__1",
-     "_origin": "process_weather_variable",
-     "_assign": {
-      "rank3": "1"
-     },
-     "code": "functions/process_weather_variable.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "download_ghcn_station__output1__USC00351862_daily.csv"
-     },
-     "outputs": {
-      "output1": "process_weather_variable__output1__1__winter_comparison_1.csv"
-     },
-     "params": {
-      "rank": 1,
-      "max_rank": 3
-     },
-     "packages": [
-      "pandas"
+     "children": [
+      "plot_weather_comparison"
      ]
     },
     {
      "id": "process_weather_variable__2",
-     "_origin": "process_weather_variable",
-     "_assign": {
-      "rank3": "2"
-     },
-     "code": "functions/process_weather_variable.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "download_ghcn_station__output1__USC00351862_daily.csv"
-     },
-     "outputs": {
-      "output1": "process_weather_variable__output1__2__winter_comparison_2.csv"
-     },
-     "params": {
-      "rank": 2,
-      "max_rank": 3
-     },
-     "packages": [
-      "pandas"
+     "children": [
+      "plot_weather_comparison"
      ]
     },
     {
      "id": "process_weather_variable__3",
-     "_origin": "process_weather_variable",
-     "_assign": {
-      "rank3": "3"
-     },
-     "code": "functions/process_weather_variable.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": "download_ghcn_station__output1__USC00351862_daily.csv"
-     },
-     "outputs": {
-      "output1": "process_weather_variable__output1__3__winter_comparison_3.csv"
-     },
-     "params": {
-      "rank": 3,
-      "max_rank": 3
-     },
-     "packages": [
-      "pandas"
+     "children": [
+      "plot_weather_comparison"
      ]
-    },
-    {
-     "id": "plot_weather_comparison",
-     "_origin": "plot_weather_comparison",
-     "_assign": {},
-     "code": "functions/plot_weather_comparison.py",
-     "entrypoint": "main",
-     "inputs": {
-      "input1": {
-       "folder": [
-        "process_weather_variable__output1__1__winter_comparison_1.csv",
-        "process_weather_variable__output1__2__winter_comparison_2.csv",
-        "process_weather_variable__output1__3__winter_comparison_3.csv"
-       ]
-      }
-     },
-     "outputs": {
-      "output1": "plot_weather_comparison__output1__corvallis_winter_comparison.png"
-     },
-     "params": {},
-     "packages": [
-      "pandas",
-      "matplotlib"
-     ]
-    }
-   ],
-   "outputs": [
-    {
-     "file": "plot_weather_comparison__output1__corvallis_winter_comparison.png",
-     "deliver_as": "results/corvallis_winter_comparison.png"
     }
    ]
   },

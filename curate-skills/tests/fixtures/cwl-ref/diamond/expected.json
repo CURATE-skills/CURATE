@@ -87,91 +87,173 @@
   "_base": "<fixture>"
  },
  "pegasus": {
-  "ir": {
-   "ir_version": "0.2",
-   "expanded": true,
+  "workflow": {
+   "pegasus": "5.0.4",
    "name": "t",
-   "description": "Synthetic 4-node diamond shaped like an ice-phenology task (not the real task)",
-   "defaults": {
-    "image": "docker:///python:3.12-slim",
-    "resources": {
-     "cpus": 1,
-     "memory_mb": 1024
-    }
+   "metadata": {
+    "curate.transformations": "{\"load_data\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 1024}}, \"freeze_up\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 1024}}, \"ice_off\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 1024}}, \"assemble\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {\"cpus\": 1, \"memory_mb\": 1024}}}",
+    "curate.replicas": "{\"params.json\": \"inputs/params.json\", \"code__load_data__load_data.py\": \"functions/load_data.py\", \"code__freeze_up__freeze_up.py\": \"functions/freeze_up.py\", \"code__ice_off__ice_off.py\": \"functions/ice_off.py\", \"code__assemble__assemble.py\": \"functions/assemble.py\"}",
+    "curate.deliverables": "[{\"file\": \"assemble__result__ice_phenology_result.json\", \"deliver_as\": \"results/ice_phenology_result.json\"}]"
    },
-   "inputs": [
+   "jobs": [
     {
-     "file": "params.json",
-     "location": "inputs/params.json"
+     "type": "job",
+     "name": "load_data",
+     "id": "load_data",
+     "arguments": [
+      "--code",
+      "code__load_data__load_data.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "params=params.json",
+      "--out",
+      "daily=load_data__daily__daily.csv",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__load_data__load_data.py",
+       "type": "input"
+      },
+      {
+       "lfn": "params.json",
+       "type": "input"
+      },
+      {
+       "lfn": "load_data__daily__daily.csv",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "freeze_up",
+     "id": "freeze_up",
+     "arguments": [
+      "--code",
+      "code__freeze_up__freeze_up.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "daily=load_data__daily__daily.csv",
+      "--out",
+      "freeze=freeze_up__freeze__freeze.csv",
+      "--params-json",
+      "'{\"run_days\": 5}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__freeze_up__freeze_up.py",
+       "type": "input"
+      },
+      {
+       "lfn": "load_data__daily__daily.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "freeze_up__freeze__freeze.csv",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "ice_off",
+     "id": "ice_off",
+     "arguments": [
+      "--code",
+      "code__ice_off__ice_off.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "daily=load_data__daily__daily.csv",
+      "--out",
+      "iceoff=ice_off__iceoff__iceoff.csv",
+      "--params-json",
+      "'{\"run_days\": 5}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__ice_off__ice_off.py",
+       "type": "input"
+      },
+      {
+       "lfn": "load_data__daily__daily.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "ice_off__iceoff__iceoff.csv",
+       "type": "output",
+       "stageOut": false,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "assemble",
+     "id": "assemble",
+     "arguments": [
+      "--code",
+      "code__assemble__assemble.py",
+      "--entrypoint",
+      "main",
+      "--in",
+      "freeze=freeze_up__freeze__freeze.csv",
+      "--in",
+      "iceoff=ice_off__iceoff__iceoff.csv",
+      "--out",
+      "result=assemble__result__ice_phenology_result.json",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__assemble__assemble.py",
+       "type": "input"
+      },
+      {
+       "lfn": "freeze_up__freeze__freeze.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "ice_off__iceoff__iceoff.csv",
+       "type": "input"
+      },
+      {
+       "lfn": "assemble__result__ice_phenology_result.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
     }
    ],
-   "nodes": [
+   "jobDependencies": [
     {
      "id": "load_data",
-     "_origin": "load_data",
-     "_assign": {},
-     "code": "functions/load_data.py",
-     "entrypoint": "main",
-     "inputs": {
-      "params": "params.json"
-     },
-     "outputs": {
-      "daily": "load_data__daily__daily.csv"
-     },
-     "params": {}
+     "children": [
+      "freeze_up",
+      "ice_off"
+     ]
     },
     {
      "id": "freeze_up",
-     "_origin": "freeze_up",
-     "_assign": {},
-     "code": "functions/freeze_up.py",
-     "entrypoint": "main",
-     "inputs": {
-      "daily": "load_data__daily__daily.csv"
-     },
-     "outputs": {
-      "freeze": "freeze_up__freeze__freeze.csv"
-     },
-     "params": {
-      "run_days": 5
-     }
+     "children": [
+      "assemble"
+     ]
     },
     {
      "id": "ice_off",
-     "_origin": "ice_off",
-     "_assign": {},
-     "code": "functions/ice_off.py",
-     "entrypoint": "main",
-     "inputs": {
-      "daily": "load_data__daily__daily.csv"
-     },
-     "outputs": {
-      "iceoff": "ice_off__iceoff__iceoff.csv"
-     },
-     "params": {
-      "run_days": 5
-     }
-    },
-    {
-     "id": "assemble",
-     "_origin": "assemble",
-     "_assign": {},
-     "code": "functions/assemble.py",
-     "entrypoint": "main",
-     "inputs": {
-      "freeze": "freeze_up__freeze__freeze.csv",
-      "iceoff": "ice_off__iceoff__iceoff.csv"
-     },
-     "outputs": {
-      "result": "assemble__result__ice_phenology_result.json"
-     },
-     "params": {}
-    }
-   ],
-   "outputs": [
-    {
-     "file": "assemble__result__ice_phenology_result.json",
-     "deliver_as": "results/ice_phenology_result.json"
+     "children": [
+      "assemble"
+     ]
     }
    ]
   },

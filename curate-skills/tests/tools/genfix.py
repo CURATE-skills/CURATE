@@ -11,7 +11,8 @@ stored phase-7 ir.yaml before updating).
   expected  tests/fixtures/cwl-ref/<case>/expected.json (expanded jobs, Pegasus build, FaaSr build)
             and cwl-ref/e2-stages/runs.json (what both e2 bundles write when they run)
   cwl       the CWL folders of the spec cases (spec.json present), rebuilt by spec_cwl
-  real      tests/fixtures/real/<workflow>/ from the published versions and runs in --ref:
+  real      tests/fixtures/real/<workflow>/ from the published versions and runs in --ref (and
+            pegasus-workflow.yml, the native Pegasus workflow the version builds today):
             <ref>/<workflow>-v1 (version folder, runs/<id>/bundle) and <ref>/<workflow>-run (the
             run that approved it); the host image path in the Pegasus bundle is replaced by
             NEUTRAL_IMAGE
@@ -67,7 +68,7 @@ def expected_of(folder: Path) -> dict:
     exp = {"jobs": norm(expand_cwl(wf), folder)}
     try:
         b = CP.build(wf, "t")
-        exp["pegasus"] = norm({k: b[k] for k in ("ir", "copy", "needed")}, folder)
+        exp["pegasus"] = norm({k: b[k] for k in ("workflow", "copy", "needed")}, folder)
     except CP.BuildError as e:
         exp["pegasus"] = {"problems": e.problems}
     try:
@@ -100,7 +101,7 @@ def e2_runs() -> dict:
     random.seed(E2_SEED)
     run_bundle(t / "faasr", b, t / "s3")
     faasr = {p.relative_to(t / "s3").as_posix(): sha(p) for p in (t / "s3").rglob("*") if p.is_file()}
-    files = run_locally(CP.write_folder(t / "peg", CP.build(wf, "t-flow")) / "ir.yaml", t / "jobs")
+    files = run_locally(CP.write_folder(t / "peg", CP.build(wf, "t-flow")) / "workflow.yml", t / "jobs")
     peg = {k: sha(v) for k, v in files.items()}
     det = {k: v for k, v in sorted(peg.items()) if "word_count_" in k}
     if {k.split("/", 1)[1]: v for k, v in faasr.items() if "word_count_" in k} != det:
@@ -131,7 +132,11 @@ def real_files(ref: Path, which: str) -> dict[str, bytes]:
     img = doc["defaults"]["image"]
     if "/home/" in img or "/Users/" in img:
         ir, img = ir.replace(img, NEUTRAL_IMAGE), NEUTRAL_IMAGE
-    out["pegasus-ir.yaml"] = ir.encode()
+    out["pegasus-ir.yaml"] = ir.encode()  # what the phase-7 Pegasus run planned (the old ir.yaml), kept as the record
+    import cwl_pegasus as CP
+    import execution as X
+    built = X.pegasus_built({"version_dir": str(vdir), "spec": snap["spec"]}, None, doc["name"], img)
+    out["pegasus-workflow.yml"] = CP.dump(built["workflow"]).encode()  # the native workflow the version builds today
     fb = vdir / "runs" / fr / "bundle"
     for p in sorted(fb.rglob("*")):
         if p.is_file():

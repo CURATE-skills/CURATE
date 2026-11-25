@@ -55,7 +55,7 @@ def test_without_the_run_state_the_old_version_has_no_names(version):
 def test_both_builders_get_the_spec_names_back_and_the_version_is_unchanged(version):
     before = (ids.tree_hash(version), ids.draft_content_hash(version))
     s = state(version)
-    plot = next(j for j in X.pegasus_built(s, None, "t", None)["ir"]["nodes"]
+    plot = next(j for j in X.pegasus_built(s, None, "t", None)["jobs"]
                 if j["_origin"] == "plot_weather_comparison")
     assert plot["outputs"]["output1"] == PNG
     spec = WorkflowSpec.model_validate(SPEC)

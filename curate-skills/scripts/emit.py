@@ -1,6 +1,6 @@
 # /// script
 # requires-python = "==3.13.*"
-# dependencies = ["pydantic==2.11.7", "cwl-utils==0.47", "pyyaml==6.0.2"]
+# dependencies = ["pydantic==2.11.7", "cwl-utils==0.47", "pyyaml==6.0.2", "pegasus-wms.api==5.1.3"]
 # ///
 # Copyright (c) 2026 Nolan Cutler. MIT License; see NOTICE.
 # Derived from CURATE-prototype src/faasr_agents/faasr/emit.py

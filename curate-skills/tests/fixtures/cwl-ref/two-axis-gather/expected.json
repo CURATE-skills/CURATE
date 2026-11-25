@@ -124,128 +124,199 @@
   "_base": "<fixture>"
  },
  "pegasus": {
-  "ir": {
-   "ir_version": "0.2",
-   "expanded": true,
+  "workflow": {
+   "pegasus": "5.0.4",
    "name": "t",
-   "description": "t",
-   "defaults": {
-    "image": "docker:///python:3.12-slim"
+   "metadata": {
+    "curate.transformations": "{\"m\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {}}, \"g\": {\"image\": \"docker:///python:3.12-slim\", \"resources\": {}}}",
+    "curate.replicas": "{\"code__m__m.py\": \"functions/m.py\", \"code__g__g.py\": \"functions/g.py\"}",
+    "curate.deliverables": "[{\"file\": \"g__res__res.json\", \"deliver_as\": \"res.json\"}, {\"file\": \"m__o__1__a__o_1_a\", \"deliver_as\": \"all/a/1.txt\"}, {\"file\": \"m__o__1__b__o_1_b\", \"deliver_as\": \"all/b/1.txt\"}, {\"file\": \"m__o__2__a__o_2_a\", \"deliver_as\": \"all/a/2.txt\"}, {\"file\": \"m__o__2__b__o_2_b\", \"deliver_as\": \"all/b/2.txt\"}]"
    },
-   "inputs": [],
-   "nodes": [
+   "jobs": [
+    {
+     "type": "job",
+     "name": "m",
+     "id": "m__1__a",
+     "arguments": [
+      "--code",
+      "code__m__m.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "o=m__o__1__a__o_1_a",
+      "--params-json",
+      "'{\"rank\": 1, \"name\": \"a\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__m__m.py",
+       "type": "input"
+      },
+      {
+       "lfn": "m__o__1__a__o_1_a",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "m",
+     "id": "m__1__b",
+     "arguments": [
+      "--code",
+      "code__m__m.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "o=m__o__1__b__o_1_b",
+      "--params-json",
+      "'{\"rank\": 1, \"name\": \"b\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__m__m.py",
+       "type": "input"
+      },
+      {
+       "lfn": "m__o__1__b__o_1_b",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "m",
+     "id": "m__2__a",
+     "arguments": [
+      "--code",
+      "code__m__m.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "o=m__o__2__a__o_2_a",
+      "--params-json",
+      "'{\"rank\": 2, \"name\": \"a\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__m__m.py",
+       "type": "input"
+      },
+      {
+       "lfn": "m__o__2__a__o_2_a",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "m",
+     "id": "m__2__b",
+     "arguments": [
+      "--code",
+      "code__m__m.py",
+      "--entrypoint",
+      "main",
+      "--out",
+      "o=m__o__2__b__o_2_b",
+      "--params-json",
+      "'{\"rank\": 2, \"name\": \"b\"}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__m__m.py",
+       "type": "input"
+      },
+      {
+       "lfn": "m__o__2__b__o_2_b",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    },
+    {
+     "type": "job",
+     "name": "g",
+     "id": "g",
+     "arguments": [
+      "--code",
+      "code__g__g.py",
+      "--entrypoint",
+      "main",
+      "--in-list",
+      "all=m__o__1__a__o_1_a",
+      "--in-list",
+      "all=m__o__1__b__o_1_b",
+      "--in-list",
+      "all=m__o__2__a__o_2_a",
+      "--in-list",
+      "all=m__o__2__b__o_2_b",
+      "--out",
+      "res=g__res__res.json",
+      "--params-json",
+      "'{}'"
+     ],
+     "uses": [
+      {
+       "lfn": "code__g__g.py",
+       "type": "input"
+      },
+      {
+       "lfn": "m__o__1__a__o_1_a",
+       "type": "input"
+      },
+      {
+       "lfn": "m__o__1__b__o_1_b",
+       "type": "input"
+      },
+      {
+       "lfn": "m__o__2__a__o_2_a",
+       "type": "input"
+      },
+      {
+       "lfn": "m__o__2__b__o_2_b",
+       "type": "input"
+      },
+      {
+       "lfn": "g__res__res.json",
+       "type": "output",
+       "stageOut": true,
+       "registerReplica": true
+      }
+     ]
+    }
+   ],
+   "jobDependencies": [
     {
      "id": "m__1__a",
-     "_origin": "m",
-     "_assign": {
-      "r": "1",
-      "w": "a"
-     },
-     "code": "functions/m.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "o": "m__o__1__a__o_1_a"
-     },
-     "params": {
-      "rank": 1,
-      "name": "a"
-     }
+     "children": [
+      "g"
+     ]
     },
     {
      "id": "m__1__b",
-     "_origin": "m",
-     "_assign": {
-      "r": "1",
-      "w": "b"
-     },
-     "code": "functions/m.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "o": "m__o__1__b__o_1_b"
-     },
-     "params": {
-      "rank": 1,
-      "name": "b"
-     }
+     "children": [
+      "g"
+     ]
     },
     {
      "id": "m__2__a",
-     "_origin": "m",
-     "_assign": {
-      "r": "2",
-      "w": "a"
-     },
-     "code": "functions/m.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "o": "m__o__2__a__o_2_a"
-     },
-     "params": {
-      "rank": 2,
-      "name": "a"
-     }
+     "children": [
+      "g"
+     ]
     },
     {
      "id": "m__2__b",
-     "_origin": "m",
-     "_assign": {
-      "r": "2",
-      "w": "b"
-     },
-     "code": "functions/m.py",
-     "entrypoint": "main",
-     "inputs": {},
-     "outputs": {
-      "o": "m__o__2__b__o_2_b"
-     },
-     "params": {
-      "rank": 2,
-      "name": "b"
-     }
-    },
-    {
-     "id": "g",
-     "_origin": "g",
-     "_assign": {},
-     "code": "functions/g.py",
-     "entrypoint": "main",
-     "inputs": {
-      "all": [
-       "m__o__1__a__o_1_a",
-       "m__o__1__b__o_1_b",
-       "m__o__2__a__o_2_a",
-       "m__o__2__b__o_2_b"
-      ]
-     },
-     "outputs": {
-      "res": "g__res__res.json"
-     },
-     "params": {}
-    }
-   ],
-   "outputs": [
-    {
-     "file": "g__res__res.json",
-     "deliver_as": "res.json"
-    },
-    {
-     "file": "m__o__1__a__o_1_a",
-     "deliver_as": "all/a/1.txt"
-    },
-    {
-     "file": "m__o__1__b__o_1_b",
-     "deliver_as": "all/b/1.txt"
-    },
-    {
-     "file": "m__o__2__a__o_2_a",
-     "deliver_as": "all/a/2.txt"
-    },
-    {
-     "file": "m__o__2__b__o_2_b",
-     "deliver_as": "all/b/2.txt"
+     "children": [
+      "g"
+     ]
     }
    ]
   },

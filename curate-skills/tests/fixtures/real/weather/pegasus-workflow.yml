@@ -1,0 +1,160 @@
+pegasus: 5.0.4
+name: corvallis-winter-weather-1124-2044
+metadata:
+  curate.transformations: '{"download_ghcn_daily": {"image": "file:///images/curate-weather.tar",
+    "resources": {"cpus": 1, "memory_mb": 2048}}, "compare_winter_variable": {"image":
+    "file:///images/curate-weather.tar", "resources": {"cpus": 1, "memory_mb": 2048}},
+    "plot_winter_comparison": {"image": "file:///images/curate-weather.tar", "resources":
+    {"cpus": 1, "memory_mb": 2048}}}'
+  curate.replicas: '{"code__download_ghcn_daily__download_ghcn_daily.py": "functions/download_ghcn_daily.py",
+    "code__compare_winter_variable__compare_winter_variable.py": "functions/compare_winter_variable.py",
+    "code__plot_winter_comparison__plot_winter_comparison.py": "functions/plot_winter_comparison.py"}'
+  curate.deliverables: '[{"file": "plot_winter_comparison__output1__winter_comparison.png",
+    "deliver_as": "results/winter_comparison.png"}]'
+jobs:
+- type: job
+  name: download_ghcn_daily
+  id: download_ghcn_daily
+  arguments:
+  - --code
+  - code__download_ghcn_daily__download_ghcn_daily.py
+  - --entrypoint
+  - main
+  - --out-list
+  - output1=download_ghcn_daily__output1__1__ghcn_daily_1.csv
+  - --out-list
+  - output1=download_ghcn_daily__output1__2__ghcn_daily_2.csv
+  - --out-list
+  - output1=download_ghcn_daily__output1__3__ghcn_daily_3.csv
+  - --params-json
+  - '''{}'''
+  uses:
+  - lfn: code__download_ghcn_daily__download_ghcn_daily.py
+    type: input
+  - lfn: download_ghcn_daily__output1__1__ghcn_daily_1.csv
+    type: output
+    stageOut: false
+    registerReplica: true
+  - lfn: download_ghcn_daily__output1__2__ghcn_daily_2.csv
+    type: output
+    stageOut: false
+    registerReplica: true
+  - lfn: download_ghcn_daily__output1__3__ghcn_daily_3.csv
+    type: output
+    stageOut: false
+    registerReplica: true
+- type: job
+  name: compare_winter_variable
+  id: compare_winter_variable__1
+  arguments:
+  - --code
+  - code__compare_winter_variable__compare_winter_variable.py
+  - --entrypoint
+  - main
+  - --in
+  - input1=download_ghcn_daily__output1__1__ghcn_daily_1.csv
+  - --out
+  - output1=compare_winter_variable__output1__1__winter_comparison_1.csv
+  - --params-json
+  - '''{"rank": 1, "max_rank": 3}'''
+  uses:
+  - lfn: code__compare_winter_variable__compare_winter_variable.py
+    type: input
+  - lfn: download_ghcn_daily__output1__1__ghcn_daily_1.csv
+    type: input
+  - lfn: compare_winter_variable__output1__1__winter_comparison_1.csv
+    type: output
+    stageOut: false
+    registerReplica: true
+- type: job
+  name: compare_winter_variable
+  id: compare_winter_variable__2
+  arguments:
+  - --code
+  - code__compare_winter_variable__compare_winter_variable.py
+  - --entrypoint
+  - main
+  - --in
+  - input1=download_ghcn_daily__output1__2__ghcn_daily_2.csv
+  - --out
+  - output1=compare_winter_variable__output1__2__winter_comparison_2.csv
+  - --params-json
+  - '''{"rank": 2, "max_rank": 3}'''
+  uses:
+  - lfn: code__compare_winter_variable__compare_winter_variable.py
+    type: input
+  - lfn: download_ghcn_daily__output1__2__ghcn_daily_2.csv
+    type: input
+  - lfn: compare_winter_variable__output1__2__winter_comparison_2.csv
+    type: output
+    stageOut: false
+    registerReplica: true
+- type: job
+  name: compare_winter_variable
+  id: compare_winter_variable__3
+  arguments:
+  - --code
+  - code__compare_winter_variable__compare_winter_variable.py
+  - --entrypoint
+  - main
+  - --in
+  - input1=download_ghcn_daily__output1__3__ghcn_daily_3.csv
+  - --out
+  - output1=compare_winter_variable__output1__3__winter_comparison_3.csv
+  - --params-json
+  - '''{"rank": 3, "max_rank": 3}'''
+  uses:
+  - lfn: code__compare_winter_variable__compare_winter_variable.py
+    type: input
+  - lfn: download_ghcn_daily__output1__3__ghcn_daily_3.csv
+    type: input
+  - lfn: compare_winter_variable__output1__3__winter_comparison_3.csv
+    type: output
+    stageOut: false
+    registerReplica: true
+- type: job
+  name: plot_winter_comparison
+  id: plot_winter_comparison
+  arguments:
+  - --code
+  - code__plot_winter_comparison__plot_winter_comparison.py
+  - --entrypoint
+  - main
+  - --in-list
+  - input1=compare_winter_variable__output1__1__winter_comparison_1.csv
+  - --in-list
+  - input1=compare_winter_variable__output1__2__winter_comparison_2.csv
+  - --in-list
+  - input1=compare_winter_variable__output1__3__winter_comparison_3.csv
+  - --out
+  - output1=plot_winter_comparison__output1__winter_comparison.png
+  - --params-json
+  - '''{}'''
+  uses:
+  - lfn: code__plot_winter_comparison__plot_winter_comparison.py
+    type: input
+  - lfn: compare_winter_variable__output1__1__winter_comparison_1.csv
+    type: input
+  - lfn: compare_winter_variable__output1__2__winter_comparison_2.csv
+    type: input
+  - lfn: compare_winter_variable__output1__3__winter_comparison_3.csv
+    type: input
+  - lfn: plot_winter_comparison__output1__winter_comparison.png
+    type: output
+    stageOut: true
+    registerReplica: true
+jobDependencies:
+- id: download_ghcn_daily
+  children:
+  - compare_winter_variable__1
+  - compare_winter_variable__2
+  - compare_winter_variable__3
+- id: compare_winter_variable__1
+  children:
+  - plot_winter_comparison
+- id: compare_winter_variable__2
+  children:
+  - plot_winter_comparison
+- id: compare_winter_variable__3
+  children:
+  - plot_winter_comparison

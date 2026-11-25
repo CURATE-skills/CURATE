@@ -2,8 +2,8 @@
 # requires-python = ">=3.11"
 # dependencies = ["cwl-utils==0.47", "pyyaml==6.0.2"]
 # ///
-"""Expand a CURATE CWL workflow's scatter into concrete jobs, in the shape curate_ir/expand.py
-produces for IR v0.2, so the existing backends take it unchanged.
+"""Expand a CURATE CWL workflow's scatter into concrete jobs: one per copy, with every file it reads
+and writes, its params and the jobs it waits for. scripts/cwl_pegasus.py turns them into Pegasus jobs.
 
   expand_cwl.py workflow.yml [--inputs inputs.yml]     # prints the job list
 
@@ -57,7 +57,7 @@ def _leaves(v) -> list:
 
 
 def _names(v):
-    """A source value (a Leaf or nested lists of them) as expand.py gives it: one name, or one flat
+    """A source value (a Leaf or nested lists of them) as a job gets it: one name, or one flat
     list of names in order."""
     return v.name if isinstance(v, Leaf) else [x.name for x in _leaves(v)]
 
