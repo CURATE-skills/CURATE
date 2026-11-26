@@ -173,10 +173,12 @@ class Plan:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("what", nargs="*", choices=["expected", "cwl", "real"], default=["expected"])
+    ap.add_argument("what", nargs="*", choices=["expected", "cwl", "real"],
+                    help="what to regenerate (default: expected)")
     ap.add_argument("--ref", type=Path, help="folder with <workflow>-v1 and <workflow>-run (for `real`)")
     ap.add_argument("--update", action="store_true", help="write the references that changed")
     a = ap.parse_args(argv)
+    a.what = a.what or ["expected"]  # not a list default: argparse checks it against choices
     plan = Plan()
     if "cwl" in a.what:
         for d in sorted(p for p in REF.iterdir() if (p / "spec.json").is_file()):
