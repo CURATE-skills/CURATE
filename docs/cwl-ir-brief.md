@@ -2,6 +2,34 @@
 
 Branch: create `cwl-ir` from `decouple-faasr` (currently at `14bfad1` or later). Commit after each phase. Do not merge.
 
+## Status (2026-11-26): phases 0–8 done
+
+`docs/CWL_IR.md` is the current reference. The phases below are kept as the record of the task; phase 3
+and 4 describe code (`from_ir.py`, the IR v0.2 parity tests) that phase 8 removed, and the "Mapping from
+IR v0.2" table only says how the CWL IR was derived. Phase 8 as carried out differs from its plan:
+
+- **No catalog or workflow migration.** IR v0.2 workflows are not run any more. Version numbers held
+  for old uuid catalog entries stay as phase 6 recorded them (`<catalog>/reservations.json`).
+- **Removed:** the IR v0.2 reader and validator (`curate_ir/validate.py`), `expand.py`, `docs/IR_SPEC.md`,
+  `from_ir.py` (not kept for a release: there are no old runs to convert), the old-format emit and
+  `pegasus_ir.build_ir`, and the path for runs started before versions (they are refused with a
+  message).
+- **Emit builds the CWL straight from the spec** (`scripts/spec_cwl.py`), with no IR v0.2 step in
+  between; the output is byte-identical to what `from_ir(build_ir(spec))` plus the spec's extensions wrote.
+- **Pegasus:** the builder writes Pegasus's own `workflow.yml` through the Pegasus Python API
+  (`pegasus-wms.api` 5.1.3; the file declares `pegasus: "5.0.4"`, so the host needs `pegasus-plan`
+  5.0.4 or later). The host writes only its own catalogs and `pegasus.properties`. Pegasus runs started
+  from an `ir.yaml` folder can no longer be monitored or collected. The jobs are exactly the ones the
+  phase-7 runs planned.
+- **Kept:** the `curate:name` fallback for versions published before `curate:name` (rebuilt from the
+  run's approved spec, in memory only), and the multi-source folder gather in the validator and the
+  Pegasus builder (imported CWL may need it; specs never produce it).
+- **Reference tests:** `tests/fixtures/cwl-ref/` (16 cases, regenerated only with
+  `tests/tools/genfix.py --update`) and `tests/fixtures/real/` (the weather and MapReduce versions that
+  ran in phase 7: rebuilding each approved spec gives the published `workflow.yml` byte for byte, its
+  content and version hashes, the FaaSr bundle and the Pegasus jobs that ran, under any
+  `PYTHONHASHSEED`).
+
 ## Decision (already made, don't revisit)
 
 - CURATE's workflow IR becomes **CWL v1.2**, stored as `workflow.yml` (YAML, CWL syntax).
@@ -10,7 +38,7 @@ Branch: create `cwl-ir` from `decouple-faasr` (currently at `14bfad1` or later).
 - Do **not** use `pegasus-cwl-converter`: it rejects CWL v1.2, ignores `scatter`, and fails on `File[]`. Write our own builders.
 - Builders wrap the tested `main(inputs, outputs, params)` and never rewrite it (existing design rule).
 - Run values go in a per-run inputs file (`inputs.yml`); the values the workflow was tested with also go in the workflow as `default`s.
-- The old IR (v0.2) stays working until phase 7 shows parity.
+- The old IR (v0.2) stays working until phase 7 shows parity. (Removed in phase 8.)
 
 ## IR spec (write this up in phase 1)
 
@@ -171,6 +199,9 @@ steps:
   v0.2 path on the same inputs; (a) and (b) pass.
 
 ### 8. Migrate and clean up (only after phase 7 passes)
+
+(The plan as written; see Status at the top for what was done.)
+
 
 - Migrate the catalog from uuid keys to workflow ID + version (dry run first, same style as the phase 4 catalog migration in step 1; the uuid stays as an alias). The catalog stores WorkflowSpecs, not IR v0.2, so there is no IR to convert.
 - **Version numbers are never renumbered.** Since phase 6, each old uuid entry holds a number: the first time it is seen it gets the lowest free number (entries first seen together: oldest first), recorded in `<catalog>/reservations.json` and always read back from there (`ids.reserved_numbers`), so it can never shift. New versions are numbered after the held ones. The migration makes the recorded numbers official; it never moves a published version. A recorded number stays held even if its entry is removed.

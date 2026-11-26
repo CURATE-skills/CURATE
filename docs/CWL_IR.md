@@ -13,8 +13,8 @@ function and never rewrite it. (The Pegasus builder runs it through
 `curate_ir/runner/curate_run.py`; the FaaSr builder through a generated wrapper. The CWL
 references neither.)
 
-This replaces IR v0.2 (`docs/IR_SPEC.md`), which stays working until the CWL path shows
-parity.
+This replaced IR v0.2 (`ir.yaml`), which was removed in phase 8: nothing reads an `ir.yaml` any
+more, and Pegasus runs started from one can no longer be monitored or collected.
 
 ## Namespace
 
@@ -44,7 +44,13 @@ from there.
 - `default` on workflow inputs and on step `in:` entries (fixed parameters such as `max_rank`).
 - `label`, `doc`.
 - `MultipleInputFeatureRequirement` with `linkMerge: merge_flattened`, **only** on a step input
-  marked `curate:folder` (a folder that gathers files from several sources).
+  marked `curate:folder` (a folder that gathers files from several sources). A workflow CURATE
+  generates from a spec never gathers several sources into a folder: a spec's folder input holds
+  one family of files, and any other file starting with its prefix is refused
+  (`plain_contract.folder_conflicts`). (A folder over one plain file, without `{rank}`, is written
+  as `source: [<that file>]` with `merge_flattened`: one source.) Several sources are kept, in the
+  validator and the Pegasus builder, for CWL written by hand or imported (e.g. from WorkflowHub);
+  the FaaSr builder refuses them (a FaaSr folder input lists one prefix).
 
 **Refused, each with its own message**
 
@@ -81,7 +87,7 @@ function only ever sees the paths it is given. The names keep the spec's file na
 
 An **axis** is a workflow input of type `int[]` (all values digits) or `string[]`, whose
 values are its `default`. The type is what the function receives in `params` (an int or a
-string); a workflow converted from IR v0.2 keeps v0.2's types (see the mapping table). Its values must be file-name safe (letters, digits, `.`, `_`, `-`).
+string); workflows CURATE generates use `int[]` axes named `rank<N>` with the values 1..N. Its values must be file-name safe (letters, digits, `.`, `_`, `-`).
 Fan-out sizes come only from axes; nothing is counted at run time.
 
 - **One copy per value:** the step scatters over an `in:` entry sourced from the axis
@@ -208,11 +214,21 @@ checks the version hash against the approved one and records the bundle hash.
 After Gate 4 picks a target, its builder reads `workflow.yml` (and the run's `inputs.yml`):
 
 - **Pegasus** (`curate-skills/scripts/cwl_pegasus.py`) expands the scatter locally
-  (`curate_ir/cwl/expand_cwl.py`) and writes an already-expanded IR (`ir.yaml` with
-  `expanded: true`, whose nodes are the jobs), `functions/` and `inputs/`. The Pegasus host
-  plans that folder with `curate_ir/backends/pegasus_backend.py` and never reads CWL.
-  `curate:after` becomes a job dependency, `curate:secrets` an HTCondor `getenv` of the names,
-  and `curate:run_if` is refused.
+  (`curate_ir/cwl/expand_cwl.py`) into concrete jobs and writes Pegasus's own abstract workflow,
+  `workflow.yml`, through the Pegasus Python API (`pegasus-wms.api`), next to `functions/` and
+  `inputs/`. Each job runs its step's function through `curate_ir/runner/curate_run.py`
+  (`--code`, `--entrypoint`, one flag per file, `--params-json`); its `uses` list the code, the
+  input and the output files, and the deliverables are staged out. The file holds no host path:
+  what the host needs from the build (each step's image and resources, each replica's path in the
+  folder, the deliverables and where they go) is in the workflow's `metadata` as `curate.*`
+  JSON. The `x-pegasus` block (who wrote it and when) is left out, and `uses` and dependencies
+  are written in a fixed order (Pegasus.api keeps them in sets), so the same workflow gives the
+  same bytes. On the host, `curate_ir/backends/pegasus_backend.py` writes only that host's
+  catalogs (`sites.yml`, `replicas.yml`, `transformations.yml`) and `pegasus.properties`, then
+  plans `workflow.yml` as built; it never reads CWL. The file declares `pegasus: "5.0.4"`
+  (`pegasus-wms.api` 5.1.3), so the host needs `pegasus-plan` 5.0.4 or later. `curate:after`
+  becomes a job dependency, `curate:secrets` an HTCondor `getenv` of the names, and
+  `curate:run_if` is refused.
 - **FaaSr** (`curate-skills/scripts/cwl_faasr.py`) reads `scatter` directly: one ranked action
   per step (`InvokeNext: step(N)`), at most one axis per step. Each step ships as its generated
   wrapper and its unchanged function. `curate:after` becomes `InvokeNext`, `curate:run_if` a
@@ -240,33 +256,27 @@ one the version came from, and each output gets its `curate:name` from that buil
 The version folder and its hashes stay as they were. Otherwise the deploy is refused, and the user
 publishes a new version (`--start-at emit --from-run <run_id>`, then Gate 4).
 
-## Mapping from IR v0.2
+## Mapping from the spec
 
-| IR v0.2 | CWL IR |
+`curate-skills/scripts/spec_cwl.py` builds `workflow.yml` from the approved WorkflowSpec; the agent
+never writes CWL.
+
+| WorkflowSpec | CWL IR |
 |---|---|
-| node `code`/`entrypoint` | `run: {class: Operation, ...}` + `curate:function` |
-| node `inputs:`/`outputs:` file names | `Operation` inputs/outputs (`File`, `File[]`) |
-| `params` | step inputs, typed, sourced from workflow inputs or `default` |
-| workflow `inputs:` with `location` | workflow inputs; locations in `inputs.yml` and as `default` |
-| `deliver_as` | `curate:deliver_as` |
-| `defaults.image`, node `image` | `DockerRequirement` (workflow-level hint, step-level override) |
-| `packages` | `SoftwareRequirement.packages` |
-| `defaults.resources` | `ResourceRequirement` |
-| `axes: {a: [...]}` | one workflow input per axis, values as `default`, typed as IR v0.2 hands the value to the function: `int[]` when every step takes it through a whole-value renamed param (`rank: "{rank3}"`) and the values are all digits; `string[]` when a step takes it under its own name (v0.2 injects `"2019"`). An all-digit axis used both ways is refused. |
-| `for_each: [a]` | `scatter: [a]` |
-| `for_each: [a, b]` | `scatter: [a, b]`, `scatterMethod: nested_crossproduct` |
-| full gather (placeholder axis not in consumer's `for_each`) | consumer input takes the scattered output as `File[]` |
-| partial gather (consumer keeps some axes) | producer's `scatter` puts the kept axes outermost; consumer `scatter: [kept_axis, input]`, `dotproduct` |
-| output placeholder not in node's `for_each` (one step writes all files) | `Operation` output `File[]` with `curate:axis: <axis>`, one file per axis value, in axis order |
-| axis value injected into `params`; renamed via `rank: "{rank3}"` | step input sourced from the axis input under the param's name |
-| `{folder: "part_{r}.csv"}` input | `File[]` input + `curate:folder: true` |
-| `{folder: [a, b]}` over several families | `source: [...]`, `linkMerge: merge_flattened`, `curate:folder: true` |
-| `{axis}` in intermediate file names | dropped; the builder names intermediate files |
-| external `{axis}` file family | workflow input `File[]`; scattered consumers pair with `dotproduct` |
-| `curate_done*` marker files (an edge with no file) | `curate:after` |
-| spec conditional edge (FaaSr only) | `curate:run_if` on the target step |
-| spec `secrets` | `curate:secrets` |
-| expressions | still refused |
+| node | a step, id = the node name lower-cased; `run: {class: Operation}` + `curate:function: {code: functions/<node>.py, entrypoint: main}` |
+| node inputs / outputs, in order | `input1`, `input2`, ... / `output1`, ...; each output has `curate:name`, the spec's file name |
+| a file no step writes | a workflow input (`File`, or `File[]` for a `{rank}` family), its location `inputs/<file>` as `default` |
+| a file no step reads | a workflow output, `curate:deliver_as: results/<file>` |
+| node `rank: N` (N > 1) | `scatter: rank` over the axis input `rankN` (`int[]`, default `[1..N]`), plus `max_rank: {default: N}` |
+| a ranked reader's own copy of a `{rank}` file | the input joins the scatter (`dotproduct`) |
+| `read: all`, or an unranked reader of a `{rank}` file | `File[]`, every copy in rank order |
+| an unranked writer of a `{rank}` file | output `File[]` with `curate:axis: rankN` |
+| folder input | `File[]` with `curate:folder: true`, sourced from the one family it holds (a single plain file: `source: [file]`, `merge_flattened`) |
+| edge with no file between its steps | `curate:after` |
+| conditional edge | `curate:run_if` (one per step) |
+| node `secrets` | `curate:secrets` (names, sorted) |
+| node dependencies | `SoftwareRequirement` (informational) |
+| image, resources | workflow `hints`: `DockerRequirement` and `ResourceRequirement` (`coresMin: 1`, `ramMin: 2048`) |
 
 ## Example: weather (4 steps)
 

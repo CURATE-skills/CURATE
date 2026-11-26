@@ -79,7 +79,8 @@ This command runs the entire pipeline (sketch → outline → reuse → design �
 /curate-skills:curate <your sketch>
 ```
 
-The bundle ends up in `faasr_output/<workflow>-<run_id>/` in the folder you started in.
+Each workflow is published in `.curate/workflows/<name>-v<N>/` in the folder you started in;
+the target's bundle is built from it in that version's `runs/<run-id>/` (see [Where files live](#where-files-live)).
 
 ### Not sure what to try? Use the weather example
 
@@ -217,10 +218,12 @@ invocation (nothing is redeployed; the new result replaces the old one):
 Runs the approved workflow with [Pegasus](https://pegasus.isi.edu) on an HTCondor pool, on this
 machine or on a host you reach with ssh, instead of FaaSr on GitHub Actions. Nothing goes to
 GitHub or S3. The functions run unchanged, each in a container, through CURATE's workflow format
-(`curate_ir/`, described in the repository's `docs/IR_SPEC.md`).
+(a CWL `workflow.yml`, described in the repository's `docs/CWL_IR.md`). CURATE builds Pegasus's
+own `workflow.yml` from it on this machine; the Pegasus machine only plans and runs it.
 
 ### 1. Prerequisites
-On the Pegasus machine: Pegasus 5.1+, HTCondor, Docker (or Apptainer), and a `python3` that can
+On the Pegasus machine: Pegasus 5.1+ (the generated `workflow.yml` needs `pegasus-plan` 5.0.4 or
+later; check with `pegasus-version`), HTCondor, Docker (or Apptainer), and a `python3` that can
 import `Pegasus.api` and `yaml` with `PYTHONPATH=$(pegasus-config --python)`. For another host:
 ssh login that doesn't ask for a password (`ssh <host> true` works).
 
@@ -259,7 +262,7 @@ After a read-only preflight, it asks before each step:
 
 The monitor then follows it (as for FaaSr; it reads the Pegasus run folder recorded at launch, so
 it also works after a logout or reboot). When the workflow has finished, the results are in
-`pegasus_output/<workflow>-<run_id>/` next to `faasr_output/` (`results/`, `run-report.json`, and
+`pegasus_output/<workflow>-<run_id>/` in the folder you started in (`results/`, `run-report.json`, and
 `FAILED.txt` if it failed: then the outputs are partial), then Gate 5. Nothing is ever overwritten;
 each run has its own name `<workflow>-<MMDD-HHMM>` and folders. A run started with
 `--start-at deploy --from-run <run_id>` asks whether to deploy to FaaSr or run on Pegasus (with
@@ -299,10 +302,12 @@ The plugin also declares Claude Code plugin settings (`catalog_dir`, `mga_retrie
   CURATE version, the target, the bundle's hash), and for Pegasus its `work/`, `result/` and
   `monitor-report.md`. Its full reference is `<name>-v<N>/<run-id>`. The deploy logs stay in the
   generation run (`deploy/`, `pegasus/deploy-log.jsonl`).
-- `faasr_output/<workflow>-<run_id>/`: the older FaaSr bundle emit still writes for runs approved
-  before workflow versions (`workflow.json`, `functions/`, `spec.json`, `external_inputs.json`,
-  `README.md`); newer runs deploy the bundle in their execution run. Unset deploy values appear as
-  `<FAASR_…>` placeholders; only secret **names** are written.
+- The FaaSr bundle (`workflow.json`, `functions/`, `external_inputs.json`, `outputs.json`) is the
+  execution run's `bundle/`; only secret **names** are written. The Pegasus bundle there is the
+  workflow folder: Pegasus's `workflow.yml` (no host paths), `functions/`, `inputs/`; the host's
+  catalogs and `pegasus.properties` go in `work/`. Runs approved before workflow versions (whose
+  bundle was in `faasr_output/` or `.curate/runs/<run_id>/pegasus/ir/`) can no longer be deployed,
+  run or monitored: start again from their spec (`--start-at emit --from-run <run_id>`).
 - `pegasus_output/<workflow>-<run_id>/` (Pegasus runs): the delivered results (`results/`) and
   `run-report.json`; `FAILED.txt` when the run failed (the outputs are partial). One folder per
   launch (`-2`, `-3`… for a later launch); never overwritten.
@@ -310,9 +315,8 @@ The plugin also declares Claude Code plugin settings (`catalog_dir`, `mga_retrie
   `workflows/<name>-v<N>.json` (each save is a new version; older entries keep `<uuid>.json`) and
   their version folders in `versions/<name>-v<N>/`; `reservations.json` records the version number
   each older uuid entry holds (so new versions never take it).
-- `.curate/runs/<run_id>/pegasus/` (Pegasus runs approved before workflow versions): `ir/`,
-  `work/`, `deploy-log.jsonl`, `monitor-report.md`, `result/` with an ssh host, and the host copy in
-  `~/curate-runs/<run_id>/`. Newer runs keep these in their execution run (above).
+- `.curate/runs/<run_id>/pegasus/deploy-log.jsonl`: every path a Pegasus run wrote, here and on
+  the host (`~/curate-runs/<workflow-id>/<run-id>/` with an ssh host).
 - `~/.config/curate/.env`: your deploy and Pegasus settings (mode 600), read by deploy, monitor
   and doctor; an environment variable of the same name overrides it.
 - `.curate/mga_guard.log`: writes the guard denied.
