@@ -1,7 +1,7 @@
 ---
 name: curate
 description: Build a FaaSr serverless scientific workflow from a natural-language sketch with CURATE: skeleton, catalog reuse, code generation, a validated bundle, approval gates. Use to build, generate or revise a FaaSr workflow or multi-step serverless pipeline. To change or redo part of an existing CURATE session, never run CURATE's scripts or rewind yourself: name the command, say what it redoes, and ask. Change some functions: /curate-skills:curate --start-at generate --from-run <session_id> --existing-code keep (new session keeping all approved code; the user types the change at Gate 3, only that function is redone). Regenerate all: same with --existing-code ignore. Alternative the user types: /curate-skills:curate-generate --session <session_id> (rewinds it; 1 revision round). Other stages: replace generate, drop --existing-code. After an explicit yes to a /curate-skills:curate command you named, invoke this skill with its arguments. Gate decisions are the user's: never approve or submit a change for them.
-argument-hint: "<workflow sketch> | --start-at <stage> (--from-run <session_id> | --workflow <workflow-id> | --from-bundle <folder> | --from-file <file> | --sketch \"<text>\" | --sketch-file <file>) | --resume <session_id> | --from <file> --stage <stage> [--catalog DIR] [--attach model.py] [--context FILE] [--mga-retries N] [--stubtest-mode strict|parity]"
+argument-hint: "<workflow sketch> | --start-at <stage> (--from-run <session_id> | --workflow <workflow-id> | --from-bundle <folder> | --from-file <file> | --sketch \"<text>\" | --sketch-file <file>) | --resume <session_id> | --from <file> --stage <stage> [--catalog DIR] [--attach model.py] [--context FILE] [--mga-retries N]"
 allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*), Agent(curate-skills:curate-mga)
 ---
 
@@ -73,7 +73,7 @@ Arguments: `$ARGUMENTS`
   and `spec.py import --stage skeleton --from <that file>`.
 
 With `import` or `start`, always add `--config-catalog-dir '${user_config.catalog_dir}'
---config-mga-retries '${user_config.mga_retries}' --config-stubtest-mode '${user_config.stubtest_mode}'`
+--config-mga-retries '${user_config.mga_retries}'`
 in single quotes exactly as written (one that still reads `${user_config…}` was not filled in: pass it
 unchanged, the script uses the default; never turn it into a name or a value), and map `--catalog` → `--catalog-dir`, `--attach` →
 `--user-model`, `--context` → `--context-file`. Tell the user the session id (for `--start-at deploy`, the

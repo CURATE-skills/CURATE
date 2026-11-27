@@ -17,7 +17,6 @@ exit 0 ok, 1 check failed / needs attention, 2 bad input.
   spec.py init --request-file F [--user-model P]... [--context-file P]...
                [--catalog-dir D] [--config-catalog-dir D]
                [--mga-retries N] [--config-mga-retries N]
-               [--stubtest-mode strict|parity] [--config-stubtest-mode M]
                [--project-dir D]
   spec.py runs [--project-dir D]
   spec.py preflight
@@ -189,6 +188,21 @@ def _retries(v: str) -> int:
     return n
 
 
+def stubtest_mode() -> tuple[str, str]:
+    """strict, unless a developer sets CURATE_STUBTEST_MODE=parity (the original CURATE's
+    behaviour, kept for comparisons). Not a user setting: no flag, no plugin setting."""
+    try:
+        return resolve_setting(None, "CURATE_STUBTEST_MODE", None, DEFAULT_STUBTEST_MODE, _mode)
+    except InputError as e:
+        raise InputError(f"CURATE_STUBTEST_MODE: {e}") from e
+
+
+def shown_settings(settings: dict) -> dict:
+    """The settings to tell the user: the stub-test mode only when it is not the default."""
+    return {k: v for k, v in settings.items()
+            if k != "stubtest_mode" or v.get("value") != DEFAULT_STUBTEST_MODE}
+
+
 def _mode(v: str) -> str:
     if v not in STUBTEST_MODES:
         raise ValueError(f"must be one of {STUBTEST_MODES}")
@@ -243,9 +257,7 @@ def _new_run(args, request: str, run_id_hint: str = "") -> tuple[Path, dict, dic
         args.catalog_dir, None, args.config_catalog_dir)
     retries, retries_source = resolve_setting(
         args.mga_retries, "CURATE_MGA_RETRIES", args.config_mga_retries, DEFAULT_MGA_RETRIES, _retries)
-    mode, mode_source = resolve_setting(
-        args.stubtest_mode, "CURATE_STUBTEST_MODE", args.config_stubtest_mode,
-        DEFAULT_STUBTEST_MODE, _mode)
+    mode, mode_source = stubtest_mode()
 
     import ids  # run IDs are YYYYMMDD-HHMMSS-<4 hex> (CWL IR brief, "Workflow and run IDs")
     run_id = ids.new_run_id()
@@ -294,10 +306,10 @@ def _new_run(args, request: str, run_id_hint: str = "") -> tuple[Path, dict, dic
     save_state(session, state)
     # "session"/"session_id"; "run"/"run_id" are their old names, kept for old callers
     return session, state, {"ok": True, "session": str(session), "session_id": run_id, "run": str(session), "run_id": run_id,
-            "settings": {
+            "settings": shown_settings({
                 "catalog_dir": {"value": str(catalog_dir), "source": catalog_source},
                 "mga_max_retries": {"value": retries, "source": retries_source},
-                "stubtest_mode": {"value": mode, "source": mode_source}},
+                "stubtest_mode": {"value": mode, "source": mode_source}}),
             "user_models": [m.name for m in user_models],
             "context_files": [c.name for c in context_files]}
 
@@ -1822,7 +1834,7 @@ START_COPY = {
     "finalize": ("enriched_spec", "spec_basis", "mga", "validation", "draft_dir", "draft_spec_hash") + VERSION_OUTPUTS,
 }
 INIT_FLAGS = ("user_model", "context_file", "catalog_dir", "config_catalog_dir", "mga_retries",
-              "config_mga_retries", "stubtest_mode", "config_stubtest_mode", "project_dir")
+              "config_mga_retries", "project_dir")
 
 
 def _find_run(ref: str, project: Path) -> Path:
@@ -2134,11 +2146,10 @@ def _preview_settings(args) -> dict:
     cat, cat_src = catalog_mod.resolve_catalog_dir(args.catalog_dir, None, args.config_catalog_dir)
     retries, r_src = resolve_setting(args.mga_retries, "CURATE_MGA_RETRIES", args.config_mga_retries,
                                      DEFAULT_MGA_RETRIES, _retries)
-    mode, m_src = resolve_setting(args.stubtest_mode, "CURATE_STUBTEST_MODE", args.config_stubtest_mode,
-                                  DEFAULT_STUBTEST_MODE, _mode)
-    return {"catalog_dir": {"value": str(cat), "source": cat_src},
-            "mga_max_retries": {"value": retries, "source": r_src},
-            "stubtest_mode": {"value": mode, "source": m_src}}
+    mode, m_src = stubtest_mode()
+    return shown_settings({"catalog_dir": {"value": str(cat), "source": cat_src},
+                           "mga_max_retries": {"value": retries, "source": r_src},
+                           "stubtest_mode": {"value": mode, "source": m_src}})
 
 
 def _import_args(args, at: str, from_file: str):
@@ -2727,8 +2738,8 @@ def show_gate(s: dict, gate: int, detailed: bool = False) -> str:
     if gate == 3:
         mga = s.get("mga") or {}
         kept_warn = kept_code_warnings(spec, kept_from(s))
-        out += [f"## Gate 3 — Code  (iteration {s['iteration']}/{s['max_iterations']}, "
-                f"stub tests: {s['stubtest_mode']})", "", "```text"]
+        parity = ", stub tests: parity" if s.get("stubtest_mode") == "parity" else ""  # developer-only mode
+        out += [f"## Gate 3 — Code  (iteration {s['iteration']}/{s['max_iterations']}{parity})", "", "```text"]
         for n in order:
             m = mga.get(n.name, {})
             status = STATUS_LABELS.get(m.get("status"), m.get("status") or "pending")
@@ -3094,8 +3105,8 @@ def summary_md(s: dict) -> str:
     v = s.get("validation") or {}
     out = [f"## Run summary — {spec.name}", "", spec.description or "", "",
            f"- session: `{s['run_id']}` (stage `{s['stage']}`, {s['iteration']} revision round(s))",
-           f"- settings: catalog `{s['catalog_dir']}`, MGA retries {s['mga_max_retries']}, "
-           f"stub tests `{s['stubtest_mode']}`",
+           f"- settings: catalog `{s['catalog_dir']}`, MGA retries {s['mga_max_retries']}"
+           + (", stub tests `parity`" if s.get("stubtest_mode") == "parity" else ""),
            *([f"- workflow: `{s['workflow_id']}` (`{s.get('version_dir')}`)"
               + (f"; execution `{(s.get('execution') or {}).get('reference')}`" if s.get("execution") else "")
               + f" — validation {'passed' if v.get('ok') else 'not passed'} (level `{v.get('level')}`)"]
@@ -3228,8 +3239,6 @@ def build_parser() -> argparse.ArgumentParser:
         q.add_argument("--config-catalog-dir")
         q.add_argument("--mga-retries")
         q.add_argument("--config-mga-retries")
-        q.add_argument("--stubtest-mode")
-        q.add_argument("--config-stubtest-mode")
         q.add_argument("--project-dir")
 
     init_flags(sub.add_parser("init"), True)

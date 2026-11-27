@@ -122,9 +122,8 @@ It calls your `main` with your folder as the working directory, once per rank:
   (the wiring is wrong, or that function's test failed). An external input found nowhere is
   replaced by an EMPTY file with a warning, and the user sees that warning at Gate 3.
 - Your environment variables (secrets) are passed through; deployment credentials are not.
-- The run's stub-test mode is stated in `CONTEXT.md`: `strict` runs every rank, installs
-  your `deps.txt` in an isolated environment and requires every declared output;
-  `parity` runs rank 1 only without installing dependencies.
+- The stub test runs every rank, installs your `deps.txt` in an isolated environment and
+  requires every declared output (`CONTEXT.md` states how this run tests).
 
 You are not done until it passes on representative inputs. A pure-local function
 (parse, validate, transform, simulate, plot) must pass; a parse, validation or logic

@@ -47,7 +47,7 @@ a Gate 4 `copied` record; it ends at Gate 5 with nothing to save.
 | Field | Meaning |
 |---|---|
 | `run_id`, `run_dir`, `project_dir`, `created` | identity (a session's id and folder; a run's own state has `kind` `execution` and `session`) |
-| `catalog_dir`, `mga_max_retries`, `stubtest_mode` | settings pinned at `init` |
+| `catalog_dir`, `mga_max_retries`, `stubtest_mode` | settings pinned at `init` (`stubtest_mode` is `strict` unless a developer sets `CURATE_STUBTEST_MODE=parity`; not a user setting) |
 | `user_request`, `user_models`, `context_files` | the sketch and attachments |
 | `stage`, `iteration`, `max_iterations` | where the run is (`skeleton`, `gate1`, `reuse`, `resolve`, `gate2`, `generate`, `gate3`, `emit`, `gate4`, `deploy`, `monitor`, `finalize`, `done`, `stopped`) and how many revision rounds were used |
 | `begun`, `stopped_from` | which stage was started (for resume); where a stopped run stopped |

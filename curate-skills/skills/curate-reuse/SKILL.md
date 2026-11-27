@@ -1,7 +1,7 @@
 ---
 name: curate-reuse
 description: CURATE stage 2 of 6 — search the catalog and decide, per function, whether to reuse, adapt, keep cached or write new code; shows the decisions (no gate). Run it by name; /curate runs it as part of the full pipeline.
-argument-hint: "--session <session_id> | --from <skeleton.json> [--review] [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity]"
+argument-hint: "--session <session_id> | --from <skeleton.json> [--review] [--catalog DIR] [--mga-retries N]"
 disable-model-invocation: true
 allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*)
 ---
@@ -23,9 +23,8 @@ Arguments: `$ARGUMENTS`
   sessions in this project; use the matching `session` path.
 - `--from <file>`: create a run from your file —
   `spec.py import --stage reuse --from <file> [--review] [--catalog-dir D] [--mga-retries N]
-  [--stubtest-mode M] [--user-model P]... [--context-file P]...
-  --config-catalog-dir '${user_config.catalog_dir}' --config-mga-retries '${user_config.mga_retries}'
-  --config-stubtest-mode '${user_config.stubtest_mode}'`.
+  [--user-model P]... [--context-file P]...
+  --config-catalog-dir '${user_config.catalog_dir}' --config-mga-retries '${user_config.mga_retries}'`.
   Keep the `--config-*` values in single quotes exactly as written, even one that still reads
   `${user_config…}` (not filled in: the script uses the default); never turn it into a name or a value. Map `--catalog` →
   `--catalog-dir`, `--attach` → `--user-model`, `--context` → `--context-file`. Tell the user the

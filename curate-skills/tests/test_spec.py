@@ -63,12 +63,22 @@ def test_mga_retries_precedence(monkeypatch, flag, env, config, expected):
     assert S.resolve_setting(flag, "CURATE_MGA_RETRIES", config, 3, S._retries) == expected
 
 
-def test_stubtest_mode_setting(make_run, monkeypatch, capsys):
+def test_stubtest_mode_is_strict_unless_a_developer_sets_parity(make_run, monkeypatch, capsys, tmp_path):
+    run = make_run()
+    assert state(run)["stubtest_mode"] == "strict"
+    req = run.parent.parent.parent / "request.txt"
+    out = ok(S, ["init", "--request-file", str(req), "--project-dir", str(tmp_path / "p")], capsys)
+    assert "stubtest_mode" not in out["settings"]  # the default is not shown to the user
     monkeypatch.setenv("CURATE_STUBTEST_MODE", "parity")
-    assert state(make_run())["stubtest_mode"] == "parity"
-    req = make_run().parent.parent.parent / "request.txt"
-    code, out = call(S, ["init", "--request-file", str(req), "--stubtest-mode", "loose"], capsys)
-    assert code == 2 and "loose" in out["error"] and "run" not in out
+    out = ok(S, ["init", "--request-file", str(req), "--project-dir", str(tmp_path / "p")], capsys)
+    assert out["settings"]["stubtest_mode"] == {"value": "parity", "source": "CURATE_STUBTEST_MODE"}
+    for flag in ("--stubtest-mode", "--config-stubtest-mode"):  # no user-facing way to choose it
+        with pytest.raises(SystemExit):
+            S.main(["init", "--request-file", str(req), flag, "parity"])
+    capsys.readouterr()
+    monkeypatch.setenv("CURATE_STUBTEST_MODE", "loose")
+    code, out = call(S, ["init", "--request-file", str(req)], capsys)
+    assert code == 2 and "CURATE_STUBTEST_MODE" in out["error"] and "loose" in out["error"]
 
 
 # ── skeleton / gate 1 ──

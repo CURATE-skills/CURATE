@@ -291,18 +291,17 @@ to FaaSr or run on Pegasus (with the set image or a different one).
 |---|---|---|---|
 | Catalog folder | `--catalog DIR` | `CURATE_CATALOG_DIR` | `~/.curate/catalog` |
 | Extra subagent attempts after a failed stub test | `--mga-retries N` | `CURATE_MGA_RETRIES` | `3` (`0` = original CURATE) |
-| Stub-test mode | `--stubtest-mode strict\|parity` | `CURATE_STUBTEST_MODE` | `strict` |
 | Monitor time | `--minutes N` (curate-monitor) | `CURATE_MONITOR_MINUTES` | `10` |
 | Deploy name suffix | `--name-suffix` (deploy.py) | `CURATE_DEPLOY_NAME_SUFFIX` | none: the deployment is named `<workflow-id>` |
 
 A flag beats the environment variable, which beats the default. `CURATE_DEPLOY_NAME_SUFFIX` and
-`CURATE_MONITOR_MINUTES` can also go in `~/.config/curate/.env` (the environment overrides it). A run pins the first three when
-it starts and the monitor time when monitoring starts. `strict` tests every rank of a ranked
-step, installs the function's packages in an isolated environment and requires every declared
-output; `parity` is the original CURATE behaviour (rank 1 only, no installs).
+`CURATE_MONITOR_MINUTES` can also go in `~/.config/curate/.env` (the environment overrides it). A run pins the first two when
+it starts and the monitor time when monitoring starts. Stub tests run every rank of a ranked
+step, install the function's packages in an isolated environment and require every declared
+output.
 
 The plugin also declares Claude Code plugin settings (`catalog_dir`, `mga_retries`,
-`stubtest_mode`, `monitor_minutes`), but **they don't apply when the plugin is loaded with
+`monitor_minutes`), but **they don't apply when the plugin is loaded with
 `--plugin-dir`**, as above. Use the flags or environment variables.
 
 ## Where files live

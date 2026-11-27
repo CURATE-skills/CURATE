@@ -59,7 +59,7 @@ approved, unsuperseded Gate 3 after the last Gate 2 approval is refused. The sum
 
 An imported file counts as approved (the history records `imported` with the file's sha256).
 `--review` stops at the gate before the stage instead (reuse → Gate 1, generate → Gate 2,
-emit → Gate 3). Every `init` flag works (`--catalog`, `--mga-retries`, `--stubtest-mode`,
+emit → Gate 3). Every `init` flag works (`--catalog`, `--mga-retries`,
 `--attach`, `--context`). Without a sketch, the request text is built from the spec's name and
 description; `--request-file` overrides it.
 

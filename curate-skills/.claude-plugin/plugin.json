@@ -29,13 +29,6 @@
       "required": false,
       "default": 3
     },
-    "stubtest_mode": {
-      "type": "string",
-      "title": "Stub-test mode",
-      "description": "strict (default): every rank, deps installed, ModuleNotFoundError fails. parity: original CURATE behaviour (rank 1 only, no dep install, ModuleNotFoundError with declared deps passes). CURATE_STUBTEST_MODE overrides this.",
-      "required": false,
-      "default": "strict"
-    },
     "monitor_minutes": {
       "type": "number",
       "title": "Monitor minutes",

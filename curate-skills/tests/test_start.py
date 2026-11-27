@@ -105,7 +105,7 @@ def test_dry_run_prints_what_will_be_used_and_creates_nothing(source_run, capsys
     assert out["uses"].startswith("history/") and "Gate 2" in out["uses"]
     assert out["redoes"] == ["generate", "emit", "deploy (if chosen at Gate 4)", "monitor (if deployed)", "finalize"]
     assert {f["has_code"] for f in out["functions"]} == {False}
-    assert set(out["settings"]) == {"catalog_dir", "mga_max_retries", "stubtest_mode"}
+    assert set(out["settings"]) == {"catalog_dir", "mga_max_retries"}  # strict, the default, is not shown
 
 
 def test_refuses_a_gate_that_was_never_approved(make_run, capsys):

@@ -151,8 +151,9 @@ def test_request_file_overrides_built_request(imp, tmp_path):
     assert state(run)["user_request"] == "my own sketch" and not out["warnings"]
 
 
-def test_import_honours_init_settings(imp):
-    code, out, run = imp("reuse", FIX / "skeleton.json", "--mga-retries", "0", "--stubtest-mode", "parity")
+def test_import_honours_init_settings(imp, monkeypatch):
+    monkeypatch.setenv("CURATE_STUBTEST_MODE", "parity")  # developer-only: no flag
+    code, out, run = imp("reuse", FIX / "skeleton.json", "--mga-retries", "0")
     s = state(run)
     assert s["mga_max_retries"] == 0 and s["stubtest_mode"] == "parity"
 

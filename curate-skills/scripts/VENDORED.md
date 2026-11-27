@@ -43,7 +43,7 @@ Replaces the LangGraph graph, `AgentState` and the gate nodes. Claude now writes
 | Part | Purpose | Original | Relation |
 |---|---|---|---|
 | `load_state`, `save_state`, `snapshot_history`, `cmd_init`, `cmd_runs`, `cmd_status` | Run directory and `state.json` (replaces the in-memory checkpointer); history copies; settings pinned per run | `state.py` 9-63 (`AgentState` fields); `cli.py` 820-840 (initial state) | new |
-| `resolve_setting`, `_retries`, `_mode` | `mga_retries` / `stubtest_mode`: flag > env > plugin setting > default | — | new |
+| `resolve_setting`, `_retries`, `_mode` | `mga_retries`: flag > env > plugin setting > default; `stubtest_mode`: env only (developer) | — | new |
 | `accumulated_feedback` | Standing change requests as bullets, plus Gate-3 code feedback | `agents/wca.py` 28-38 (`_accumulated_feedback`); 621-626 (code-feedback merge in `wca_fca_node`) | copy |
 | `skeleton_outline`, `user_models_section`, `context_files_section` | Prompt sections | `agents/wca.py` 118-163 | copy |
 | `candidates_text` | Candidate list for the resolve prompt | `agents/wca.py` 311-320 (`_fca_candidates_text`) | copy |
@@ -136,7 +136,7 @@ PreToolUse write-scope guard for `curate-mga` subagents; from D1 it also denies 
 ## Deliberate behaviour changes
 
 - Unset `FAASR_*` deployment variables become `<FAASR_NAME>` placeholders instead of guessed defaults; secret values are never written (bundle aborts if one is found).
-- Stub-test mode is switchable (`stubtest_mode`: flag, `CURATE_STUBTEST_MODE`, plugin setting; pinned per run). Default `strict` runs every rank in an isolated `uv` env with the node's `deps.txt`, rejects faasr imports and requires every declared output to be uploaded. `parity` reproduces the original: rank 1 only, no dep install, `ModuleNotFoundError` with declared deps counts as a pass.
+- Stub-test mode (`stubtest_mode`, pinned per run) is `strict` for users; `parity` is developer-only, set with `CURATE_STUBTEST_MODE=parity` (or `stubtest.py --mode parity`) to compare with the original (no flag, no plugin setting). Default `strict` runs every rank in an isolated `uv` env with the node's `deps.txt`, rejects faasr imports and requires every declared output to be uploaded. `parity` reproduces the original: rank 1 only, no dep install, `ModuleNotFoundError` with declared deps counts as a pass.
 - Stub runs never see `GH_PAT`, S3 keys or LLM provider keys; secrets a function declares are passed through.
 - The orchestrator always re-runs the stub test; retries are configurable (`mga_retries`, default 3; `0` = original Claude-SDK behaviour).
 - Catalog `usage_count` is incremented at Gate 4 approval (original: during candidate resolution, `fca.py:238`).

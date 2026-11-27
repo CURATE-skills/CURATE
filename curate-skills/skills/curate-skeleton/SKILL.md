@@ -1,7 +1,7 @@
 ---
 name: curate-skeleton
 description: CURATE stage 1 of 6 — ask for the workflow's name, turn a workflow sketch into a skeleton (the steps and their order) and stop at Gate 1. Run it by name; /curate runs it as part of the full pipeline.
-argument-hint: "--session <session_id> | --from <sketch> | <sketch text> [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity]"
+argument-hint: "--session <session_id> | --from <sketch> | <sketch text> [--catalog DIR] [--mga-retries N]"
 disable-model-invocation: true
 allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*)
 ---
@@ -23,9 +23,8 @@ Arguments: `$ARGUMENTS`
   sessions in this project; use the matching `session` path.
 - `--from <file>`: create a run from your file —
   `spec.py import --stage skeleton --from <file> [--catalog-dir D] [--mga-retries N]
-  [--stubtest-mode M] [--user-model P]... [--context-file P]...
-  --config-catalog-dir '${user_config.catalog_dir}' --config-mga-retries '${user_config.mga_retries}'
-  --config-stubtest-mode '${user_config.stubtest_mode}'`.
+  [--user-model P]... [--context-file P]...
+  --config-catalog-dir '${user_config.catalog_dir}' --config-mga-retries '${user_config.mga_retries}'`.
   Keep the `--config-*` values in single quotes exactly as written, even one that still reads
   `${user_config…}` (not filled in: the script uses the default); never turn it into a name or a value. Map `--catalog` →
   `--catalog-dir`, `--attach` → `--user-model`, `--context` → `--context-file`. Tell the user the

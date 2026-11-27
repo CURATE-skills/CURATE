@@ -15,7 +15,7 @@ import settings
 import spec as S
 from conftest import call
 
-KEYS = ["catalog_dir", "mga_retries", "stubtest_mode", "monitor_minutes"]
+KEYS = ["catalog_dir", "mga_retries", "monitor_minutes"]  # stubtest_mode: not a user setting any more
 
 
 def leftovers(key):
@@ -69,16 +69,16 @@ def _init(tmp_path, capsys, *config):
 
 
 def test_set_values_reach_the_run(tmp_path, capsys):
-    out, s = _init(tmp_path, capsys, "--config-mga-retries", "5", "--config-stubtest-mode", "parity")
-    assert (s["mga_max_retries"], s["stubtest_mode"]) == (5, "parity")
+    out, s = _init(tmp_path, capsys, "--config-mga-retries", "5")
+    assert s["mga_max_retries"] == 5
     assert out["settings"]["mga_max_retries"] == {"value": 5, "source": "plugin setting"}
 
 
 @pytest.mark.parametrize("i", range(5))
 def test_unfilled_values_fall_back_and_the_name_is_not_passed(tmp_path, capsys, i):
-    r, m = leftovers("mga_retries")[i], leftovers("stubtest_mode")[i]
-    out, s = _init(tmp_path, capsys, "--config-mga-retries", r, "--config-stubtest-mode", m)
-    assert (s["mga_max_retries"], s["stubtest_mode"]) == (S.DEFAULT_MGA_RETRIES, S.DEFAULT_STUBTEST_MODE)
+    r = leftovers("mga_retries")[i]
+    out, s = _init(tmp_path, capsys, "--config-mga-retries", r)
+    assert s["mga_max_retries"] == S.DEFAULT_MGA_RETRIES
     assert out["settings"]["mga_max_retries"]["source"] == settings.NOT_FILLED
     for text in (json.dumps(s), json.dumps(out)):
         assert "user_config" not in text and "<mga_retries>" not in text
