@@ -161,9 +161,9 @@ curate:content_hash: sha256:...
 - The **workflow ID** is `<name>-v<N>`, where `<name>` is a slug of the title (`[a-z0-9-]`),
   unique in the global catalog (`~/.curate/catalog`). Parse it with `^(.+)-v(\d+)$`.
 - The **name** is asked for at the sketch and checked against the catalog then. It is stored
-  in the generation run's metadata.
+  in the session's state.
 - **Every approved generation of an existing workflow is a new version**, numbered when Gate 4
-  approves. Emit writes a draft inside the generation run folder; only an approved draft is
+  approves. Emit writes a draft inside the session's folder; only an approved draft is
   published as a version (a rejected or rewound draft never becomes one). Which
   workflow it belongs to comes from lineage (a reused catalog workflow, or `--from-run`) or
   from the name; a name that is taken with no lineage makes CURATE ask: a new name, or a new
@@ -195,19 +195,35 @@ notes: {class: File, location: inputs/notes.txt}
 ## Layout
 
 ```
-.curate/runs/<run-id>/draft/                            # emit's draft (a generation session)
-.curate/workflows/<workflow-id>/workflow.yml            # published on approval; tested values as defaults
-.curate/workflows/<workflow-id>/functions/<step>.py
-.curate/workflows/<workflow-id>/runs/<run-id>/          # one execution: inputs.yml, the
-                                                        # target's bundle, outputs, logs, status
+.curate/sessions/<session-id>/draft/                    # emit's draft (a /curate session)
+workflows/.curate-workflows                             # marks workflows/ as CURATE's
+workflows/.gitignore                                    # written once (see below)
+workflows/<workflow-id>/workflow.yml                    # published on approval; tested values as defaults
+workflows/<workflow-id>/inputs.yml
+workflows/<workflow-id>/functions/<step>.py
+workflows/<workflow-id>/approved.json                   # the approved spec; outside the version hash
+workflows/<workflow-id>/runs/<run-id>/                  # one run (an execution): state.json, the
+                                                        # target's bundle/, manifest.json, logs/,
+                                                        # monitor-report.md, outputs/ (its results)
 ```
 
-Run IDs are `YYYYMMDD-HHMMSS-<4 hex>`; a run's full reference is `<workflow-id>/<run-id>`.
-Generation sessions keep their own folders, `.curate/runs/<run-id>/`.
+Paths are relative to the project folder. A **session** is a /curate session (sketch to Gate 5); a
+**run** is one execution of a version, with its own `state.json`. Session and run IDs are
+`YYYYMMDD-HHMMSS-<4 hex>`; a run's full reference is `<workflow-id>/<run-id>`. CURATE publishes
+only into a `workflows/` folder carrying its marker, and refuses an existing folder without one.
+Projects made before this layout keep `.curate/workflows/` and `.curate/runs/` (sessions); both
+are still read, and nothing is moved.
 
-A builder writes its bundle into the execution run's folder with a small manifest: the version
-folder's hash, the CURATE version (git commit), the target, and the bundle's own hash. Deploy
-checks the version hash against the approved one and records the bundle hash.
+`workflows/.gitignore` keeps every version and, of each run, `outputs/` and `monitor-report.md`;
+the rest of a run (bundle, work folders, logs, deploy copies, state) is ignored. It is written
+only if absent and never rewritten.
+
+A builder writes its bundle into the run's folder with a small manifest: the version folder's
+hash, the CURATE version (git commit), the target, and the bundle's own hash. Deploy checks the
+version hash against the approved one and records the bundle hash. On FaaSr a version is deployed
+once (named after its workflow id), and each run adds its own payload and S3 folder
+(`<workflow-id>/<run-id>/`); on Pegasus the workflow carries the same name and each run its own
+folder.
 
 ## Builders
 

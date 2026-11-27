@@ -11,6 +11,8 @@ brief, "Workflow and run IDs"; docs/CWL_IR.md, "Identity and versions" and "Layo
   <project>/workflows/<workflow-id>/runs/<run-id>/  one run (an execution): state.json, bundle/,
                                                     manifest.json, its logs and outputs/
   <project>/workflows/.curate-workflows             the marker: this folder is CURATE's
+  <project>/workflows/.gitignore                    written once: keeps versions and each run's
+                                                    outputs/ and monitor-report.md
 
 Projects made before this layout keep their versions in <project>/.curate/workflows/ and their
 sessions in <project>/.curate/runs/; both are still read (and a version there gets its new runs
@@ -83,6 +85,17 @@ MARKER_TEXT = ("This folder holds CURATE's published workflow versions and their
                "(<workflow-id>/runs/<run-id>/). Versions are never edited.\n")
 
 
+GITIGNORE_TEXT = """\
+# Written by CURATE when it first published here; edit freely (CURATE never rewrites it).
+# Kept: every version (workflow.yml, inputs.yml, functions/, approved.json) and, of each run, its
+# results (outputs/) and its monitor report. Ignored: the rest of each run (bundle/, work/, logs/,
+# deploy/, state files, deploy logs), which can be rebuilt or is only this machine's.
+/*/runs/*/*
+!/*/runs/*/outputs/
+!/*/runs/*/monitor-report.md
+"""
+
+
 def workflows_root(project) -> Path:
     """<project>/workflows/: where versions are published (marked as CURATE's by WORKFLOWS_MARKER)."""
     return Path(project) / "workflows"
@@ -119,6 +132,9 @@ def claim_workflows_root(project) -> Path:
     marker = root / WORKFLOWS_MARKER
     if not marker.is_file():
         marker.write_text(MARKER_TEXT)
+    ignore = root / ".gitignore"
+    if not ignore.exists():  # written once; a .gitignore the user wrote or edited is never touched
+        ignore.write_text(GITIGNORE_TEXT)
     return root
 
 

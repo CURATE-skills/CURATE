@@ -218,3 +218,36 @@ def test_held_numbers_are_recorded_and_never_shift(tmp_path):
     assert plan["workflow_id"] == "mapreduce-word-count-v5"
     assert json.loads((tmp_path / "cat" / ids.RESERVATIONS).read_text()) == {
         "mapreduce-word-count": {a.id: 1, b.id: 2, c.id: 4}}
+
+
+# ── workflows/.gitignore ──
+
+def test_workflows_gitignore_keeps_versions_and_run_results_and_ignores_the_rest(tmp_path):
+    import shutil
+    import subprocess
+    if not shutil.which("git"):
+        pytest.skip("git not installed")
+    root = ids.claim_workflows_root(tmp_path)
+    assert (root / ".gitignore").read_text() == ids.GITIGNORE_TEXT
+    files = ["workflow.yml", "inputs.yml", "functions/plot.py", "approved.json",
+             "runs/r1/outputs/plot.png", "runs/r1/outputs/manifest.json", "runs/r1/monitor-report.md",
+             "runs/r1/bundle/workflow.json", "runs/r1/work/x", "runs/r1/logs/a.txt", "runs/r1/deploy/workflow.json",
+             "runs/r1/state.json", "runs/r1/deploy-log.jsonl", "runs/r1/manifest.json", "runs/r1/result/run-report.json"]
+    for f in files:
+        (root / "w-v1" / f).parent.mkdir(parents=True, exist_ok=True)
+        (root / "w-v1" / f).write_text("x")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    out = subprocess.run(["git", "-C", str(tmp_path), "check-ignore", "--no-index", "--stdin"],
+                         input="\n".join(f"workflows/w-v1/{f}" for f in files), capture_output=True, text=True).stdout
+    ignored = {line.removeprefix("workflows/w-v1/") for line in out.split()}
+    assert ignored == {f for f in files if f.startswith("runs/") and not f.startswith("runs/r1/outputs/")
+                       and f != "runs/r1/monitor-report.md"}
+    assert "workflows/.curate-workflows" not in out
+
+
+def test_a_users_gitignore_is_never_rewritten(tmp_path):
+    (tmp_path / "workflows").mkdir()
+    (tmp_path / "workflows" / ids.WORKFLOWS_MARKER).write_text("")
+    (tmp_path / "workflows" / ".gitignore").write_text("mine\n")
+    ids.claim_workflows_root(tmp_path)
+    assert (tmp_path / "workflows" / ".gitignore").read_text() == "mine\n"

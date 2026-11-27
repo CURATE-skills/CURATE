@@ -79,8 +79,9 @@ This command runs the entire pipeline (sketch → outline → reuse → design �
 /curate-skills:curate <your sketch>
 ```
 
-Each workflow is published in `.curate/workflows/<name>-v<N>/` in the folder you started in;
-the target's bundle is built from it in that version's `runs/<run-id>/` (see [Where files live](#where-files-live)).
+Each workflow is published in `workflows/<name>-v<N>/` in the folder you started in, and each run
+of it (an execution) gets `runs/<run-id>/` there, with its results in `outputs/`. The /curate
+session itself lives in `.curate/sessions/` (see [Where files live](#where-files-live)).
 
 ### Not sure what to try? Use the weather example
 
@@ -133,15 +134,21 @@ after its stage and prints the next command instead.
 
 | To… | Command |
 |---|---|
-| Resume a stopped run | `/curate-skills:curate --resume <run_id>` |
-| Redo a run from a stage, without changing the original | `/curate-skills:curate --start-at <stage> --from-run <run_id>` |
-| Change one function of a finished run | `/curate-skills:curate --start-at generate --from-run <run_id> --existing-code keep`, then ask for the change at Gate 3. Only that function is rewritten. |
-| Rewrite all functions of a finished run | `/curate-skills:curate --start-at generate --from-run <run_id> --existing-code ignore` |
+| Resume a stopped session | `/curate-skills:curate --resume <session_id>` |
+| Redo a session from a stage, without changing the original | `/curate-skills:curate --start-at <stage> --from-run <session_id>` |
+| Change one function of a finished session | `/curate-skills:curate --start-at generate --from-run <session_id> --existing-code keep`, then ask for the change at Gate 3. Only that function is rewritten. |
+| Rewrite all functions of a finished session | `/curate-skills:curate --start-at generate --from-run <session_id> --existing-code ignore` |
+| Run an approved version again | `/curate-skills:curate --start-at deploy --workflow <workflow-id>` (a new run of it; ends at Gate 5 with nothing to save) |
 | Start from other sources | `--from-bundle <folder>` (generate, emit) · `--from-file <file>` · `--sketch "<text>"` / `--sketch-file <file>` (skeleton) |
-| Rewind the same run | `/curate-skills:curate-<stage> --run <run_id>` |
-| Run one stage only | `/curate-skills:curate-<stage> --run <run_id>`. Stages: `skeleton`, `reuse`, `resolve`, `generate`, `emit`, `deploy`, `monitor`; finalize is `wda-finalize` |
+| Rewind the same session | `/curate-skills:curate-<stage> --session <session_id>` |
+| Run one stage only | `/curate-skills:curate-<stage> --session <session_id>`. Stages: `skeleton`, `reuse`, `resolve`, `generate`, `emit`; finalize is `wda-finalize`. Deploy and monitor act on a run: `--run <workflow-id>/<run-id>` |
 
-- **New runs** copy only gate-approved results, never change the source, and ask "Start this run?" first.
+A **session** is one `/curate` session (sketch to Gate 5); a **run** is one execution of a published
+version, named `<workflow-id>/<run-id>`. Session commands take `--session` (`--run`, the old name,
+still works); deploy and monitor take `--run`, and given a session id use its current run. An id
+that names both is refused: say `--session <id>` or `--run <workflow-id>/<run-id>`.
+
+- **New sessions and runs** copy only gate-approved results, never change the source, and ask "Start this run?" first.
 - **Rewinding** asks first. It costs one revision round and redoes that stage and every later one.
 - **Each stage** stops after its gate and prints the next command.
 - Input formats: `references/stage-io.md`.
@@ -191,7 +198,7 @@ Bash(uv run --quiet /absolute/path/to/CURATE/curate-skills/scripts/monitor.py *)
 ```
 
 ### 4. Deploy
-At Gate 4, choose **approve & deploy to FaaSr (cloud)** (or run `/curate-skills:curate-deploy --run <run_id>`).
+At Gate 4, choose **approve & deploy to FaaSr (cloud)** (or run `/curate-skills:curate-deploy --run <workflow-id>/<run-id>`).
 After a read-only preflight, deploy asks before each of four steps:
 1. **Publish:** function files to the repo
 2. **Upload:** `workflow.json` to the repo
@@ -217,7 +224,7 @@ with one line per function as it changes (`… running`, `✓ succeeded`, `✗ f
 On success, finalize follows. On failure or timeout, the run stops; to re-check the same
 invocation (nothing is redeployed; the new result replaces the old one):
 ```
-/curate-skills:curate-monitor --run <run_id> --minutes 20
+/curate-skills:curate-monitor --run <workflow-id>/<run-id> --minutes 20
 ```
 
 ## Run on Pegasus (optional)
@@ -262,18 +269,18 @@ Accepted addresses: `docker:///<repo>:<tag>` (or `docker://…`), or a `file:///
 with `CURATE_PEGASUS_RUNTIME=singularity` also `library://`, `shub://`, `oras://` and `file:///….sif`.
 After a read-only preflight, it asks before each step:
 1. **Prepare:** builds the workflow folder from the approved version into
-   `.curate/workflows/<workflow-id>/runs/<run-id>/bundle/` (validated, with `manifest.json`); input
+   `workflows/<workflow-id>/runs/<run-id>/bundle/` (validated, with `manifest.json`); input
    files, if the workflow needs any, are copied from a folder you name
 2. **Copy** (ssh host only): to `<host>:~/curate-runs/<workflow-id>/<run-id>/`
 3. **Launch:** plans and submits to HTCondor, and returns at once; HTCondor runs the workflow
 
 The monitor then follows it (as for FaaSr; it reads the Pegasus run folder recorded at launch, so
-it also works after a logout or reboot). When the workflow has finished, the results are in
-`pegasus_output/<workflow>-<run_id>/` in the folder you started in (`results/`, `run-report.json`, and
-`FAILED.txt` if it failed: then the outputs are partial), then Gate 5. Nothing is ever overwritten;
-each run has its own folders. A run started with
-`--start-at deploy --from-run <run_id>` asks whether to deploy to FaaSr or run on Pegasus (with
-the set image or a different one).
+it also works after a logout or reboot). When the workflow has finished, the results are in the
+run's `outputs/` (`results/`, `run-report.json`, and `FAILED.txt` if it failed: then the outputs are
+partial), then Gate 5. A re-check fills `outputs/` in and never overwrites a file; the Pegasus
+workflow is named after the version, and each run has its own folders. A run started with
+`--start-at deploy --from-run <session_id>` (or `--workflow <workflow-id>`) asks whether to deploy
+to FaaSr or run on Pegasus (with the set image or a different one).
 
 ## Settings
 
@@ -297,36 +304,56 @@ The plugin also declares Claude Code plugin settings (`catalog_dir`, `mga_retrie
 
 ## Where files live
 
-- `.curate/runs/<run_id>/` in the folder you started in: the generation run's state
-  (`state.json`), one folder per function (spec, code, test data, stub-test log), gate history,
-  `draft/` (the workflow draft emit writes and Gate 4 approves: `workflow.yml` in CWL,
-  `inputs.yml`, `functions/`), `deploy/` (the deploy log). Add `.curate/` to `.gitignore`. Run IDs
-  look like `20261118-012903-a3f9`.
-- `.curate/workflows/<name>-v<N>/`: a workflow version, published when Gate 4 is approved and never
-  edited afterwards (`workflow.yml` with `s:identifier`, `s:version` and `curate:content_hash`;
-  `inputs.yml`; `functions/`). Each execution of it gets `runs/<run-id>/`: the target's `bundle/`
-  (built from the version after you chose the target), `manifest.json` (the version's hash, the
-  CURATE version, the target, the bundle's hash), and for Pegasus its `work/`, `result/` and
-  `monitor-report.md`. Its full reference is `<name>-v<N>/<run-id>`. The deploy logs stay in the
-  generation run (`deploy/`, `pegasus/deploy-log.jsonl`).
+In the folder you started in (the project):
+
+- `workflows/`: CURATE's published workflows, marked by `workflows/.curate-workflows` (CURATE
+  refuses to publish into an existing `workflows/` folder without that marker).
+  - `workflows/<name>-v<N>/`: a version, published when Gate 4 is approved and never edited
+    afterwards (`workflow.yml` in CWL with `s:identifier`, `s:version` and `curate:content_hash`;
+    `inputs.yml`; `functions/`), and `approved.json` (the spec Gate 4 approved, checked against the
+    version whenever it is read, so `--start-at deploy --workflow` can run it again).
+  - `workflows/<name>-v<N>/runs/<run-id>/`: one run of it, `<name>-v<N>/<run-id>`: its own
+    `state.json`, the target's `bundle/` (built from the version once the target is chosen),
+    `manifest.json` (the version's hash, the CURATE version, the target, the bundle's hash),
+    `deploy/` (FaaSr's deploy copy), `deploy-log.jsonl` (every path a deploy step wrote, here, on
+    GitHub, in S3 or on a Pegasus host), `logs/`, `monitor-report.md`, Pegasus's `work/` and
+    `result/`, and **`outputs/`, the run's results folder**: Pegasus copies the delivered files
+    there when the workflow finishes; for FaaSr, `monitor.py download-outputs --run <run>` copies
+    them from S3 (with `manifest.json`; a later download fills in what was missing and never
+    overwrites).
+  - `workflows/.gitignore`, written the first time CURATE publishes: it keeps every version and,
+    of each run, `outputs/` and `monitor-report.md`, and ignores the rest of each run (bundle,
+    work folders, logs, deploy copies, state files), so you can commit `workflows/` and move it
+    between machines. CURATE never rewrites it once it exists; edit it freely.
+- `.curate/sessions/<session_id>/`: a /curate session's state (`state.json`), one folder per
+  function (spec, code, test data, stub-test log), gate history, and `draft/` (the workflow draft
+  emit writes and Gate 4 approves: `workflow.yml`, `inputs.yml`, `functions/`). Add `.curate/` to
+  `.gitignore`. Session and run IDs look like `20261118-012903-a3f9`.
+- `.curate/project-id`: a random id; a FaaSr deployment's marker records which projects use it
+  by this id (never by a folder path). `.curate/mga_guard.log`: writes the guard denied.
+- Projects made before this layout keep versions in `.curate/workflows/` and sessions in
+  `.curate/runs/`. Both are still read, and nothing is moved: a version there gets its new runs in
+  its own `runs/`, and a session there keeps its old run files (`deploy/`, `pegasus/`).
 - The FaaSr bundle (`workflow.json`, `functions/`, `external_inputs.json`, `outputs.json`) is the
-  execution run's `bundle/`; only secret **names** are written. The Pegasus bundle there is the
-  workflow folder: Pegasus's `workflow.yml` (no host paths), `functions/`, `inputs/`; the host's
-  catalogs and `pegasus.properties` go in `work/`. Runs approved before workflow versions (whose
-  bundle was in `faasr_output/` or `.curate/runs/<run_id>/pegasus/ir/`) can no longer be deployed,
-  run or monitored: start again from their spec (`--start-at emit --from-run <run_id>`).
-- `pegasus_output/<workflow>-<run_id>/` (Pegasus runs): the delivered results (`results/`) and
-  `run-report.json`; `FAILED.txt` when the run failed (the outputs are partial). One folder per
-  launch (`-2`, `-3`… for a later launch); never overwritten.
+  run's `bundle/`; only secret **names** are written. The Pegasus bundle there is the workflow
+  folder: Pegasus's `workflow.yml` (no host paths), `functions/`, `inputs/`; the host's catalogs
+  and `pegasus.properties` go in `work/`. Sessions approved before workflow versions (whose bundle
+  was in `faasr_output/` or `.curate/runs/<id>/pegasus/ir/`) can no longer be deployed, run or
+  monitored: start again from their spec (`--start-at emit --from-run <session_id>`).
+
+Elsewhere:
+
+- Your action repo (FaaSr): `functions/<workflow-id>/`, `.github/workflows/<workflow-id>-<action>.yml`
+  and `workflows/<workflow-id>/deployment.json` (one deployment per version), and
+  `workflows/<workflow-id>/<run-id>.json` per run. Your bucket: `<workflow-id>/<run-id>/` per run,
+  and FaaSr's logs under `FaaSrLog/<workflow-id>/`.
+- A Pegasus host over ssh: `~/curate-runs/<workflow-id>/<run-id>/`.
 - The catalog folder (`~/.curate/catalog` by default): `functions/<uuid>.json`; workflows as
   `workflows/<name>-v<N>.json` (each save is a new version; older entries keep `<uuid>.json`) and
   their version folders in `versions/<name>-v<N>/`; `reservations.json` records the version number
   each older uuid entry holds (so new versions never take it).
-- `.curate/runs/<run_id>/pegasus/deploy-log.jsonl`: every path a Pegasus run wrote, here and on
-  the host (`~/curate-runs/<workflow-id>/<run-id>/` with an ssh host).
 - `~/.config/curate/.env`: your deploy and Pegasus settings (mode 600), read by deploy, monitor
   and doctor; an environment variable of the same name overrides it.
-- `.curate/mga_guard.log`: writes the guard denied.
 
 ## License
 

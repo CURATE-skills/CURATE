@@ -92,7 +92,7 @@ def test_quick_start_is_short_and_the_readme_has_no_cost_or_time_figures():
     assert ("This command runs the entire pipeline (sketch → outline → reuse → design → code + tests → "
             "bundle → [deploy → monitor, if you choose it at Gate 4] → catalog), stopping at each gate for your "
             "review (see [Gates](#gates))") in flat
-    assert "published in `.curate/workflows/<name>-v<N>/` in the folder you started in" in flat
+    assert "published in `workflows/<name>-v<N>/` in the folder you started in" in flat
     assert "faasr_output" not in quick
     link = re.search(r"\]\((\.\./experiments/prompts/e2-mapreduce\.md)\)", quick)
     assert link and (PLUGIN / link.group(1)).resolve().exists()
