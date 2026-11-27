@@ -687,10 +687,38 @@ def accept_unconfirmed(run: str, confirmed: bool) -> dict:
     return {"ok": True, "accepted": True}
 
 
-def download_outputs(run: str, to: str | None = None, s3_factory=None) -> dict:
-    """Copy the run's declared output files from S3 (get only), with a manifest of each file's
-    size, LastModified and sha256. By default into the run's own outputs/ (its results folder);
-    `to`: an empty folder outside the run instead.
+ALL_DIR = "_all"  # outputs/_all/: with --all, every object the run wrote, as in its S3 folder
+RESERVED = ("manifest.json", "run-report.json", "FAILED.txt")  # names CURATE uses in outputs/
+
+
+def built_deliverables(run_p: Path, s: dict, wf: dict) -> list[dict] | None:
+    """The run's deliverables from its bundle's outputs.json: [{action, key, deliver_as}], the key
+    as the deploy copy names it; None for a bundle without deliverables (built before they were
+    recorded)."""
+    bundle = (s.get("execution") or {}).get("bundle_dir")
+    path = Path(bundle) / "outputs.json" if bundle else None
+    if not (path and path.is_file()):
+        return None
+    m = json.loads(path.read_text())
+    if "deliverables" not in m:
+        return None
+    action_of = {f["file"]: f["action"] for f in m.get("files") or []}
+    out = []
+    for d in m["deliverables"]:
+        action = action_of.get(d["file"])
+        folder = ((wf.get("ActionList") or {}).get(action, {}).get("Arguments") or {}).get("folder")
+        out.append({"action": action, "key": f"{folder}/{d['file']}" if folder else d["file"],
+                    "deliver_as": d["deliver_as"]})
+    return out
+
+
+def download_outputs(run: str, to: str | None = None, s3_factory=None, all_files: bool = False) -> dict:
+    """Copy the run's deliverables from S3 (get only) to their curate:deliver_as paths, as Pegasus
+    delivers them (e.g. results/word_count_1.json), with a manifest of each file's size,
+    LastModified and sha256. `all_files` (--all) also copies every object the run wrote, under
+    _all/ as in the run's S3 folder. By default into the run's own outputs/ (its results folder);
+    `to`: an empty folder outside the run instead. A bundle without deliverables (built before they
+    were recorded) saves every object under its S3 name, as before.
 
     In the run's outputs/, a later download fills it in (outputs_dir: a partial download, then a
     full one): files already there with the same bytes are kept, the rest are fetched; a file
@@ -720,19 +748,36 @@ def download_outputs(run: str, to: str | None = None, s3_factory=None) -> dict:
             raise InputError(f"{dest} is not empty; nothing is overwritten")
     wf = json.loads((D.files_dir(run_p, s) / "deploy" / "workflow.json").read_text())
     s3 = (s3_factory or s3_reader)(wf)
-    files, skipped = [], []
-    # one deployment per version: the run's outputs are under <deploy name>/<run id>/ in S3; saved
+    # one deployment per version: the run's objects are under <deploy name>/<run id>/ in S3; saved
     # without that prefix (older runs keep their full keys)
     strip = (f"{wf['WorkflowName']}/{(s.get('execution') or {}).get('run_id')}/"
              if (s.get("deploy") or {}).get("scheme") == D.SCHEME else "")
-    for o in run_outputs(run_p, s, wf):
-        rel = o["key"][len(strip):] if strip and o["key"].startswith(strip) else o["key"]
+
+    def in_folder(key: str) -> str:
+        return key[len(strip):] if strip and key.startswith(strip) else key
+
+    deliverables = built_deliverables(run_p, s, wf)
+    wanted = []  # (object, saved as, kind)
+    if deliverables is None:
+        wanted = [(o, in_folder(o["key"]), "file") for o in run_outputs(run_p, s, wf)]
+    else:
+        wanted = [(o, o["deliver_as"], "deliverable") for o in deliverables]
+        if all_files:
+            wanted += [(o, f"{ALL_DIR}/{in_folder(o['key'])}", "all") for o in run_outputs(run_p, s, wf)]
+    files, skipped, fetched = [], [], {}
+    for o, rel, kind in wanted:
         target = dest / rel
-        h = s3.head(o["key"])
+        if kind == "deliverable" and (rel in RESERVED or rel.split("/", 1)[0] == ALL_DIR):
+            skipped.append({"key": o["key"], "reason": f"deliver_as {rel!r} is a name CURATE uses in outputs/; "
+                                                       "not saved"})
+            continue
+        if o["key"] not in fetched:
+            h = s3.head(o["key"])
+            fetched[o["key"]] = (h, s3.get_bytes(o["key"]) if h is not None else None)
+        h, data = fetched[o["key"]]
         if h is None:
             skipped.append({"key": o["key"], "reason": "missing"})
             continue
-        data = s3.get_bytes(o["key"])
         leaked = leakcheck.find_leaks(data.decode("utf-8", "ignore"))
         if leaked:
             skipped.append({"key": o["key"], "reason": f"contains secret values ({', '.join(leaked)}); not saved"})
@@ -741,13 +786,18 @@ def download_outputs(run: str, to: str | None = None, s3_factory=None) -> dict:
         if status == "differs":
             skipped.append({"key": o["key"], "reason": f"{target} differs from S3; not overwritten"})
             continue
-        files.append({"key": o["key"], "action": o["action"], "size": h.get("size"), "bytes": len(data),
-                      "last_modified": h.get("last_modified"), "sha256": O.sha256(data), "saved_as": str(target),
-                      "status": status})
+        files.append({"key": o["key"], "action": o["action"], "kind": kind,
+                      **({"deliver_as": rel} if kind == "deliverable" else {}),
+                      "size": h.get("size"), "bytes": len(data), "last_modified": h.get("last_modified"),
+                      "sha256": O.sha256(data), "saved_as": str(target), "status": status})
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     manifest = {"run": s["run_id"], "target": "faasr", "invocation_id": s["deploy"]["invocation_id"],
-                "bucket": s3.bucket, "downloaded_at": now, "files": files, "skipped": skipped,
-                "copies": [*(earlier.get("copies") or []), now]}
+                "bucket": s3.bucket, "downloaded_at": now,
+                "contents": ("every object under its S3 name (this run's bundle lists no deliverables)"
+                             if deliverables is None else
+                             "the deliverables at their deliver_as paths" + (", and every object under _all/"
+                                                                              if all_files else "")),
+                "files": files, "skipped": skipped, "copies": [*(earlier.get("copies") or []), now]}
     path = O.write_manifest(dest, manifest)
     return {"ok": not skipped, **manifest, "manifest": str(path), "to": str(dest)}
 
@@ -803,9 +853,11 @@ def main(argv=None, opener=None, s3_factory=None, clock=time.monotonic, sleep=ti
     q.add_argument("--interval", help=f"seconds between polls (default {DEFAULT_INTERVAL})")
     q.add_argument("--config-minutes", help="plugin setting value; empty = unset")
     sub.add_parser("status").add_argument("--run", required=True, help=RUN_HELP)
-    q = sub.add_parser("download-outputs", help="copy the declared outputs from S3 into the run's outputs/ (S3 read-only)")
+    q = sub.add_parser("download-outputs", help="copy the deliverables from S3 to their deliver_as paths in the run's outputs/ (S3 read-only)")
     q.add_argument("--run", required=True, help=RUN_HELP)
     q.add_argument("--to", help="an empty folder outside the run instead of the run's outputs/")
+    q.add_argument("--all", dest="all_files", action="store_true",
+                   help=f"also copy every object the run wrote (intermediates too) into {ALL_DIR}/")
     q = sub.add_parser("accept-unconfirmed", help="the user accepted runs matched by time only (Gate 5)")
     q.add_argument("--run", required=True, help=RUN_HELP)
     q.add_argument("--confirmed", action="store_true")
@@ -825,7 +877,7 @@ def main(argv=None, opener=None, s3_factory=None, clock=time.monotonic, sleep=ti
         elif args.cmd == "status":
             out = status(args.run)
         elif args.cmd == "download-outputs":
-            out = download_outputs(args.run, args.to, s3_factory)
+            out = download_outputs(args.run, args.to, s3_factory, args.all_files)
         else:
             out = accept_unconfirmed(args.run, args.confirmed)
         return D._print(out, extra)

@@ -319,10 +319,11 @@ In the folder you started in (the project):
     GitHub, in S3 or on a Pegasus host), `logs/`, `monitor-report.md`, Pegasus's `work/` and
     `result/`, and **`outputs/`, the run's results folder**: Pegasus copies the delivered files
     there when the workflow finishes; for FaaSr, `monitor.py download-outputs --run <run>` copies
-    them from S3 (with `manifest.json`; a later download fills in what was missing and never
-    overwrites).
+    the same files from S3 to the same paths (with `manifest.json`; a later download fills in what
+    was missing and never overwrites). `--all` also copies every intermediate file into
+    `outputs/_all/`, which `workflows/.gitignore` ignores.
   - `workflows/.gitignore`, written the first time CURATE publishes: it keeps every version and,
-    of each run, `outputs/` and `monitor-report.md`, and ignores the rest of each run (bundle,
+    of each run, `outputs/` (but not `outputs/_all/`) and `monitor-report.md`, and ignores the rest of each run (bundle,
     work folders, logs, deploy copies, state files), so you can commit `workflows/` and move it
     between machines. CURATE never rewrites it once it exists; edit it freely.
 - `.curate/sessions/<session_id>/`: a /curate session's state (`state.json`), one folder per

@@ -89,10 +89,12 @@ GITIGNORE_TEXT = """\
 # Written by CURATE when it first published here; edit freely (CURATE never rewrites it).
 # Kept: every version (workflow.yml, inputs.yml, functions/, approved.json) and, of each run, its
 # results (outputs/) and its monitor report. Ignored: the rest of each run (bundle/, work/, logs/,
-# deploy/, state files, deploy logs), which can be rebuilt or is only this machine's.
+# deploy/, state files, deploy logs), which can be rebuilt or is only this machine's, and
+# outputs/_all/ (every intermediate file, from download-outputs --all).
 /*/runs/*/*
 !/*/runs/*/outputs/
 !/*/runs/*/monitor-report.md
+/*/runs/*/outputs/_all/
 """
 
 

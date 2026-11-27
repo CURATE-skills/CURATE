@@ -231,6 +231,8 @@ def test_workflows_gitignore_keeps_versions_and_run_results_and_ignores_the_rest
     assert (root / ".gitignore").read_text() == ids.GITIGNORE_TEXT
     files = ["workflow.yml", "inputs.yml", "functions/plot.py", "approved.json",
              "runs/r1/outputs/plot.png", "runs/r1/outputs/manifest.json", "runs/r1/monitor-report.md",
+             "runs/r1/outputs/results/word_count_1.json", "runs/r1/outputs/_all/map__output1__1__m_1.json",
+             "runs/r1/outputs/_all/sub/x.txt",
              "runs/r1/bundle/workflow.json", "runs/r1/work/x", "runs/r1/logs/a.txt", "runs/r1/deploy/workflow.json",
              "runs/r1/state.json", "runs/r1/deploy-log.jsonl", "runs/r1/manifest.json", "runs/r1/result/run-report.json"]
     for f in files:
@@ -240,8 +242,11 @@ def test_workflows_gitignore_keeps_versions_and_run_results_and_ignores_the_rest
     out = subprocess.run(["git", "-C", str(tmp_path), "check-ignore", "--no-index", "--stdin"],
                          input="\n".join(f"workflows/w-v1/{f}" for f in files), capture_output=True, text=True).stdout
     ignored = {line.removeprefix("workflows/w-v1/") for line in out.split()}
-    assert ignored == {f for f in files if f.startswith("runs/") and not f.startswith("runs/r1/outputs/")
-                       and f != "runs/r1/monitor-report.md"}
+    # outputs/ is kept, except outputs/_all/ (download-outputs --all: every intermediate file)
+    assert ignored == {f for f in files if f.startswith("runs/") and (not f.startswith("runs/r1/outputs/")
+                       or f.startswith("runs/r1/outputs/_all/")) and f != "runs/r1/monitor-report.md"}
+    assert "workflows/w-v1/runs/r1/outputs/_all/sub/x.txt" in out
+    assert "workflows/w-v1/runs/r1/outputs/results/word_count_1.json" not in out
     assert "workflows/.curate-workflows" not in out
 
 

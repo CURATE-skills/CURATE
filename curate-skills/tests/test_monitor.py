@@ -669,8 +669,12 @@ def test_download_and_status_by_wid_rid_use_the_runs_own_folder(deployed, env, c
     keys = [o["key"] for o in M.run_outputs(run_dir, runstate.load(run_dir), WF)]  # the bundle's outputs.json
     world.s3.update({k: ("data", AFTER) for k in keys})
     code, out = _download(capsys, world, "--run", ref)
-    assert code == 0 and out["to"] == str(run_dir / "outputs") and len(out["files"]) == len(keys) > 0
-    assert all((run_dir / "outputs" / k).is_file() for k in keys)
+    delivered = M.built_deliverables(run_dir, runstate.load(run_dir), WF)
+    assert code == 0 and out["to"] == str(run_dir / "outputs") and len(out["files"]) == len(delivered) > 0
+    assert all((run_dir / "outputs" / d["deliver_as"]).is_file() for d in delivered)
+    assert not any((run_dir / "outputs" / k).exists() for k in keys)  # intermediates only with --all
+    code, out = _download(capsys, world, "--run", ref, "--all")
+    assert code == 0 and all((run_dir / "outputs" / "_all" / k).is_file() for k in keys)
     assert not (Path(s["project_dir"]) / "results").exists() and not (Path(deployed) / "outputs").exists()
     assert M.main(["status", "--run", ref]) == 0 and json.loads(capsys.readouterr().out)["ok"]
 
@@ -694,5 +698,63 @@ def test_a_run_of_a_version_deployment_saves_its_outputs_without_the_s3_prefix(d
     world.s3.update({k: ("data", AFTER) for k in keys})
     code, out = _download(capsys, world, "--run", ref)
     assert code == 0, out
-    assert all((run_dir / "outputs" / k.split("/", 2)[2]).is_file() for k in keys)
+    assert {f["deliver_as"] for f in out["files"]} == \
+        {d["deliver_as"] for d in M.built_deliverables(run_dir, runstate.load(run_dir), wf)}
+    code, out = _download(capsys, world, "--run", ref, "--all")
+    assert code == 0, out
+    assert all((run_dir / "outputs" / "_all" / k.split("/", 2)[2]).is_file() for k in keys)
     assert not (run_dir / "outputs" / wf["WorkflowName"]).exists()
+    assert not (run_dir / "outputs" / "_all" / wf["WorkflowName"]).exists()
+
+
+def _tree(folder: Path) -> dict:
+    """{path: bytes} under folder, without CURATE's own files (manifest.json on both targets;
+    run-report.json and FAILED.txt are Pegasus's)."""
+    return {p.relative_to(folder).as_posix(): p.read_bytes() for p in sorted(folder.rglob("*"))
+            if p.is_file() and p.name not in ("manifest.json", "run-report.json", "FAILED.txt")}
+
+
+def test_faasr_and_pegasus_give_the_same_outputs_tree_for_mapreduce(deployed, env, capsys, tmp_path):  # noqa: F811
+    """The version's deliverables at their curate:deliver_as paths on both targets: FaaSr's
+    download-outputs (deliverables only by default) and Pegasus's collect of deliver/."""
+    import sys
+    import runstate
+    import pegasus_monitor as PM
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "curate_ir"))
+    import cwl_pegasus as CP
+    from cwl.validate import validate
+    s = state(deployed)
+    ref, run_dir, rid = s["execution"]["reference"], Path(s["execution"]["dir"]), s["execution"]["run_id"]
+    vdir = Path(s["version_dir"])
+    # FaaSr: every object the run wrote is in S3 (17 for MapReduce); outputs/ gets the deliverables
+    bundle_wf = json.loads((Path(s["execution"]["bundle_dir"]) / "workflow.json").read_text())
+    wf = M.D.deploy_copy(M.D.fill_placeholders(bundle_wf)[0], s["workflow_id"], rid, "alice", "r", "main")[0]
+    (run_dir / "deploy").mkdir(parents=True, exist_ok=True)
+    (run_dir / "deploy" / "workflow.json").write_text(json.dumps(wf))
+    runstate.update(run_dir, lambda x: x.update(deploy={"scheme": "version", "deploy_name": wf["WorkflowName"],
+                                                         "invocation_id": INV}))
+    keys = [o["key"] for o in M.run_outputs(run_dir, runstate.load(run_dir), wf)]
+    assert len(keys) == 17
+    world = World()
+    world.s3.update({k: (f"bytes of {k.rsplit('/', 1)[1]}", AFTER) for k in keys})
+    code, out = _download(capsys, world, "--run", ref)
+    assert code == 0, out
+    faasr = _tree(run_dir / "outputs")
+    # Pegasus: its deliver/ holds the same files at their deliver_as paths (what collect copies)
+    built = CP.build(validate(vdir / "workflow.yml", vdir / "inputs.yml")[0], "mr")
+    deliver = tmp_path / "deliver"
+    for d in built["deliverables"]:
+        (deliver / d["deliver_as"]).parent.mkdir(parents=True, exist_ok=True)
+        (deliver / d["deliver_as"]).write_text(f"bytes of {d['file']}")
+    peg_run = tmp_path / "peg-run"
+    folder, skipped = PM.output_folder(peg_run, {"run_id": "p1"}, str(deliver), None, "success", "")
+    assert skipped == []
+    pegasus = _tree(Path(folder))
+    assert faasr == pegasus and len(faasr) == 5
+    assert sorted(faasr) == [f"results/word_count_{i}.json" for i in range(1, 6)]
+    # --all adds every object under _all/ and leaves the deliverables as they were
+    code, out = _download(capsys, world, "--run", ref, "--all")
+    assert code == 0 and {f["status"] for f in out["files"] if f["kind"] == "deliverable"} == {"kept"}
+    tree = _tree(run_dir / "outputs")
+    assert {k for k in tree if not k.startswith("_all/")} == set(pegasus)
+    assert sorted(k for k in tree if k.startswith("_all/")) == sorted(f"_all/{k.split('/', 2)[2]}" for k in keys)

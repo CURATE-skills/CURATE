@@ -1924,11 +1924,14 @@ def owned_prefixes_elsewhere(run: str, run_id: str) -> dict[tuple, str]:
 
 
 def _download(wf: dict, objects: list[dict], dest: Path, s3_factory, run_p: Path | None = None,
-              strip: str = "") -> dict:
+              strip: str = "", deliver: dict | None = None, ident: dict | None = None) -> dict:
     """Copy output objects to a local folder, with a manifest. Nothing is deleted here; a file
     holding a secret value is not saved (and so not deleted either). With `strip` (the run's own
     S3 folder), dest is the run's outputs/ and is filled in (outputs_dir: same bytes kept, missing
-    added, a hand-edited file never overwritten); otherwise dest must be an empty folder outside the run."""
+    added, a hand-edited file never overwritten), as `monitor.py download-outputs --all` fills it:
+    every object under _all/, and each deliverable (`deliver`: key -> deliver_as) at its
+    deliver_as path too; the manifest keeps the run's identity (`ident`). Otherwise dest must be an
+    empty folder outside the run, and objects keep their S3 keys."""
     import outputs_dir as O
     dest = dest.expanduser().resolve()
     earlier = {}
@@ -1950,14 +1953,21 @@ def _download(wf: dict, objects: list[dict], dest: Path, s3_factory, run_p: Path
             skipped.append({"key": o["key"], "reason": f"contains secret values ({', '.join(leaked)})"})
             continue
         rel = o["key"][len(strip):] if strip and o["key"].startswith(strip) else o["key"]
-        if O.place(dest, rel, data) == "differs":
-            skipped.append({"key": o["key"], "reason": f"{dest / rel} differs from S3; not overwritten"})
-            continue
-        files.append({"key": o["key"], "bytes": len(data), "sha256": O.sha256(data), "saved_as": str(dest / rel)})
+        places = [(f"_all/{rel}", "all")] if strip else [(rel, "file")]
+        if strip and (deliver or {}).get(o["key"]):
+            places.append((deliver[o["key"]], "deliverable"))
+        for where, kind in places:
+            if O.place(dest, where, data) == "differs":
+                skipped.append({"key": o["key"], "reason": f"{dest / where} differs from S3; not overwritten"})
+                continue
+            files.append({"key": o["key"], "kind": kind, "bytes": len(data), "sha256": O.sha256(data),
+                          "saved_as": str(dest / where)})
     now = _now_iso()
-    path = O.write_manifest(dest, {"downloaded_at": now, "files": files, "skipped": skipped,
-                                   "copies": [*(earlier.get("copies") or []), now]})
-    return {"to": str(dest), "files": len(files), "skipped": skipped, "manifest": str(path)}
+    keep = {k: v for k, v in {**earlier, **(ident or {})}.items() if k in ("run", "target", "invocation_id", "bucket")}
+    path = O.write_manifest(dest, {**keep, "downloaded_at": now, "by": "teardown", "files": files,
+                                   "skipped": skipped, "copies": [*(earlier.get("copies") or []), now]})
+    return {"to": str(dest), "files": len({f["key"] for f in files} - {x["key"] for x in skipped}),
+            "skipped": skipped, "manifest": str(path)}
 
 
 def teardown(run: str, gh: GitHub | None, token: str | None, s3_factory=boto3_s3, confirmed: bool = False,
@@ -1990,7 +2000,16 @@ def teardown(run: str, gh: GitHub | None, token: str | None, s3_factory=boto3_s3
                 Path(to) if to else _project_of(run_p) / "teardown-outputs" / plan["deploy_name"])
         strip = f"{plan['deploy_name']}/{run_id_of(s)}/" if own else ""
         try:
-            saved = _download(_run_workflow(run_p, bundle), out_objs, dest, s3_factory, run_p, strip)
+            rwf = _run_workflow(run_p, bundle)
+            deliver, ident = None, None
+            if own:
+                import monitor
+                deliver = {d["key"]: d["deliver_as"] for d in monitor.built_deliverables(run_p, s, rwf) or []
+                           if d["deliver_as"] not in monitor.RESERVED
+                           and d["deliver_as"].split("/", 1)[0] != monitor.ALL_DIR}
+                ident = {"run": s.get("run_id"), "target": "faasr",
+                         "invocation_id": (s.get("deploy") or {}).get("invocation_id")}
+            saved = _download(rwf, out_objs, dest, s3_factory, run_p, strip, deliver, ident)
         except Exception as e:  # noqa: BLE001
             err = str(e) if isinstance(e, StepError) else _s3_error(e)
             return {**plan, "ok": False, "error": f"downloading the outputs failed ({err}); nothing was deleted"}

@@ -56,9 +56,12 @@ the last line names. A re-check that collects again fills the same `outputs/` in
 `download-outputs` does (below); a line starting `!` names any hand-edited file it left alone. Success needs DAGMan exit 0 and
 every declared output delivered. A `timeout` means DAGMan is still running the workflow; the
 re-check continues watching it. Its details file is `monitor-report.md` in the run's folder.
-A Pegasus run started before phase 8 (an `ir.yaml` folder) can no longer be monitored or collected. A FaaSr run's outputs stay in S3 until `monitor.py download-outputs --run <run>` copies them into
-the run's `outputs/` (its results folder; `--to <folder>` for an empty folder elsewhere), with a
-`manifest.json`; it takes the file names from the bundle's `outputs.json`. Run it again after a
+A Pegasus run started before phase 8 (an `ir.yaml` folder) can no longer be monitored or collected. A FaaSr run's outputs stay in S3 until `monitor.py download-outputs --run <run>` copies its
+deliverables into the run's `outputs/` (its results folder; `--to <folder>` for an empty folder
+elsewhere) at their `curate:deliver_as` paths, the same tree Pegasus delivers (e.g.
+`results/word_count_1.json`), with a `manifest.json`; it takes them from the bundle's
+`outputs.json`. `--all` also copies every intermediate object into `outputs/_all/`; offer it only
+when the user asks for the intermediate files. Run it again after a
 partial download: it fetches what is missing, keeps what is there, and never overwrites a file.
 
 ## 2. The result

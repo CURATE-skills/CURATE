@@ -40,7 +40,8 @@ Arguments: `$ARGUMENTS`
      `counts`), header `Teardown`, options:
      **Keep outputs (default)** — delete only the repo files and FaaSr logs;
      **Delete all** — outputs too;
-     **Download outputs, then delete** — saved first (a run: into its own `outputs/`; `--all`: to
+     **Download outputs, then delete** — saved first (a run: into its own `outputs/`, every file under
+     `outputs/_all/` and the deliverables at their paths; `--all`: to
      `<project>/teardown-outputs/<deploy_name>/`);
      **Cancel**.
      Without AskUserQuestion (or if the answer is a plain "yes" without a choice), the choice is

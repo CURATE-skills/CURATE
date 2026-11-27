@@ -467,8 +467,13 @@ def test_a_runs_teardown_can_save_its_outputs_into_its_own_outputs_folder(projec
     code, out = cli(capsys, "teardown", "--run", str(b), "--confirmed", "--plan", plan["plan_id"], "--outputs", "download",
                     fake=fake, s3=s3)
     assert code == 0 and out["ok"], out
-    assert (b / "outputs" / "station.csv").read_text() == "date,prcp\n"  # without the <name>/<run id>/ prefix
+    # as download-outputs --all fills it: every object under _all/, without the <name>/<run id>/ prefix
+    assert (b / "outputs" / "_all" / "station.csv").read_text() == "date,prcp\n"
+    assert not (b / "outputs" / "station.csv").exists()
     assert out["downloaded"]["to"] == str((b / "outputs").resolve())
+    m = json.loads((b / "outputs" / "manifest.json").read_text())
+    assert m["invocation_id"] == json.loads((b / "state.json").read_text())["deploy"]["invocation_id"]
+    assert m["target"] == "faasr" and m["by"] == "teardown"
 
 
 def test_all_lists_the_deployment_and_every_runs_files_and_deletes_nothing_without_yes(project, plain, capsys,
@@ -678,3 +683,19 @@ def test_a_folder_that_is_not_a_run_says_so(project, plain, capsys, tmp_path):
     stray.mkdir()
     code, out = cli(capsys, "teardown", "--run", str(stray))
     assert code == 1 and "is not a run" in out["error"] and "no session links it" in out["error"]
+
+
+def test_teardown_download_into_the_runs_outputs_places_deliverables_like_download_outputs(tmp_path, monkeypatch):
+    s3 = Bucket([f"{V}/{RB}/reduce__output1__1__wc_1.json", f"{V}/{RB}/map__output1__1__m_1.json"])
+    for k in s3.keys:
+        s3.content[k] = k.rsplit("/", 1)[1]
+    monkeypatch.setattr(D, "_s3_client", lambda wf, bucket, factory: s3)
+    dest = tmp_path / "outputs"
+    objs = [{"bucket": "b", "key": k} for k in sorted(s3.keys)]
+    got = D._download({}, objs, dest, None, None, f"{V}/{RB}/",
+                      {f"{V}/{RB}/reduce__output1__1__wc_1.json": "results/wc_1.json"},
+                      {"run": RB, "target": "faasr", "invocation_id": "inv"})
+    assert got["files"] == 2 and got["skipped"] == []
+    assert sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()) == [
+        "_all/map__output1__1__m_1.json", "_all/reduce__output1__1__wc_1.json", "manifest.json", "results/wc_1.json"]
+    assert json.loads((dest / "manifest.json").read_text())["invocation_id"] == "inv"
