@@ -82,9 +82,9 @@ to both calls. It removes only what that step itself logged; anything else stays
 
 ## 4. Stopping
 
-`spec.py set-stage --run <run> --stage stopped`; tell the user its `resume_command` and that
-`/curate-skills:curate-deploy --run <workflow-id>/<run-id>` continues with the next unfinished step. Nothing is
-undone.
+`spec.py set-stage --run <run> --stage stopped`; print its `stop_message` exactly (`/curate
+--resume` first; the curate-deploy command after it continues with the next unfinished step).
+Nothing is undone.
 
 ## 5. Done
 

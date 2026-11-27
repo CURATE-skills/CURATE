@@ -322,8 +322,11 @@ def poll(run: str, chunk=None, report_only=False, minutes=None, interval=None, c
            **({"settings_changed": settings_changed} if settings_changed else {})}
     if result in ("timeout", "failure"):
         import runstate
-        out.update(resume_command=f"/curate-skills:curate --resume {runstate.handle(s)}",
-                   recheck_command=f"/curate-skills:curate-monitor {runstate.flag(s, 'curate-monitor')}")
+        recheck_cmd = f"/curate-skills:curate-monitor {runstate.flag(s, 'curate-monitor')}"
+        out.update(resume_command=f"/curate-skills:curate --resume {runstate.handle(s)}", recheck_command=recheck_cmd,
+                   stop_message=runstate.stop_message(
+                       s, recheck_cmd, "to re-check just this run (nothing is resubmitted; add --minutes N for a "
+                                   "longer watch)"))
     if not record:
         out["report"] = report_md(rec, result, st, report, deliver, used / 60, out_dir)
         return out

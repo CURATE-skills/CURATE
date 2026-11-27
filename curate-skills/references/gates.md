@@ -61,8 +61,8 @@ approve; `stop` stops; anything else is a change request. Never approve on the u
 - **Cap.** If `directive` returns `"cap_reached": true`, nothing was changed. Ask: approve the
   current version as-is (`approve`), stop, or raise the cap (`spec.py set-cap --max N`, then repeat
   the same directive).
-- **Stop.** `spec.py set-stage --session <session> --stage stopped` (records where it stopped). Tell the
-  user the `resume_command` it returns (and `resume_stage_command`, to resume just that stage).
+- **Stop.** `spec.py set-stage --session <session> --stage stopped` (records where it stopped). Print
+  its `stop_message` exactly: `/curate --resume` first, then the command for just that stage.
 - **Override a classification.** If the user disputes STRUCTURE/FUNCTION after it was recorded,
   go back with a rewind (below).
 - **Rewinding** (going back to an earlier stage of a run that is already past it) is always the

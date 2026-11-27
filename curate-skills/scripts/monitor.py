@@ -619,7 +619,9 @@ def poll(run: str, chunk: int | None = None, report_only: bool = False, minutes=
            **({"rechecked": recheck} if recheck else {}),
            **({"settings_changed": settings_changed} if settings_changed else {})}
     if result in ("timeout", "failure"):
-        out.update(resume_command=resume, recheck_command=f"/curate-skills:curate-monitor {runstate.flag(s, 'curate-monitor')}")
+        recheck_cmd = f"/curate-skills:curate-monitor {runstate.flag(s, 'curate-monitor')}"
+        out.update(resume_command=resume, recheck_command=recheck_cmd, stop_message=runstate.stop_message(
+            s, recheck_cmd, "to re-check just this invocation (nothing is redeployed; add --minutes N for a longer watch)"))
     if not record:
         out["report"] = report
         return out

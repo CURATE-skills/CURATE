@@ -111,6 +111,16 @@ def handle(s: dict) -> str:
     return s.get("reference") or s["run_id"] if is_execution(s) else s["run_id"]
 
 
+def stop_message(s: dict, stage_command: str | None = None, stage_note: str = "") -> str:
+    """What to tell the user when a session or run stops: /curate --resume first (it picks up
+    where it stopped and carries on through the pipeline), then, if there is one, the command for
+    just that stage."""
+    lines = [f"To continue: `/curate-skills:curate --resume {handle(s)}`"]
+    if stage_command:
+        lines.append(f"Or, {stage_note or 'for just this stage'}: `{stage_command}`")
+    return "\n".join(lines)
+
+
 def linked_execution(s: dict) -> Path | None:
     """A session's current run folder, when that run keeps its own state."""
     if is_execution(s):

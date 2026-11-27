@@ -73,8 +73,8 @@ The last entry of `lines` is the verdict (`✓ workflow succeeded` / `✗ workfl
 |---|---|
 | `success` | the run moved to `finalize`; go on ("After the gate decision") |
 | `success_unconfirmed` | the run moved to `finalize`; Gate 5 first asks the user to accept runs matched by time only (`stages/finalize.md`) |
-| `failure` | the run is stopped. Tell the user, in one line each: `recheck_command` re-checks the same invocation (nothing is redeployed) and can replace the verdict; the details are in the `details` file. |
-| `timeout` | the run is stopped. Tell the user `recheck_command` (add `--minutes N` for a longer watch): it continues watching the same invocation with a fresh budget. |
+| `failure` | the run is stopped. Print `stop_message` exactly (`/curate --resume` first, then `recheck_command`, which re-checks the same invocation and can replace the verdict), then one line: the details are in the `details` file. |
+| `timeout` | the run is stopped. Print `stop_message` exactly (`/curate --resume` first, then `recheck_command`, which continues watching the same invocation with a fresh budget). |
 
 Only if the user asks why or for details: read the `details` file the poll returned
 (`monitor-report.md` in the run) and answer from it. Job-log text is never shown or saved; excerpts there are

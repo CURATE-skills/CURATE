@@ -63,7 +63,7 @@ Arguments: `$ARGUMENTS`
        '<the returned image>'`, then the loop; **Back** asks "Start this run?" again.
      - **Stop** → `spec.py set-stage <new> --stage stopped`. Nothing is deleted: the
        source was never touched, and the new session (or run) stays, marked stopped and unchanged
-       otherwise. Tell the user the `resume_command` it returns.
+       otherwise. Print the `stop_message` it returns, exactly.
 - `--resume <session_id>` (or `--resume <workflow-id>/<run-id>` for a run started with `--start-at
   deploy`): find it with `spec.py sessions` (`sessions`, and `runs`); for a session also run
   `scratch.py unlock --session <session>` (clears its leftover subagent lock, if any).
@@ -92,7 +92,7 @@ later turn:
 
 1. `spec.py next --session <session>` (for a run started with `--start-at deploy`, `--run <run>` here and
    in step 3) → `next_skill`, e.g. `curate-skills:curate-reuse`. If it is none, the session is done or
-   stopped: summarize and stop (if stopped, give its `resume_command`).
+   stopped: summarize and stop (if stopped, print its `stop_message` exactly).
 2. Its stage is the part after `curate-` (`skeleton`, `reuse`, `resolve`, `generate`, `emit`,
    `deploy`, `monitor`);
    for `wda-finalize` it is `finalize`. Tell the user one line: `Stage: <stage>`.

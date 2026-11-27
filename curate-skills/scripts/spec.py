@@ -2651,6 +2651,9 @@ def resume_commands(s: dict) -> dict:
            "stopped_from": stopped_from}
     if i is not None and i < len(PIPELINE):
         out["resume_stage_command"] = f"/{PLUGIN}:{PIPELINE[i][2]} {runstate.flag(s, PIPELINE[i][2])}"
+    out["stop_message"] = runstate.stop_message(s, out.get("resume_stage_command"),
+                                                f"to run just the {PIPELINE[i][0]} stage"
+                                                if out.get("resume_stage_command") else "")
     return out
 
 

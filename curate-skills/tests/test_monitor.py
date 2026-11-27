@@ -758,3 +758,13 @@ def test_faasr_and_pegasus_give_the_same_outputs_tree_for_mapreduce(deployed, en
     tree = _tree(run_dir / "outputs")
     assert {k for k in tree if not k.startswith("_all/")} == set(pegasus)
     assert sorted(k for k in tree if k.startswith("_all/")) == sorted(f"_all/{k.split('/', 2)[2]}" for k in keys)
+
+
+def test_a_stopped_run_names_curate_resume_first(run, env, capsys):
+    world = World().finish_all()
+    world.runs.pop("plot")
+    code, out = poll(capsys, run, world, "--minutes", "0.5")
+    assert out["result"] == "timeout"
+    first, second = out["stop_message"].splitlines()
+    assert first == f"To continue: `{out['resume_command']}`" and first.startswith("To continue: `/curate-skills:curate --resume ")
+    assert second.startswith("Or, to re-check just this invocation") and second.endswith(f"`{out['recheck_command']}`")

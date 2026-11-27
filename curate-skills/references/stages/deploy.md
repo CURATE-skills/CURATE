@@ -110,8 +110,8 @@ CURATE's files and paths not in this run's deploy log stay refused.
 
 ## 4. Stopping
 
-`spec.py set-stage --run <run> --stage stopped`; tell the user its `resume_command` and that
-`/curate-skills:curate-deploy --run <workflow-id>/<run-id>` continues with the next unfinished step (the
+`spec.py set-stage --run <run> --stage stopped`; print its `stop_message` exactly (`/curate
+--resume` first; the curate-deploy command after it continues with the next unfinished step, the
 finished ones are recorded and skipped). Nothing is undone.
 
 ## 5. Done

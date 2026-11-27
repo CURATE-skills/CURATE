@@ -143,6 +143,16 @@ def test_pending_across_calls_shows_only_changes(launched, monkeypatch):
     assert state(launched)["monitor"]["polls"] >= 3
 
 
+def assert_stop_message(out, s):
+    """/curate --resume first, then the Pegasus re-check (nothing resubmitted)."""
+    import runstate
+    ref = s["execution"]["reference"]
+    assert out["stop_message"].splitlines() == [  # a session resumes by its id; the re-check takes its run
+        f"To continue: `/curate-skills:curate --resume {runstate.handle(s)}`",
+        "Or, to re-check just this run (nothing is resubmitted; add --minutes N for a longer watch): "
+        f"`/curate-skills:curate-monitor --run {ref}`"]
+
+
 def test_failure_stops_and_blocks_finalize(launched, monkeypatch):
     host = Host([st("failure", done=JOBS[:5], failed=["shuffle"], exit_=1)],
                 collect=report("failure (DAGMan status 1)", delivered=[],
@@ -152,6 +162,7 @@ def test_failure_stops_and_blocks_finalize(launched, monkeypatch):
     assert out["lines"][-1].startswith("✗ workflow failed: step shuffle failed; DAGMan exit 1; missing outputs: ")
     s = state(launched)
     assert out["recheck_command"] == f"/curate-skills:curate-monitor --run {s['execution']['reference']}"
+    assert_stop_message(out, s)
     assert s["stopped_from"] == "monitor" and s["monitor"]["failed"] == ["shuffle"]
     assert "pegasus-analyzer" in (Path(state(launched)["execution"]["dir"]) / "monitor-report.md").read_text()
     s["stage"] = "finalize"
@@ -163,6 +174,7 @@ def test_timeout_then_recheck(launched, monkeypatch, capsys):
     out = poll(launched, Host([st("running", running=["generate_text"])]), monkeypatch, minutes="0.5")
     assert out["result"] == "timeout" and out["stage"] == "stopped"
     assert out["lines"][-1] == "… not finished after 0.5 min (still running under DAGMan)"
+    assert_stop_message(out, state(launched))
     ok(S, ["begin", "--session", str(launched), "--stage", "monitor"], capsys)  # the re-check
     out = poll(launched, Host([ALL], collect=report()), monkeypatch)
     assert out["result"] == "success" and out["rechecked"] == "timeout" and out["stage"] == "finalize"

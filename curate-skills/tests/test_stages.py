@@ -505,7 +505,8 @@ def test_monitor_stage_is_read_only_and_states_the_final_rules():
     assert "every run counts" in text and "60-second grace period" in text
     assert "print each entry of `lines` on its own line, exactly as returned, and nothing else" in text
     assert "no tables, no output-file states, no poll counts" in text
-    assert "re-checks the same invocation (nothing is redeployed) and can replace the verdict" in text
+    assert "Print `stop_message` exactly (`/curate --resume` first, then `recheck_command`, which re-checks the " \
+           "same invocation and can replace the verdict)" in text
     assert "never in the background" in text
     for result in ("`success`", "`success_unconfirmed`", "`failure`", "`timeout`"):
         assert result in text

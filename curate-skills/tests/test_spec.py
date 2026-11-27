@@ -446,3 +446,12 @@ def test_gate3_attention_shows_last_line(make_run, capsys):
     run = make_run(spec=spec, mga={"a": {"status": "failed", "attempts": 1, "last_output_tail": tail}})
     md = ok(S, ["show", "--session", str(run), "--gate", "3"], capsys)["markdown"]
     assert "  last test lines:\n    Traceback (most recent call last):\n      File x\n    ValueError: bad input" in md
+
+
+def test_stop_puts_curate_resume_first(make_run, capsys):
+    run = make_run()
+    out = ok(S, ["set-stage", "--session", str(run), "--stage", "stopped"], capsys)
+    lines = out["stop_message"].splitlines()
+    assert lines[0] == f"To continue: `/curate-skills:curate --resume {state(run)['run_id']}`"
+    assert lines[1] == f"Or, to run just the skeleton stage: `{out['resume_stage_command']}`"
+    assert ok(S, ["next", "--session", str(run)], capsys)["stop_message"] == out["stop_message"]
