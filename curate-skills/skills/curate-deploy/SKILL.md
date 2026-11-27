@@ -39,9 +39,9 @@ Arguments: `$ARGUMENTS`
   1. `deploy.py teardown <target>` (deletes nothing). Print its `summary` exactly. If `ok` is
      false without `needs_confirmation`, show the `error` / `problems` exactly and stop (`--all`
      refuses while a run of the version may still be running, and names those runs).
-  2. Ask once with AskUserQuestion — question `Tear down <deploy_name>? <repo_files> repo files,
-     <log_objects> log objects and <output_objects> output objects are listed above.` (the
-     `counts`), header `Teardown`, options:
+  2. Ask once with AskUserQuestion — question: the returned `question`, exactly (it names what is
+     removed: `Tear down run <workflow-id>/<run-id>? …` for a run, `Tear down deployment
+     <workflow-id> and all its runs? …` for `--all`, then the counts), header `Teardown`, options:
      **Keep outputs (default)** — delete only the repo files and FaaSr logs;
      **Delete all** — outputs too;
      **Download outputs, then delete** — saved first (a run: into its own `outputs/`, every file under

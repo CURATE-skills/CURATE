@@ -1965,12 +1965,22 @@ def teardown_plan(run: str, gh: GitHub | None, s3_factory=boto3_s3) -> dict:
     else:
         lines.append("- Not deleted: the GitHub Actions run history, anything not listed above.")
     lines += [f"- **Problem:** {x}" for x in problems]
+    counts = {"repo_files": len(to_delete), "s3_objects": len(s3_objects),
+              "log_objects": sum(o["kind"] == "logs" for o in s3_objects),
+              "output_objects": sum(o["kind"] == "outputs" for o in s3_objects)}
+    # a run of a version: only its files; before one deployment per version, a run's teardown
+    # removed its own date-suffixed deployment
+    what = (f"run {name}/{run_id_of(s)}" if version_scheme else f"deployment {name} (session {s.get('run_id')})")
     return {**base, "ok": not problems, "scheme": dep.get("scheme"), "problems": problems, "repo_files": repo_files, "s3_objects": s3_objects,
-            "counts": {"repo_files": len(to_delete), "s3_objects": len(s3_objects),
-                       "log_objects": sum(o["kind"] == "logs" for o in s3_objects),
-                       "output_objects": sum(o["kind"] == "outputs" for o in s3_objects)},
+            "counts": counts, "question": teardown_question(what, counts),
             "outputs_choices": OUTPUT_CHOICES, "plan_id": plan_id,
             "summary": "\n".join(lines)}
+
+
+def teardown_question(what: str, counts: dict) -> str:
+    """The one AskUserQuestion the skill asks before a teardown: what it removes, then the counts."""
+    return (f"Tear down {what}? {counts['repo_files']} repo files, {counts['log_objects']} log objects and "
+            f"{counts['output_objects']} output objects are listed above.")
 
 
 def owned_prefixes_elsewhere(run: str, run_id: str) -> dict[tuple, str]:
@@ -2272,11 +2282,13 @@ def teardown_version_plan(project: str | Path, wid: str, override: str | None, g
               + (", ".join(st.get("execution", {}).get("reference") or st.get("run_id") for _, st in runs) or "none"),
               "- Not deleted: local run folders, the GitHub Actions run history, anything not listed above."]
     lines += [f"- **Warning:** {x}" for x in warnings] + [f"- **Problem:** {x}" for x in problems]
+    counts = {"repo_files": len(to_delete), "s3_objects": len(s3_objects),
+              "log_objects": sum(o["kind"] == "logs" for o in s3_objects),
+              "output_objects": sum(o["kind"] == "outputs" for o in s3_objects)}
     return {**base, "ok": not problems, "problems": problems, "warnings": warnings, "other_projects": others,
             "repo_files": repo_files, "s3_objects": s3_objects, "runs": [str(d) for d, _ in runs],
-            "counts": {"repo_files": len(to_delete), "s3_objects": len(s3_objects),
-                       "log_objects": sum(o["kind"] == "logs" for o in s3_objects),
-                       "output_objects": sum(o["kind"] == "outputs" for o in s3_objects)},
+            "counts": counts,
+            "question": teardown_question(f"deployment {name} and all its runs", counts),
             "outputs_choices": OUTPUT_CHOICES, "plan_id": plan_id, "summary": "\n".join(lines),
             "_wf": wf}
 

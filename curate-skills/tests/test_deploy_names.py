@@ -729,3 +729,24 @@ def test_teardown_download_into_the_runs_outputs_places_deliverables_like_downlo
     assert sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()) == [
         "_all/map__output1__1__m_1.json", "_all/reduce__output1__1__wc_1.json", "manifest.json", "results/wc_1.json"]
     assert json.loads((dest / "manifest.json").read_text())["invocation_id"] == "inv"
+
+
+def test_the_teardown_question_names_what_it_removes(project, plain, capsys, monkeypatch):
+    vrun(project, RA)
+    b = vrun(project, RB, "reused")
+    fake, s3 = vworld(project)
+    _, plan = cli(capsys, "teardown", "--run", str(b), fake=fake, s3=s3)
+    assert plan["question"] == (f"Tear down run {V}/{RB}? 1 repo files, 1 log objects and 1 output objects "
+                                "are listed above.")
+    monkeypatch.chdir(project)
+    _, plan = cli(capsys, "teardown", "--workflow", V, "--all", fake=fake, s3=s3)
+    assert plan["question"].startswith(f"Tear down deployment {V} and all its runs? ")
+    skill = (Path(__file__).resolve().parents[1] / "skills" / "curate-deploy" / "SKILL.md").read_text()
+    assert "question: the returned `question`, exactly" in skill and "Tear down <deploy_name>?" not in skill
+
+
+def test_a_legacy_runs_teardown_question_names_its_deployment(project, plain, capsys):
+    fake, s3 = world()
+    code, plan = cli(capsys, "teardown", "--run", str(torn(project)), fake=fake, s3=s3)
+    assert plan["question"] == (f"Tear down deployment {NAME} (session {A})? 5 repo files, 1 log objects and "
+                                "2 output objects are listed above.")
