@@ -708,7 +708,7 @@ def test_all_four_steps_in_order(deploying, env, capsys, runners):
     assert s["stage"] == "monitor" and out["next_skill"] == "curate-skills:curate-monitor"
     assert s["history"][-1]["decision"] == "deployed"
     import spec as S
-    S.main(["next", "--run", str(deploying)])
+    S.main(["next", "--session", str(deploying)])
     nxt = json.loads(capsys.readouterr().out)
     assert nxt["next_skill"] == "curate-skills:curate-monitor"
     logged = [(e["step"], e.get("path") or e.get("prefix")) for e in log_lines(deploying)]
@@ -789,7 +789,7 @@ def test_a_failed_step_can_be_retried_only_with_overwrite_own_deploy(deploying, 
     fake = FakeGitHub(writable=True, fail_put={"functions/weather-cs/plot_weather.py"})
     code, out = step(capsys, deploying, "publish", fake, "--confirmed")
     assert code == 1 and out["failed"] and "HTTP 500" in out["error"]
-    assert out["resume_command"] == "/curate-skills:curate-deploy --run r1"
+    assert out["resume_command"] == f"/curate-skills:curate-deploy --run {json.loads((deploying / 'state.json').read_text())['execution']['reference']}"
     s = json.loads((deploying / "state.json").read_text())
     assert s["stage"] == "deploy" and s["deploy"]["steps"]["publish"]["ok"] is False
     assert [e["path"] for e in log_lines(deploying)] == ["functions/weather-cs/download_station.py"]

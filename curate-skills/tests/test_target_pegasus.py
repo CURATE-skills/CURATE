@@ -34,16 +34,16 @@ DIFFERENT = "Approve & run on Pegasus with a different image…"
 
 def test_options_name_target_and_image(source_run, capsys, monkeypatch):
     at_gate4(source_run)
-    out = ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)
+    out = ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)
     assert out["options"] == ["Approve & deploy to FaaSr (cloud)", f"Approve & run on Pegasus (this machine · {DEFAULT_IMG})",
                               DIFFERENT, "Approve, no deploy"]  # Stop is typed, as the question says
     assert out["question"].startswith('Approve this workflow, and where should it run? (type "stop" to stop here)')
     monkeypatch.setenv("CURATE_PEGASUS_HOST", "local")
-    assert ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)["options"][1] == \
+    assert ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)["options"][1] == \
         f"Approve & run on Pegasus (this machine · {DEFAULT_IMG})"
     monkeypatch.setenv("CURATE_PEGASUS_HOST", "maxwell")
     monkeypatch.setenv("CURATE_PEGASUS_IMAGE", "docker:///me/img:2")
-    out = ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)
+    out = ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)
     assert out["options"][1] == "Approve & run on Pegasus (maxwell · docker:///me/img:2)"
 
 
@@ -52,7 +52,7 @@ def test_option_label_from_the_settings_file(source_run, capsys, monkeypatch, tm
     f.write_text("CURATE_PEGASUS_HOST=lab-server\n")
     monkeypatch.setattr(envfile, "default_path", lambda: f)
     at_gate4(source_run)
-    assert ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)["options"][1] == \
+    assert ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)["options"][1] == \
         f"Approve & run on Pegasus (lab-server · {DEFAULT_IMG})"
     import os
     assert "CURATE_PEGASUS_HOST" not in os.environ  # read, never exported
@@ -67,7 +67,7 @@ def where_section(md):
 def test_gate4_summary_local(source_run, capsys):
     at_gate4(source_run)
     s = state(source_run)
-    md = ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)["markdown"]
+    md = ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)["markdown"]
     sec = where_section(md)
     rid = s["run_id"]
     assert sec.index("**FaaSr (cloud)**") < sec.index("**Pegasus**")
@@ -86,7 +86,7 @@ def test_gate4_summary_remote_and_setting_image(source_run, capsys, monkeypatch)
     monkeypatch.setenv("CURATE_PEGASUS_HOST", "maxwell")
     monkeypatch.setenv("CURATE_PEGASUS_IMAGE", "docker:///me/img:2")
     at_gate4(source_run)
-    md = ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)["markdown"]
+    md = ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)["markdown"]
     assert "**Pegasus** on `maxwell` (over ssh): " in md
     assert "image `docker:///me/img:2` (CURATE_PEGASUS_IMAGE)" in md
 
@@ -109,7 +109,7 @@ def run_if_refusal(e) -> str:
 
 def test_gate4_says_why_it_cannot_run_and_drops_the_image_option(source_run, capsys):
     e = with_conditional_edge(source_run)
-    out = ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)
+    out = ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)
     sec = where_section(out["markdown"])
     assert "**Pegasus** on this machine: **cannot run on Pegasus:**" in sec
     assert f"- {run_if_refusal(e)}" in sec
@@ -122,36 +122,36 @@ def test_gate4_says_why_it_cannot_run_and_drops_the_image_option(source_run, cap
 
 def test_approve_pegasus_goes_to_deploy(source_run, capsys):
     at_gate4(source_run)
-    out = ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
+    out = ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     assert out["stage"] == "deploy" and out["deploy"] == "pegasus" and out["next_skill"] == "curate-skills:curate-deploy"
     s = state(source_run)
     assert s["deploy_choice"] == "pegasus" and s["pegasus"] is None and s["deploy"] is None
     # a versioned run records no emit-bundle hash: Gate 4 opened the Pegasus run instead
     assert "bundle_hash" not in s and s["history"][-1]["deploy"] == "pegasus"
     assert s["execution"]["target"] == "pegasus" and s["execution"]["reference"].startswith(s["workflow_id"] + "/")
-    assert ok(S, ["require", "--run", str(source_run), "--stage", "deploy"], capsys)["problems"] == []
+    assert ok(S, ["require", "--session", str(source_run), "--stage", "deploy"], capsys)["problems"] == []
 
 
 def test_approve_pegasus_refused_when_it_cannot_run(source_run, capsys):
     e = with_conditional_edge(source_run)
-    code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
+    code, out = call(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     assert code == 2 and out["error"].startswith(f"this workflow cannot run on Pegasus: {run_if_refusal(e)}")
     assert state(source_run)["stage"] == "gate4"
 
 
 def test_monitor_and_finalize_checks_for_pegasus(source_run, capsys):
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
-    code, out = call(S, ["require", "--run", str(source_run), "--stage", "monitor"], capsys)
+    ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
+    code, out = call(S, ["require", "--session", str(source_run), "--stage", "monitor"], capsys)
     assert code == 1 and out["problems"][0].startswith("nothing to monitor: the Pegasus run was not started")
     s = state(source_run)
     s["pegasus"] = {"steps": {"prepare": {"ok": True}, "launch": {"ok": True}}}
     save(source_run, s)
-    assert ok(S, ["require", "--run", str(source_run), "--stage", "monitor"], capsys)["problems"] == []
+    assert ok(S, ["require", "--session", str(source_run), "--stage", "monitor"], capsys)["problems"] == []
     for result, problem in (("failure", True), ("timeout", True), ("success_unconfirmed", True), ("success", False)):
         s["monitor"] = {"result": result}
         save(source_run, s)
-        code, out = call(S, ["require", "--run", str(source_run), "--stage", "finalize"], capsys)
+        code, out = call(S, ["require", "--session", str(source_run), "--stage", "finalize"], capsys)
         assert bool(out["problems"]) is problem, result
         assert (catalog.deployed_run_problem(s) is not None) is problem, result
         if problem:
@@ -160,7 +160,7 @@ def test_monitor_and_finalize_checks_for_pegasus(source_run, capsys):
 
 def test_faasr_deploy_refuses_a_pegasus_run(source_run, capsys):
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
+    ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     s = state(source_run)
     assert D.gate4_problem(s) == D.PEGASUS_REFUSAL
     out = D.deploy_step(str(source_run), "publish", "-x", None, None, "none")
@@ -173,17 +173,17 @@ def test_faasr_deploy_refuses_a_pegasus_run(source_run, capsys):
 
 def test_faasr_run_unchanged(source_run, capsys):
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
+    ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
     s = state(source_run)
     assert s["deploy_choice"] == "yes" and s["stage"] == "deploy" and "pegasus" not in s
-    assert ok(S, ["require", "--run", str(source_run), "--stage", "deploy"], capsys)["problems"] == []
-    code, out = call(S, ["require", "--run", str(source_run), "--stage", "monitor"], capsys)
+    assert ok(S, ["require", "--session", str(source_run), "--stage", "deploy"], capsys)["problems"] == []
+    code, out = call(S, ["require", "--session", str(source_run), "--stage", "monitor"], capsys)
     assert out["problems"] == [f"nothing to monitor: the workflow was not started — run "
-                               f"/curate-skills:curate-deploy --run {s['run_id']}"]
+                               f"/curate-skills:curate-deploy --run {s['execution']['reference']}"]
     s.update(deploy={"steps": {"invoke": {"ok": True}}, "invocation_id": "i1"}, monitor={"result": "failure"})
     save(source_run, s)
-    assert ok(S, ["require", "--run", str(source_run), "--stage", "monitor"], capsys)["problems"] == []
-    code, out = call(S, ["require", "--run", str(source_run), "--stage", "finalize"], capsys)
+    assert ok(S, ["require", "--session", str(source_run), "--stage", "monitor"], capsys)["problems"] == []
+    code, out = call(S, ["require", "--session", str(source_run), "--stage", "finalize"], capsys)
     assert out["problems"][0].startswith("the deployed run has not been confirmed to work (monitor result failure)")
     assert catalog.deployed_run_problem(s).startswith("the deployed run has not been confirmed")
     s["monitor"] = {"result": "success_unconfirmed"}
@@ -192,9 +192,9 @@ def test_faasr_run_unchanged(source_run, capsys):
     assert catalog.deployed_run_problem(s) is None
     assert D.gate4_problem(state(source_run)) is None
     # Entering deploy and rewinding never adds the Pegasus field to a FaaSr run.
-    ok(S, ["begin", "--run", str(source_run), "--stage", "deploy"], capsys)
+    ok(S, ["begin", "--session", str(source_run), "--stage", "deploy"], capsys)
     assert "pegasus" not in state(source_run)
-    ok(S, ["begin", "--run", str(source_run), "--stage", "emit", "--rewind", "--confirmed"], capsys)
+    ok(S, ["begin", "--session", str(source_run), "--stage", "emit", "--rewind", "--confirmed"], capsys)
     s = state(source_run)
     assert "pegasus" not in s and s["deploy_choice"] is None and s["deploy"] is None
 
@@ -202,17 +202,17 @@ def test_faasr_run_unchanged(source_run, capsys):
 def test_no_deploy_unchanged(source_run, capsys):
     s = state(source_run)  # the fixture approved Gate 4 without --deploy
     assert s["deploy_choice"] == "no" and s["stage"] == "finalize" and "pegasus" not in s
-    assert ok(S, ["require", "--run", str(source_run), "--stage", "finalize"], capsys)["problems"] == []
+    assert ok(S, ["require", "--session", str(source_run), "--stage", "finalize"], capsys)["problems"] == []
     assert catalog.deployed_run_problem(s) is None
 
 
 def test_pegasus_field_cleared_on_rewind(source_run, capsys):
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
+    ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     s = state(source_run)
     s["pegasus"] = {"steps": {"launch": {"ok": True}}}
     save(source_run, s)
-    out = ok(S, ["begin", "--run", str(source_run), "--stage", "emit", "--rewind", "--confirmed"], capsys)
+    out = ok(S, ["begin", "--session", str(source_run), "--stage", "emit", "--rewind", "--confirmed"], capsys)
     assert "pegasus" in out["cleared"]
     assert state(source_run)["pegasus"] is None and state(source_run)["deploy_choice"] is None
 
@@ -265,13 +265,13 @@ def test_start_at_deploy_offers_both_targets_and_runs_on_pegasus(source_run, cap
     assert out["start_options"] == ["Yes, deploy to FaaSr (cloud)", f"Yes, run on Pegasus (maxwell · {DEFAULT_IMG})",
                                     "Yes, run on Pegasus with a different image…", "Stop"]
     new = Path(out["run"])
-    res = ok(S, ["confirm-start", "--run", str(new), "--deploy", "pegasus"], capsys)
+    res = ok(S, ["confirm-start", "--session", str(new), "--deploy", "pegasus"], capsys)
     assert res["recorded"] == "deploy_choice" and res["deploy_choice"] == "pegasus"
     s = state(new)
     assert s["deploy_choice"] == "pegasus" and s["pegasus"] is None and s["stage"] == "deploy"
     assert s["history"][-1]["deploy"] == "pegasus" and "Yes (run on Pegasus)" in s["history"][-1]["text"]
-    assert ok(S, ["require", "--run", str(new), "--stage", "deploy"], capsys)["problems"] == []
-    assert ok(S, ["confirm-start", "--run", str(new)], capsys)["deploy_choice"] == "pegasus"  # once only
+    assert ok(S, ["require", "--session", str(new), "--stage", "deploy"], capsys)["problems"] == []
+    assert ok(S, ["confirm-start", "--session", str(new)], capsys)["deploy_choice"] == "pegasus"  # once only
     import pegasus_deploy as PD
     monkeypatch.setattr(PD, "RUN", lambda cmd, timeout=600: (0, "5.1.3", "") if cmd[-1] == "pegasus-version"
                         else (1, "", ""))
@@ -283,19 +283,19 @@ def test_start_at_deploy_offers_both_targets_and_runs_on_pegasus(source_run, cap
 def test_start_at_deploy_pegasus_refused_when_it_cannot_run(source_run, capsys):
     from test_start import start
     e = with_conditional_edge(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep"], capsys)
+    ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep"], capsys)
     code, out = start(capsys, source_run, "deploy", "--from-run", state(source_run)["run_id"])
     assert code == 0, out
     new = Path(out["run"])
-    code, res = call(S, ["confirm-start", "--run", str(new), "--deploy", "pegasus"], capsys)
+    code, res = call(S, ["confirm-start", "--session", str(new), "--deploy", "pegasus"], capsys)
     assert code == 2 and res["error"].startswith(f"this workflow cannot run on Pegasus: {run_if_refusal(e)}")
     assert state(new)["deploy_choice"] is None
-    assert ok(S, ["confirm-start", "--run", str(new)], capsys)["deploy_choice"] == "yes"  # FaaSr still possible
+    assert ok(S, ["confirm-start", "--session", str(new)], capsys)["deploy_choice"] == "yes"  # FaaSr still possible
 
 
 def test_start_options_only_for_deploy_and_deploy_flag_only_there(source_run, capsys):
     from test_start import start
     code, out = start(capsys, source_run, "finalize", "--from-run", state(source_run)["run_id"])
     assert code == 0 and "start_options" not in out
-    code, res = call(S, ["confirm-start", "--run", out["run"], "--deploy", "pegasus"], capsys)
+    code, res = call(S, ["confirm-start", "--session", out["run"], "--deploy", "pegasus"], capsys)
     assert code == 2 and "only applies to a run started with --start-at deploy" in res["error"]

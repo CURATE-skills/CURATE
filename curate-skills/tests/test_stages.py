@@ -48,10 +48,11 @@ def foreground(monkeypatch):
     ("deploy", "curate-deploy"), ("monitor", "curate-monitor"), ("finalize", "wda-finalize"), ("done", None), ("stopped", None)])
 def test_next_names_the_stage_skill(make_run, capsys, stage, skill):
     run = make_run(stage=stage)
-    out = ok(S, ["next", "--run", str(run)], capsys)
+    out = ok(S, ["next", "--session", str(run)], capsys)
     assert out["next_skill"] == (f"curate-skills:{skill}" if skill else None)
     if skill:
-        assert out["command"] == f"/curate-skills:{skill} --run {state(run)['run_id']}"
+        flag = "--run" if skill in ("curate-deploy", "curate-monitor") else "--session"  # they take a run
+        assert out["command"] == f"/curate-skills:{skill} {flag} {state(run)['run_id']}"
 
 
 # ── require ──
@@ -59,82 +60,82 @@ def test_next_names_the_stage_skill(make_run, capsys, stage, skill):
 def test_require_names_missing_input_and_producer(make_run, capsys):
     run = make_run()
     rid = state(run)["run_id"]
-    assert ok(S, ["require", "--run", str(run), "--stage", "skeleton"], capsys)["problems"] == []
-    code, out = call(S, ["require", "--run", str(run), "--stage", "reuse"], capsys)
-    assert code == 1 and out["problems"] == [f"no approved skeleton — run /curate-skills:curate-skeleton --run {rid}"]
+    assert ok(S, ["require", "--session", str(run), "--stage", "skeleton"], capsys)["problems"] == []
+    code, out = call(S, ["require", "--session", str(run), "--stage", "reuse"], capsys)
+    assert code == 1 and out["problems"] == [f"no approved skeleton — run /curate-skills:curate-skeleton --session {rid}"]
     patch(run, spec=resolved_spec())
-    code, out = call(S, ["require", "--run", str(run), "--stage", "resolve"], capsys)
-    assert out["problems"] == [f"no reuse decisions for this skeleton — run /curate-skills:curate-reuse --run {rid}"]
-    code, out = call(S, ["require", "--run", str(run), "--stage", "emit"], capsys)
+    code, out = call(S, ["require", "--session", str(run), "--stage", "resolve"], capsys)
+    assert out["problems"] == [f"no reuse decisions for this skeleton — run /curate-skills:curate-reuse --session {rid}"]
+    code, out = call(S, ["require", "--session", str(run), "--stage", "emit"], capsys)
     assert "have no code — run /curate-skills:curate-generate" in out["problems"][0]
-    code, out = call(S, ["require", "--run", str(run), "--stage", "finalize"], capsys)
-    assert out["problems"] == [f"no validated bundle — run /curate-skills:curate-emit --run {rid}"]
+    code, out = call(S, ["require", "--session", str(run), "--stage", "finalize"], capsys)
+    assert out["problems"] == [f"no validated bundle — run /curate-skills:curate-emit --session {rid}"]
 
 
 def test_require_detects_stale_inputs(make_run, capsys):
     spec = resolved_spec()
     run = make_run(spec=spec, enriched_spec=spec, enriched_basis="old", spec_basis="old")
-    code, out = call(S, ["require", "--run", str(run), "--stage", "resolve"], capsys)
+    code, out = call(S, ["require", "--session", str(run), "--stage", "resolve"], capsys)
     assert "older version of the spec" in out["problems"][0]
     patch(run, enriched_basis=spec_hash(spec))
-    assert ok(S, ["require", "--run", str(run), "--stage", "resolve"], capsys)
-    code, out = call(S, ["require", "--run", str(run), "--stage", "generate"], capsys)
+    assert ok(S, ["require", "--session", str(run), "--stage", "resolve"], capsys)
+    code, out = call(S, ["require", "--session", str(run), "--stage", "generate"], capsys)
     assert any("not resolved from the current reuse decisions" in p for p in out["problems"])
 
     coded = coded_spec()
     run = make_run(spec=coded, mga={"map": {"status": "passed", "basis": "old"}},
                    validation={"ok": True, "spec_hash": "old"})
-    code, out = call(S, ["require", "--run", str(run), "--stage", "emit"], capsys)
+    code, out = call(S, ["require", "--session", str(run), "--stage", "emit"], capsys)
     assert "map were generated for an older version" in out["problems"][0]
-    code, out = call(S, ["require", "--run", str(run), "--stage", "finalize"], capsys)
+    code, out = call(S, ["require", "--session", str(run), "--stage", "finalize"], capsys)
     assert "bundle is older than the spec" in out["problems"][0]
 
 
 def test_require_generate_preflight_only_when_generating(make_run, capsys, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS")
     run = make_run(spec=resolved_spec())
-    code, out = call(S, ["require", "--run", str(run), "--stage", "generate"], capsys)
+    code, out = call(S, ["require", "--session", str(run), "--stage", "generate"], capsys)
     assert code == 1 and "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS" in out["problems"][0]
     reused = coded_spec()
     for n in reused["nodes"]:
         n["source"] = "cached"
     patch(run, spec=reused)
-    assert ok(S, ["require", "--run", str(run), "--stage", "generate"], capsys)["problems"] == []
+    assert ok(S, ["require", "--session", str(run), "--stage", "generate"], capsys)["problems"] == []
 
 
 # ── begin / end ──
 
 def test_begin_refuses_before_the_stage_is_reached(make_run, capsys):
     run = make_run(stage="gate2", spec=resolved_spec())
-    code, out = call(S, ["begin", "--run", str(run), "--stage", "generate"], capsys)
+    code, out = call(S, ["begin", "--session", str(run), "--stage", "generate"], capsys)
     rid = state(run)["run_id"]
     assert code == 1 and out["mode"] == "refused" and out["error"] == (
         "the session has not reached generate yet: it is waiting at Gate 2. Approve Gate 2 first: "
-        f"/curate-skills:curate-resolve --run {rid}")
+        f"/curate-skills:curate-resolve --session {rid}")
     assert state(run)["stage"] == "gate2"
     run = make_run(stage="reuse", spec=resolved_spec())
-    code, out = call(S, ["begin", "--run", str(run), "--stage", "resolve"], capsys)
+    code, out = call(S, ["begin", "--session", str(run), "--stage", "resolve"], capsys)
     assert out["error"].endswith("it is at stage reuse. Run "
-                                 f"/curate-skills:curate-reuse --run {state(run)['run_id']} first")
+                                 f"/curate-skills:curate-reuse --session {state(run)['run_id']} first")
 
 
 def test_begin_fresh_clears_downstream_and_resume_keeps(make_run, capsys):
     spec = coded_spec()
     run = make_run(stage="generate", spec=spec, mga={"map": {"status": "passed"}},
                    validation={"ok": True}, bundle_dir="/old")
-    out = ok(S, ["begin", "--run", str(run), "--stage", "generate"], capsys)
+    out = ok(S, ["begin", "--session", str(run), "--stage", "generate"], capsys)
     s = state(run)
     assert out["mode"] == "fresh" and set(out["cleared"]) == {"mga", "validation", "bundle_dir"}
     assert s["mga"] == {} and s["validation"] is None and s["begun"] == "generate"
     patch(run, mga={"map": {"status": "passed"}})
-    out = ok(S, ["begin", "--run", str(run), "--stage", "generate"], capsys)
+    out = ok(S, ["begin", "--session", str(run), "--stage", "generate"], capsys)
     assert out["mode"] == "resume" and state(run)["mga"] == {"map": {"status": "passed"}}
 
 
 def test_begin_keeps_revision_context(make_run, capsys):
     spec = coded_spec()
     run = make_run(stage="reuse", spec=spec, prior_spec=spec, code_feedback="sort words")
-    ok(S, ["begin", "--run", str(run), "--stage", "reuse"], capsys)
+    ok(S, ["begin", "--session", str(run), "--stage", "reuse"], capsys)
     s = state(run)
     assert s["prior_spec"] == spec and s["code_feedback"] == "sort words"
 
@@ -142,34 +143,34 @@ def test_begin_keeps_revision_context(make_run, capsys):
 def test_rewind_needs_flag_moves_code_and_counts(make_run, capsys):
     spec = coded_spec()
     run = make_run(stage="gate3", spec=spec, mga={"map": {"status": "passed"}}, max_iterations=1)
-    code, out = call(S, ["begin", "--run", str(run), "--stage", "reuse"], capsys)
+    code, out = call(S, ["begin", "--session", str(run), "--stage", "reuse"], capsys)
     assert code == 1 and "--rewind --confirmed" in out["error"] and out["needs_confirmation"]
     assert "Ask the user first" in out["error"] and state(run)["stage"] == "gate3"
-    out = ok(S, ["begin", "--run", str(run), "--stage", "reuse", "--rewind", "--confirmed"], capsys)
+    out = ok(S, ["begin", "--session", str(run), "--stage", "reuse", "--rewind", "--confirmed"], capsys)
     s = state(run)
     assert out["mode"] == "rewind" and s["stage"] == "reuse" and s["iteration"] == 1
     assert s["prior_spec"] == spec and s["mga"] == {} and s["history"][-1]["gate"] == "rewind"
     patch(run, stage="gate3")
-    code, out = call(S, ["begin", "--run", str(run), "--stage", "reuse", "--rewind", "--confirmed"], capsys)
+    code, out = call(S, ["begin", "--session", str(run), "--stage", "reuse", "--rewind", "--confirmed"], capsys)
     assert code == 1 and out["cap_reached"]  # cap 1 already used
 
 
 def test_stopped_run_resumes_where_it_stopped(make_run, capsys):
     run = make_run(stage="gate2", spec=resolved_spec())
-    ok(S, ["set-stage", "--run", str(run), "--stage", "stopped"], capsys)
+    ok(S, ["set-stage", "--session", str(run), "--stage", "stopped"], capsys)
     s = state(run)
     assert s["stopped_from"] == "gate2"
-    assert ok(S, ["next", "--run", str(run)], capsys)["stopped_from"] == "gate2"
-    out = ok(S, ["begin", "--run", str(run), "--stage", "resolve"], capsys)
+    assert ok(S, ["next", "--session", str(run)], capsys)["stopped_from"] == "gate2"
+    out = ok(S, ["begin", "--session", str(run), "--stage", "resolve"], capsys)
     assert out["mode"] == "resume" and state(run)["stage"] == "gate2"
 
 
 def test_end_generate_requires_final_statuses(make_run, capsys):
     run = make_run(stage="generate", spec=coded_spec(), mga={"map": {"status": "passed"}})
-    code, out = call(S, ["end", "--run", str(run), "--stage", "generate"], capsys)
+    code, out = call(S, ["end", "--session", str(run), "--stage", "generate"], capsys)
     assert code == 1 and "generate_text" in out["pending"]
     patch(run, mga={n["name"]: {"status": "passed"} for n in coded_spec()["nodes"]})
-    assert ok(S, ["end", "--run", str(run), "--stage", "generate"], capsys)["stage"] == "gate3"
+    assert ok(S, ["end", "--session", str(run), "--stage", "generate"], capsys)["stage"] == "gate3"
 
 
 # ── routing ──
@@ -177,14 +178,14 @@ def test_end_generate_requires_final_statuses(make_run, capsys):
 def test_routing_through_reuse(make_run, capsys, tmp_path):
     run = make_run()
     (run / "work" / "sk.json").write_text((FIX / "skeleton.json").read_text())
-    ok(S, ["skeleton", "--run", str(run), "--json", str(run / "work" / "sk.json")], capsys)
-    assert ok(S, ["approve", "--run", str(run), "--gate", "1"], capsys)["stage"] == "reuse"
-    ok(S, ["apply-candidates", "--run", str(run), "--json", str(FIX / "candidates.json")], capsys)
+    ok(S, ["skeleton", "--session", str(run), "--json", str(run / "work" / "sk.json")], capsys)
+    assert ok(S, ["approve", "--session", str(run), "--gate", "1"], capsys)["stage"] == "reuse"
+    ok(S, ["apply-candidates", "--session", str(run), "--json", str(FIX / "candidates.json")], capsys)
     assert state(run)["stage"] == "resolve"
-    ok(S, ["merge-resolved", "--run", str(run), "--json", str(FIX / "resolved.json")], capsys)
+    ok(S, ["merge-resolved", "--session", str(run), "--json", str(FIX / "resolved.json")], capsys)
     s = state(run)
     assert s["stage"] == "gate2" and s["spec_basis"] == spec_hash(s["enriched_spec"])
-    out = ok(S, ["directive", "--run", str(run), "--gate", "2", "--text", "rename output",
+    out = ok(S, ["directive", "--session", str(run), "--gate", "2", "--text", "rename output",
                  "--structural", "false"], capsys)
     assert out["next_stage"] == "reuse" and out["next_skill"] == "curate-skills:curate-reuse"
 
@@ -192,15 +193,15 @@ def test_routing_through_reuse(make_run, capsys, tmp_path):
 def test_gate4_refuses_stale_bundle(make_run, capsys):
     spec = coded_spec()
     run = make_run(stage="gate4", spec=spec, validation={"ok": True, "spec_hash": "stale"})
-    code, out = call(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
+    code, out = call(S, ["approve", "--session", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
     assert code == 2 and "different version of the spec" in out["error"]
     patch(run, validation={"ok": True, "spec_hash": spec_hash(spec)})
-    code, out = call(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
+    code, out = call(S, ["approve", "--session", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
     assert code == 2 and "no workflow draft" in out["error"]  # emit writes the draft Gate 4 approves
     import emit
     from curate_models import WorkflowSpec
     patch(run, draft_dir=emit.write_draft(WorkflowSpec.model_validate(spec), run)["dir"])
-    out = ok(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
+    out = ok(S, ["approve", "--session", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
     assert out["stage"] == "finalize" and out["workflow_id"] == "mapreduce-word-count-v1"
 
 
@@ -209,7 +210,7 @@ def test_gate4_refuses_stale_bundle(make_run, capsys):
 def test_v1_state_is_refused(make_run, capsys):
     run = make_run()
     patch(run, schema_version=1)
-    code, out = call(S, ["status", "--run", str(run)], capsys)
+    code, out = call(S, ["status", "--session", str(run)], capsys)
     assert code == 2 and "curate-skills v1" in out["error"] and "curate-v1" in out["error"]
 
 
@@ -226,13 +227,13 @@ def test_concurrent_writers_do_not_lose_updates(make_run, tmp_path):
 def test_record_stores_basis_and_harvest_clears_validation(make_run, capsys):
     spec = coded_spec()
     run = make_run(stage="generate", spec=spec, validation={"ok": True, "spec_hash": "x"})
-    ok(scratch, ["record", "--run", str(run), "--node", "map", "--status", "passed"], capsys)
+    ok(scratch, ["record", "--session", str(run), "--node", "map", "--status", "passed"], capsys)
     node = next(n for n in spec["nodes"] if n["name"] == "map")
     assert state(run)["mga"]["map"]["basis"] == node_basis(node)
     d = run / "functions" / "map"
     d.mkdir(parents=True)
     (d / "map.py").write_text("def map(folder, input1, output1):\n    pass\n")
-    ok(scratch, ["harvest", "--run", str(run), "--node", "map"], capsys)
+    ok(scratch, ["harvest", "--session", str(run), "--node", "map"], capsys)
     assert state(run)["validation"] is None
 
 
@@ -240,10 +241,10 @@ def test_unlock_only_removes_this_runs_lock(make_run, capsys):
     run = make_run()
     lock = Path(state(run)["project_dir"]) / ".curate" / "mga.lock.json"
     lock.write_text(json.dumps({"run_id": "someone-else", "node": "x"}))
-    out = ok(scratch, ["unlock", "--run", str(run)], capsys)
+    out = ok(scratch, ["unlock", "--session", str(run)], capsys)
     assert out["removed"] is False and lock.exists()
     lock.write_text(json.dumps({"run_id": state(run)["run_id"], "node": "x"}))
-    assert ok(scratch, ["unlock", "--run", str(run)], capsys)["removed"] and not lock.exists()
+    assert ok(scratch, ["unlock", "--session", str(run)], capsys)["removed"] and not lock.exists()
 
 
 # ── start at each stage and walk on, with no model ──
@@ -256,12 +257,12 @@ def test_walk_from_generate_import_to_finalize(tmp_path, capsys, monkeypatch):
                          "--project-dir", str(tmp_path / "p"), "--catalog-dir", str(tmp_path / "c")], capsys)
     assert code == 0, out
     run = out["run"]
-    ok(S, ["begin", "--run", run, "--stage", "generate"], capsys)
+    ok(S, ["begin", "--session", run, "--stage", "generate"], capsys)
     for n in coded_spec()["nodes"]:
-        ok(scratch, ["record", "--run", run, "--node", n["name"], "--status", "reused"], capsys)
-    ok(S, ["end", "--run", run, "--stage", "generate"], capsys)
-    assert ok(S, ["approve", "--run", run, "--gate", "3"], capsys)["stage"] == "emit"
-    ok(S, ["begin", "--run", run, "--stage", "emit"], capsys)
+        ok(scratch, ["record", "--session", run, "--node", n["name"], "--status", "reused"], capsys)
+    ok(S, ["end", "--session", run, "--stage", "generate"], capsys)
+    assert ok(S, ["approve", "--session", run, "--gate", "3"], capsys)["stage"] == "emit"
+    ok(S, ["begin", "--session", run, "--stage", "emit"], capsys)
     s = state(run)
     s["validation"] = {"ok": True, "level": "structural", "error": None, "spec_hash": spec_hash(s["spec"])}
     s["stage"] = "gate4"
@@ -269,9 +270,9 @@ def test_walk_from_generate_import_to_finalize(tmp_path, capsys, monkeypatch):
     from curate_models import WorkflowSpec
     s["draft_dir"] = emit.write_draft(WorkflowSpec.model_validate(s["spec"]), Path(run))["dir"]
     Path(run, "state.json").write_text(json.dumps(s))
-    ok(S, ["approve", "--run", run, "--gate", "4", "--on-duplicate", "keep"], capsys)
-    assert ok(S, ["require", "--run", run, "--stage", "finalize"], capsys)["problems"] == []
-    assert ok(S, ["next", "--run", run], capsys)["next_skill"] == "curate-skills:wda-finalize"
+    ok(S, ["approve", "--session", run, "--gate", "4", "--on-duplicate", "keep"], capsys)
+    assert ok(S, ["require", "--session", run, "--stage", "finalize"], capsys)["problems"] == []
+    assert ok(S, ["next", "--session", run], capsys)["next_skill"] == "curate-skills:wda-finalize"
 
 
 # ── regressions from a user test (results log #18, #19) ──
@@ -281,7 +282,7 @@ def test_rewind_without_confirmation_changes_nothing(make_run, capsys):
     run = make_run(stage="gate4", spec=spec, mga={"map": {"status": "passed"}},
                    validation={"ok": True})
     before = state(run)
-    code, out = call(S, ["begin", "--run", str(run), "--stage", "generate", "--rewind"], capsys)
+    code, out = call(S, ["begin", "--session", str(run), "--stage", "generate", "--rewind"], capsys)
     assert code == 1 and out["needs_confirmation"] and "explicit OK" in out["error"]
     assert "uses one revision round (0 of 5 used)" in out["error"]
     assert state(run) == before
@@ -293,14 +294,14 @@ def test_rewind_to_generate_starts_new_functions_empty(make_run, capsys):
     by["split"].update(source="cached", origin_kind="cache", origin_name="split")
     by["shuffle"].update(source="adapt", origin_kind="cache", origin_name="shuffle")
     run = make_run(stage="gate4", spec=spec, mga={n: {"status": "passed"} for n in by})  # past generate
-    out = ok(S, ["begin", "--run", str(run), "--stage", "generate", "--rewind", "--confirmed"], capsys)
+    out = ok(S, ["begin", "--session", str(run), "--stage", "generate", "--rewind", "--confirmed"], capsys)
     assert out["mode"] == "rewind" and out["iteration"] == 1
     s = state(run)
     now = {n["name"]: n for n in s["spec"]["nodes"]}
     assert now["map"]["code"] is None and now["reduce"]["code"] is None          # new: dropped
     assert now["split"]["code"] and now["shuffle"]["code"]                        # cached / adapt: kept
     assert all(n["code"] for n in s["prior_spec"]["nodes"])                       # old code kept here
-    out = ok(scratch, ["build", "--run", str(run)], capsys)
+    out = ok(scratch, ["build", "--session", str(run)], capsys)
     gen = {n["name"]: n["generate"] for n in out["nodes"]}
     assert gen == {"generate_text": True, "split": False, "map": True, "shuffle": True, "reduce": True}
     fns = run / "functions"
@@ -314,7 +315,7 @@ def test_rewind_to_generate_starts_new_functions_empty(make_run, capsys):
 def test_build_never_seeds_a_new_function_with_code(make_run, capsys):
     spec = coded_spec()  # every node: source new, with code (e.g. harvested earlier)
     run = make_run(stage="generate", spec=spec)
-    ok(scratch, ["build", "--run", str(run)], capsys)
+    ok(scratch, ["build", "--session", str(run)], capsys)
     for n in spec["nodes"]:
         d = run / "functions" / n["name"]
         assert not (d / f"{n['name']}.py").exists()
@@ -326,12 +327,12 @@ def test_build_never_seeds_a_new_function_with_code(make_run, capsys):
 def test_stopped_run_names_the_resume_command(make_run, capsys):
     run = make_run(stage="gate2", spec=resolved_spec())
     rid = state(run)["run_id"]
-    out = ok(S, ["set-stage", "--run", str(run), "--stage", "stopped"], capsys)
-    for out in (out, ok(S, ["next", "--run", str(run)], capsys), ok(S, ["status", "--run", str(run)], capsys)):
+    out = ok(S, ["set-stage", "--session", str(run), "--stage", "stopped"], capsys)
+    for out in (out, ok(S, ["next", "--session", str(run)], capsys), ok(S, ["status", "--session", str(run)], capsys)):
         assert out["resume_command"] == f"/curate-skills:curate --resume {rid}"
-        assert out["resume_stage_command"] == f"/curate-skills:curate-resolve --run {rid}"
+        assert out["resume_stage_command"] == f"/curate-skills:curate-resolve --session {rid}"
         assert out["stopped_from"] == "gate2"
-    assert "resume_command" not in ok(S, ["next", "--run", str(make_run(stage="gate2"))], capsys)
+    assert "resume_command" not in ok(S, ["next", "--session", str(make_run(stage="gate2"))], capsys)
 
 
 def test_gate3_after_a_kept_import_says_kept_and_passed(tmp_path, capsys, monkeypatch):
@@ -340,14 +341,14 @@ def test_gate3_after_a_kept_import_says_kept_and_passed(tmp_path, capsys, monkey
                          "--existing-code", "keep", "--project-dir", str(tmp_path / "p"),
                          "--catalog-dir", str(tmp_path / "c")], capsys)
     run = out["run"]
-    ok(S, ["begin", "--run", run, "--stage", "generate"], capsys)
-    built = ok(scratch, ["build", "--run", run], capsys)
+    ok(S, ["begin", "--session", run, "--stage", "generate"], capsys)
+    built = ok(scratch, ["build", "--session", run], capsys)
     assert not any(n["generate"] for n in built["nodes"])  # kept: no subagents
     for n in built["order"]:
         assert stubtest.run_stubtest(Path(run), n)["ok"]
-        ok(scratch, ["record", "--run", run, "--node", n, "--status", "reused"], capsys)
-    ok(S, ["end", "--run", run, "--stage", "generate"], capsys)
-    md = ok(S, ["show", "--run", run, "--gate", "3"], capsys)["markdown"]
+        ok(scratch, ["record", "--session", run, "--node", n, "--status", "reused"], capsys)
+    ok(S, ["end", "--session", run, "--stage", "generate"], capsys)
+    md = ok(S, ["show", "--session", run, "--gate", "3"], capsys)["markdown"]
     for n in built["order"]:
         block = md.split(f"\n{n}  ", 1)[1].split("\n\n", 1)[0]
         assert block.startswith("kept: your code · ") and "stub test: passed (not regenerated)" in block
@@ -360,14 +361,14 @@ def import_kept(tmp_path, capsys, spec: dict) -> str:
     code, out = call(S, ["import", "--stage", "generate", "--from", str(src), "--existing-code", "keep",
                          "--project-dir", str(tmp_path / "p"), "--catalog-dir", str(tmp_path / "c")], capsys)
     assert code == 0, out
-    ok(S, ["begin", "--run", out["run"], "--stage", "generate"], capsys)
+    ok(S, ["begin", "--session", out["run"], "--stage", "generate"], capsys)
     return out["run"]
 
 
 def test_generate_stage_stub_tests_the_plain_fixture(tmp_path, capsys):
     import stubtest
     run = import_kept(tmp_path, capsys, json.loads((FIX / "spec-with-code.json").read_text()))
-    built = ok(scratch, ["build", "--run", run], capsys)
+    built = ok(scratch, ["build", "--session", run], capsys)
     for n in built["order"]:
         res = stubtest.run_stubtest(Path(run), n)
         assert res["ok"] and res["harness"] == "plain", (n, res["tail"])
@@ -385,7 +386,7 @@ def test_a_kept_faasr_style_step_fails_its_stub_test(tmp_path, capsys):
     next(n for n in spec["nodes"] if n["name"] == "map")["code"] = (
         "def map(folder, input1, output1):\n    faasr_log('old style')\n")
     run = import_kept(tmp_path, capsys, spec)
-    ok(scratch, ["build", "--run", run], capsys)
+    ok(scratch, ["build", "--session", run], capsys)
     res = stubtest.run_stubtest(Path(run), "map")
     assert not res["ok"] and "does not follow the plain contract" in res["tail"]
 
@@ -408,9 +409,9 @@ def test_show_returns_a_short_question_options_and_the_marker(make_run, capsys, 
                    validation={"ok": True, "level": "faasr_py"})
     if gate == 4:  # Gate 4 shows the workflow draft emit writes
         import emit
-        emit.main(["bundle", "--run", str(run), "--level", "structural"])
+        emit.main(["bundle", "--session", str(run), "--level", "structural"])
         capsys.readouterr()
-    out = ok(S, ["show", "--run", str(run), "--gate", str(gate)], capsys)
+    out = ok(S, ["show", "--session", str(run), "--gate", str(gate)], capsys)
     assert out["header"] == f"Gate {gate}" and out["question"].endswith('(Type in "Other" to request changes.)')
     assert out["markdown"].startswith(f"## Gate {gate}") and "compact" not in out
     run_id = json.loads((run / "state.json").read_text())["run_id"]
@@ -425,7 +426,7 @@ def test_show_returns_a_short_question_options_and_the_marker(make_run, capsys, 
 def test_gate1_shows_each_rank_once(make_run, capsys):
     """Bug report: 'Rank: 3' shown twice. The table has one Rank cell per function."""
     run = make_run(skeleton_draft={"spec": WEATHER})
-    out = ok(S, ["show", "--run", str(run), "--gate", "1"], capsys)
+    out = ok(S, ["show", "--session", str(run), "--gate", "1"], capsys)
     rows = [l for l in out["markdown"].splitlines() if l.startswith("2. process_variable")]
     assert rows == ["2. process_variable  · 3 ranks"]
     assert "Rank: 3" not in out["markdown"] and out["markdown"].count("process_variable ×3") == 2  # 2 DAG edges
@@ -452,7 +453,7 @@ def test_curate_advice_and_confirmations():
     skill = (root / "skills" / "curate" / "SKILL.md").read_text()
     desc = next(l for l in skill.splitlines() if l.startswith("description: "))[len("description: "):]
     assert len(desc) <= 1024
-    assert "--start-at generate --from-run <run_id> --existing-code keep" in desc
+    assert "--start-at generate --from-run <session_id> --existing-code keep" in desc
     assert "only that function is redone" in desc and "--existing-code ignore" in desc
     assert "After an explicit yes" in desc and "invoke this skill" in desc
     assert "never run CURATE's scripts or rewind yourself" in desc
@@ -544,13 +545,13 @@ def test_stub_test_command_matches_the_allow_rule_and_stores_no_plugin_path(make
     import scratch
     run = make_run()
     cmd = scratch.stubtest_cmd(run, "work")
-    assert cmd == f'uv run --quiet <plugin>/scripts/stubtest.py run --run "{run}" --node work'
+    assert cmd == f'uv run --quiet <plugin>/scripts/stubtest.py run --session "{run}" --node work'
     plugin = str(Path(__file__).resolve().parents[1])
     filled = scratch.stubtest_cmd(run, "work", plugin)
     rule_prefix = f"uv run --quiet {plugin}/scripts/"  # README / allowed-tools: Bash(<this>*)
     assert filled.startswith(rule_prefix) and filled[len(rule_prefix):].startswith("stubtest.py run ")
     spawn = (Path(plugin) / "references" / "prompts" / "mga-spawn.md").read_text()
-    assert 'uv run --quiet <plugin>/scripts/stubtest.py run --run "<run>" --node <N>' in spawn
+    assert 'uv run --quiet <plugin>/scripts/stubtest.py run --session "<session>" --node <N>' in spawn
     ref = (Path(plugin) / "skills" / "function-reference" / "SKILL.md").read_text()
-    assert 'uv run --quiet <plugin>/scripts/stubtest.py run --run "<run dir>" --node <name>' in ref
+    assert 'uv run --quiet <plugin>/scripts/stubtest.py run --session "<session folder>" --node <name>' in ref
     assert 'uv run "' not in spawn + ref

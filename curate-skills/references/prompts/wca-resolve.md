@@ -5,7 +5,7 @@ Adapted from CURATE-prototype `prompts/wca_prompts.py` `WCA_RESOLVE_PROMPT` and
 
 ## Inputs
 
-After `apply-candidates`, run `spec.py prompt-context --run <run> --stage resolve`. It returns
+After `apply-candidates`, run `spec.py prompt-context --session <session> --stage resolve`. It returns
 `workflow_json` (the skeleton with candidates applied — catalog renames done, code omitted),
 `fca_candidates`, `user_models_section`, `context_files_section` and `feedback_section`.
 
@@ -145,8 +145,8 @@ Rules:
 
 ## Output
 
-Write ONLY the JSON object to `<run>/work/resolved.json`, then run
-`spec.py merge-resolved --run <run> --json <run>/work/resolved.json`. The script restores
+Write ONLY the JSON object to `<session>/work/resolved.json`, then run
+`spec.py merge-resolved --session <session> --json <session>/work/resolved.json`. The script restores
 catalog/cached code and I/O, adds missing trigger edges, drops redundant ones and reports
 `problems`. If any problem has severity `error`, fix `resolved.json` once and re-run
 `merge-resolved`; if errors remain, show them at Gate 2.

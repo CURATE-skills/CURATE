@@ -86,7 +86,7 @@ def peg_run(source_run, capsys):  # noqa: F811
     s = state(source_run)
     s["stage"] = "gate4"
     runstate.save(source_run, s)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
+    ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     return source_run
 
 

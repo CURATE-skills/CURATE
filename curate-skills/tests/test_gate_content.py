@@ -27,7 +27,7 @@ def weather():
 
 
 def show(run, gate, capsys):
-    return ok(S, ["show", "--run", str(run), "--gate", str(gate)], capsys)
+    return ok(S, ["show", "--session", str(run), "--gate", str(gate)], capsys)
 
 
 def test_gate1_shows_one_block_per_step_in_order(make_run, capsys):
@@ -68,14 +68,14 @@ def test_gate3_is_short_per_function_and_full_code_is_on_request(make_run, capsy
     assert "  kept (not regenerated)" in blocks[2] and "stub test: passed (not regenerated)" in blocks[2]
     assert "def main(" not in md and "```python" not in md  # no code in the default display
     assert "**Show the full code**" in md and out["options"] == ["Approve", "Show the full code", "Stop here"]
-    full = ok(S, ["show", "--run", str(run), "--gate", "3", "--full"], capsys)
+    full = ok(S, ["show", "--session", str(run), "--gate", "3", "--full"], capsys)
     main = "def main(inputs, outputs, params):\n"
     for body in (main + "    return 'csv'", main + "    pass  # process", main + "    pass  # plot"):
         assert f"```python\n{body}\n```" in full["markdown"]
     assert full["markdown"].endswith(out["marker"])
     review = (run / "review" / "gate3.md").read_text()
     assert review.startswith(md) and main + "    return 'csv'" in review  # full code kept on file
-    code, err = __import__("conftest").call(S, ["show", "--run", str(run), "--gate", "2", "--full"], capsys)
+    code, err = __import__("conftest").call(S, ["show", "--session", str(run), "--gate", "2", "--full"], capsys)
     assert code == 2 and "only for Gate 3" in err["error"]
 
 
@@ -139,10 +139,10 @@ def test_every_gate_prints_the_content_then_asks():
     assert "**Print the content first, then ask — never ask before printing it**" in gates
     for stage in ("skeleton", "resolve", "generate", "emit", "finalize"):
         text = " ".join((ROOT / "references" / "stages" / f"{stage}.md").read_text().split())
-        assert "`spec.py show --run <run> --gate" in text, stage
+        assert "`spec.py show --session <session> --gate" in text, stage
         assert "review_line" in text and "never ask before printing it" in text, stage
     fin = " ".join((ROOT / "references" / "stages" / "finalize.md").read_text().split())
-    assert fin.index("`spec.py show --run <run> --gate 5`") < fin.index("**Gate 5 — ask**")
+    assert fin.index("`spec.py show --session <session> --gate 5`") < fin.index("**Gate 5 — ask**")
 
 
 # ── assumptions: resolve records them (Gate 2), curate-mga reports more (Gate 3) ──
@@ -205,7 +205,7 @@ def test_mga_assumptions_are_recorded_and_listed_at_gate3(make_run, capsys):
                        ("process", "- leap days -> 29 Feb dropped from the baseline\n\nmissing values -> skipped\n")):
         (run / "functions" / name).mkdir(parents=True, exist_ok=True)
         (run / "functions" / name / "assumptions.txt").write_text(text)
-        ok(scratch, ["record", "--run", str(run), "--node", name, "--status", "passed"], capsys)
+        ok(scratch, ["record", "--session", str(run), "--node", name, "--status", "passed"], capsys)
     mga = json.loads((run / "state.json").read_text())["mga"]
     assert mga["download"]["assumptions"] == []
     assert mga["process"]["assumptions"] == ["leap days -> 29 Feb dropped from the baseline", "missing values -> skipped"]
@@ -220,11 +220,11 @@ def test_the_summary_repeats_only_assumptions_already_shown(make_run, capsys):
     spec = weather().model_copy(update={"assumptions": [WINDOW], "presentation_assumptions": [LAYOUT]})
     run = make_run(spec=spec, stage="finalize", validation={"ok": True, "level": "faasr_py"},
                    mga={"process": {"status": "passed", "assumptions": ["leap days -> dropped"]}})
-    md = ok(S, ["summary", "--run", str(run)], capsys)["markdown"]
+    md = ok(S, ["summary", "--session", str(run)], capsys)["markdown"]
     section = md.split("Assumptions (shown at Gates 2 and 3):")[1].split("\n\nDecisions:")[0].strip().splitlines()
     assert section == ["**Affects the results**", f"- {WINDOW}", "", "**Presentation and format**", f"- {LAYOUT}",
                        "", "**Made while coding**", "- `process`: leap days -> dropped"]
-    assert "Assumptions" not in ok(S, ["summary", "--run", str(make_run(spec=weather(), stage="finalize"))],
+    assert "Assumptions" not in ok(S, ["summary", "--session", str(make_run(spec=weather(), stage="finalize"))],
                                    capsys)["markdown"]
 
 
@@ -293,7 +293,7 @@ def test_gate4_lists_what_deploy_would_write_without_any_network_call(make_run, 
     monkeypatch.setenv("FAASR_ACTION_REPO", "faasr-actions")
     monkeypatch.setenv("FAASR_S3_BUCKET", "my-bucket")
     run = make_run(spec=weather())
-    out = emit.main(["bundle", "--run", str(run)])
+    out = emit.main(["bundle", "--session", str(run)])
     capsys.readouterr()
     import urllib.request
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(AssertionError("network")))
@@ -323,7 +323,7 @@ def test_gate4_deploy_section_marks_settings_not_set_yet(make_run, capsys, tmp_p
     for k in ("FAASR_GH_USERNAME", "FAASR_ACTION_REPO", "FAASR_S3_BUCKET"):
         monkeypatch.delenv(k, raising=False)
     run = make_run(spec=weather())
-    emit.main(["bundle", "--run", str(run)])
+    emit.main(["bundle", "--session", str(run)])
     capsys.readouterr()
     md = show(run, 4, capsys)["markdown"]
     assert "**FaaSr (cloud)**: repo `<FAASR_GH_USERNAME>/<FAASR_ACTION_REPO>`" in md
@@ -343,7 +343,7 @@ def test_gate4_for_plain_steps_shows_both_targets_and_the_unchanged_function_fil
     monkeypatch.setenv("FAASR_GH_USERNAME", "alice")
     monkeypatch.setenv("FAASR_ACTION_REPO", "faasr-actions")
     run = make_run(spec=plain_e2_spec())
-    emit.main(["bundle", "--run", str(run)])
+    emit.main(["bundle", "--session", str(run)])
     capsys.readouterr()
     md = show(run, 4, capsys)["markdown"]
     assert re.search(r"\*\*Pegasus\*\* on this machine: `mapreduce-word-count[^`]*`, 11 jobs, image ", md), md

@@ -47,6 +47,7 @@ import pegasus_ir as P  # noqa: E402
 import spec as S  # noqa: E402
 from curate_models import WorkflowSpec  # noqa: E402
 import runstate  # noqa: E402
+from runstate import RUN_HELP  # noqa: E402
 
 PLUGIN_DIR = SCRIPT_DIR.parent
 IR_TOOLS = PLUGIN_DIR / "curate_ir"
@@ -425,18 +426,19 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="The Pegasus target's deploy steps")
     sub = p.add_subparsers(dest="cmd", required=True)
     q_ = sub.add_parser("preflight")
-    q_.add_argument("--run", required=True)
+    q_.add_argument("--run", required=True, help=RUN_HELP)
     q_.add_argument("--inputs")
     for name in ("prepare", "copy", "launch"):
         q_ = sub.add_parser(name)
-        q_.add_argument("--run", required=True)
+        q_.add_argument("--run", required=True, help=RUN_HELP)
         q_.add_argument("--confirmed", action="store_true")
         q_.add_argument("--overwrite-own", action="store_true")
         if name == "prepare":
             q_.add_argument("--inputs")
-    sub.add_parser("status").add_argument("--run", required=True)
+    sub.add_parser("status").add_argument("--run", required=True, help=RUN_HELP)
     a = p.parse_args(argv)
-    a.run = str(runstate.resolve_run(a.run))  # an id, <workflow-id>/<run-id> or a folder
+    if runstate.resolve_args(a, "run", note=True):  # <workflow-id>/<run-id>, a run id or a folder; a session: its run
+        return 2
     if not (Path(a.run) / "state.json").is_file():
         print(json.dumps({"ok": False, "error": f"no run at {a.run}"}))
         return 2

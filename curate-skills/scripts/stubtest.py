@@ -9,7 +9,7 @@
 # See scripts/VENDORED.md.
 """Stub-test one generated function inside its run directory.
 
-  stubtest.py run --run R --node N [--mode strict|parity] [--timeout 60]
+  stubtest.py run --session S --node N [--mode strict|parity] [--timeout 60]
 
 A function that follows the plain contract (plain_contract.py) is called as
 main(inputs, outputs, params), per rank, with local paths, the same kinds of values the FaaSr
@@ -68,7 +68,7 @@ class InputError(Exception):
     pass
 
 
-def upstream_dirs(spec: dict, node: str, run: Path) -> list[str]:
+def upstream_dirs(spec: dict, node: str, session: Path) -> list[str]:
     """Ancestors' test_output dirs, nearest first (BFS over reverse edges)."""
     parents: dict[str, list[str]] = {}
     for e in spec.get("edges") or []:
@@ -83,7 +83,7 @@ def upstream_dirs(spec: dict, node: str, run: Path) -> list[str]:
                     order.append(p)
                     nxt.append(p)
         frontier = nxt
-    return [str(run / "functions" / p / "test_output") for p in order]
+    return [str(session / "functions" / p / "test_output") for p in order]
 
 
 def _declared_deps(deps_file: Path) -> list[str]:
@@ -209,10 +209,10 @@ def plain_call(spec: dict, node_name: str, rank: int, node_dir: Path, dirs: list
     return call, warnings, empty_external, missing
 
 
-def _run_plain(run: Path, spec: dict, node: dict, node_dir: Path, deps_file: Path, strict: bool,
+def _run_plain(session: Path, spec: dict, node: dict, node_dir: Path, deps_file: Path, strict: bool,
                timeout: int, result: dict, finish) -> dict:
     name = node["name"]
-    upstream = upstream_dirs(spec, name, run)
+    upstream = upstream_dirs(spec, name, session)
     dirs = [node_dir / "test_output", node_dir / "test_data"] + [Path(d) for d in upstream]
     cmd = _uv_cmd(deps_file, with_deps=strict)
     max_rank = max(1, int(node.get("rank") or 1))
@@ -276,8 +276,8 @@ def _run_plain(run: Path, spec: dict, node: dict, node_dir: Path, deps_file: Pat
     return finish(tail)
 
 
-def run_stubtest(run: Path, node_name: str, mode: str | None = None, timeout: int = 60) -> dict:
-    state_path = run / "state.json"
+def run_stubtest(session: Path, node_name: str, mode: str | None = None, timeout: int = 60) -> dict:
+    state_path = session / "state.json"
     if not state_path.exists():
         raise InputError(f"{state_path} not found")
     state = json.loads(state_path.read_text())
@@ -289,7 +289,7 @@ def run_stubtest(run: Path, node_name: str, mode: str | None = None, timeout: in
     if node is None:
         raise InputError(f"node {node_name!r} is not in the session's spec")
     strict = mode == "strict"
-    node_dir = run / "functions" / node_name
+    node_dir = session / "functions" / node_name
     impl = node_dir / f"{node_name}.py"
     deps_file = node_dir / f"{node_name}.deps.txt"
     log_path = node_dir / "stubtest.log"
@@ -304,26 +304,29 @@ def run_stubtest(run: Path, node_name: str, mode: str | None = None, timeout: in
         return result
 
     if not impl.exists():
-        return finish(f"{impl.relative_to(run)} does not exist")
+        return finish(f"{impl.relative_to(session)} does not exist")
     code = impl.read_text()
     if not PC.is_plain(code):
         return finish(NOT_PLAIN.format(node=node_name, problems="\n".join(
             f"- {p}" for p in PC.plain_problems(code))))
     result.update(harness="plain", returns=[], empty_external_inputs=[], missing_inputs=[])
-    return _run_plain(run, spec, node, node_dir, deps_file, strict, timeout, result, finish)
+    return _run_plain(session, spec, node, node_dir, deps_file, strict, timeout, result, finish)
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="stubtest.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     sp = sub.add_parser("run")
-    sp.add_argument("--run", required=True)
+    flag = sp.add_mutually_exclusive_group(required=True)  # as runstate.add_session_flag (no imports here)
+    flag.add_argument("--session", dest="session", metavar="SESSION",
+                      help="the /curate session: its id (.curate/sessions/<id>) or its folder")
+    flag.add_argument("--run", dest="session", help=argparse.SUPPRESS)  # its old name
     sp.add_argument("--node", required=True)
     sp.add_argument("--mode", choices=["strict", "parity"])
     sp.add_argument("--timeout", type=int, default=60)
     args = p.parse_args(argv)
     try:
-        result = run_stubtest(Path(args.run).resolve(), args.node, args.mode, args.timeout)
+        result = run_stubtest(Path(args.session).resolve(), args.node, args.mode, args.timeout)
     except (InputError, OSError, json.JSONDecodeError) as e:
         print(json.dumps({"ok": False, "error": str(e)}))
         return 2

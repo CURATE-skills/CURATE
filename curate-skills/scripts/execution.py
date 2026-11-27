@@ -58,7 +58,7 @@ def stale_draft(s: dict) -> str | None:
     from runstate import spec_hash  # not spec.py: that would pull spec's whole import tree in
     if s["draft_spec_hash"] != spec_hash(s.get("spec")):
         return (f"the workflow draft was built from an earlier version of the spec; run /curate-skills:curate-emit "
-                f"--run {s.get('run_id')} again")
+                f"--session {s.get('run_id')} again")
     return None
 
 

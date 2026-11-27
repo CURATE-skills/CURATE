@@ -124,7 +124,7 @@ def test_running_then_success(launched, monkeypatch, capsys):
     # finalize and Gate 5 work from it
     assert S.require_problems(S.load_state(launched), "finalize") == []
     assert catalog.deployed_run_problem(s) is None
-    md = ok(S, ["show", "--run", str(launched), "--gate", "5"], capsys)["markdown"]
+    md = ok(S, ["show", "--session", str(launched), "--gate", "5"], capsys)["markdown"]
     assert f"**Pegasus run** `{s['pegasus']['name']}` on this machine: success — 11/11 jobs done, DAGMan exit 0" in md
     assert f"- Results in `{outdir}/`: `results/word_count_1.json`, `results/word_count_2.json`" in md
     assert f"- Full Pegasus work folder: `{work}/`" in md and "- Image: `docker:///python:3.12-slim`" in md
@@ -151,7 +151,7 @@ def test_failure_stops_and_blocks_finalize(launched, monkeypatch):
     assert out["result"] == "failure" and not out["ok"] and out["stage"] == "stopped"
     assert out["lines"][-1].startswith("✗ workflow failed: step shuffle failed; DAGMan exit 1; missing outputs: ")
     s = state(launched)
-    assert out["recheck_command"] == f"/curate-skills:curate-monitor --run {s['run_id']}"
+    assert out["recheck_command"] == f"/curate-skills:curate-monitor --run {s['execution']['reference']}"
     assert s["stopped_from"] == "monitor" and s["monitor"]["failed"] == ["shuffle"]
     assert "pegasus-analyzer" in (Path(state(launched)["execution"]["dir"]) / "monitor-report.md").read_text()
     s["stage"] = "finalize"
@@ -163,7 +163,7 @@ def test_timeout_then_recheck(launched, monkeypatch, capsys):
     out = poll(launched, Host([st("running", running=["generate_text"])]), monkeypatch, minutes="0.5")
     assert out["result"] == "timeout" and out["stage"] == "stopped"
     assert out["lines"][-1] == "… not finished after 0.5 min (still running under DAGMan)"
-    ok(S, ["begin", "--run", str(launched), "--stage", "monitor"], capsys)  # the re-check
+    ok(S, ["begin", "--session", str(launched), "--stage", "monitor"], capsys)  # the re-check
     out = poll(launched, Host([ALL], collect=report()), monkeypatch)
     assert out["result"] == "success" and out["rechecked"] == "timeout" and out["stage"] == "finalize"
     assert state(launched)["history"][-1]["text"].endswith("(re-checked after timeout)")

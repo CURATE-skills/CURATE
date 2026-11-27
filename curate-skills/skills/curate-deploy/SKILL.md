@@ -1,7 +1,7 @@
 ---
 name: curate-deploy
 description: CURATE deploy stage — put a Gate 4-approved bundle on FaaSr (GitHub Actions) under its own per-run name, asking the user before each of the four steps, or (Gate 4 "Approve & run on Pegasus") prepare and submit it to Pegasus/HTCondor, asking before each step; also lists this project's FaaSr deployments (--list) and removes one run's deployment (--teardown). Run it by name; /curate runs it after Gate 4.
-argument-hint: "--run <run_id> [--overwrite-own-deploy] | --list | --teardown --run <run_id>"
+argument-hint: "--run <workflow-id>/<run-id> [--overwrite-own-deploy] | --list | --teardown --run <workflow-id>/<run-id>"
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*)
 ---
@@ -20,7 +20,7 @@ Arguments: `$ARGUMENTS`
 
 - **`--list`**: `deploy.py list`; print its `markdown` exactly and stop. It only reads this
   project's runs.
-- **`--teardown --run <run_id>`** (find the run as in 1; do not run `spec.py begin`):
+- **`--teardown --run <workflow-id>/<run-id>`** (find the run as in 1; do not run `spec.py begin`):
   1. `deploy.py teardown --run <run>` (deletes nothing). Print its `summary` exactly. If `ok` is
      false without `needs_confirmation`, show the `error` / `problems` exactly and stop.
   2. Ask once with AskUserQuestion — question `Tear down <deploy_name>? <repo_files> deploy files,
@@ -42,10 +42,10 @@ Arguments: `$ARGUMENTS`
 
 ## 1. Find the run
 
-`--run <run_id>` (a session id, or a run's `<workflow-id>/<run-id>`): `spec.py
-runs` lists the runs in this project; use the matching `run` path. Without it, ask for `--run`. To
-deploy an approved version again, start a new run of it:
-`/curate-skills:curate --start-at deploy --workflow <workflow-id>` (or `--from-run <run_id>`).
+`--run <workflow-id>/<run-id>` (a run id works too; a session id stands for that session's current
+run): `spec.py runs` lists the runs in this project as `runs`; use the matching `run` path as `<run>`.
+Without it, ask for `--run`. To deploy an approved version again, start a new run of it:
+`/curate-skills:curate --start-at deploy --workflow <workflow-id>` (or `--from-run <session_id>`).
 
 ## 2. Begin
 

@@ -135,20 +135,20 @@ def test_set_name_checks_the_catalog_and_records_lineage(make_run, capsys):
     s = json.loads((run / "state.json").read_text())
     cat = C.Catalog(Path(s["catalog_dir"]))
     C.save_workflow(cat, e2(), workflow_id="mapreduce-word-count-v1")
-    code, out = call(S, ["set-name", "--run", str(run), "Bad Name"], capsys)
+    code, out = call(S, ["set-name", "--session", str(run), "Bad Name"], capsys)
     assert code == 2 and "lower-case" in out["error"]
-    code, out = call(S, ["set-name", "--run", str(run), "mapreduce-word-count"], capsys)
+    code, out = call(S, ["set-name", "--session", str(run), "mapreduce-word-count"], capsys)
     assert code == 1 and out["needs_choice"] and out["taken"]["versions"] == [1]
     assert json.loads((run / "state.json").read_text()).get("workflow_name") is None
-    code, out = call(S, ["set-name", "--run", str(run), "mapreduce-word-count", "--version-of", "other-v2"], capsys)
+    code, out = call(S, ["set-name", "--session", str(run), "mapreduce-word-count", "--version-of", "other-v2"], capsys)
     assert code == 2 and "is a version of other" in out["error"]
-    code, out = call(S, ["set-name", "--run", str(run), "mapreduce-word-count", "--new-version"], capsys)
+    code, out = call(S, ["set-name", "--session", str(run), "mapreduce-word-count", "--new-version"], capsys)
     assert code == 0 and out["lineage"] == {"new_version_of": "mapreduce-word-count"}
-    code, out = call(S, ["set-name", "--run", str(run), "fresh-name"], capsys)
+    code, out = call(S, ["set-name", "--session", str(run), "fresh-name"], capsys)
     assert code == 0 and out["taken"] is False
     st = json.loads((run / "state.json").read_text())
     assert st["workflow_name"] == "fresh-name" and st["workflow_lineage"] is None  # the lineage was about another name
-    code, out = call(S, ["set-name", "--run", str(run), "mapreduce-word-count"], capsys)
+    code, out = call(S, ["set-name", "--session", str(run), "mapreduce-word-count"], capsys)
     assert code == 1 and out["needs_choice"]
 
 

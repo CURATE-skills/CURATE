@@ -85,7 +85,7 @@ def test_search_nodes_cli(tmp_path, capsys):
     run.mkdir()
     spec = WorkflowSpec(name="wc", nodes=[fn("reduce_counts", "sum grouped counts", code="")])
     (run / "state.json").write_text(json.dumps({"skeleton_draft": {"spec": json.loads(spec.model_dump_json())}}))
-    assert catalog.main(["search-nodes", "--run", str(run), "--catalog-dir", str(tmp_path / "cat")]) == 0
+    assert catalog.main(["search-nodes", "--session", str(run), "--catalog-dir", str(tmp_path / "cat")]) == 0
     out = json.loads(capsys.readouterr().out)
     hit = out["nodes"]["reduce_counts"]["hits"][0]
     assert hit["name"] == "reduce_counts" and hit["line"].startswith(f"[{hit['id']}] reduce_counts:")
@@ -189,7 +189,7 @@ def test_publishing_then_saving_gives_the_same_versions(tmp_path, capsys):
     cat_dir = tmp_path / "cat"
     run1, s1 = _approved_run(tmp_path, "r1", _e2())
     assert s1["workflow_id"] == "mapreduce-word-count-v1" and Path(s1["version_dir"]).is_dir()
-    assert catalog.main(["save-workflow", "--run", str(run1), "--catalog-dir", str(cat_dir)]) == 0
+    assert catalog.main(["save-workflow", "--session", str(run1), "--catalog-dir", str(cat_dir)]) == 0
     saved = json.loads(capsys.readouterr().out)
     assert (saved["workflow_id"], saved["version"]) == (s1["workflow_id"], s1["workflow_version"])
     # an identical generation: Gate 4 asks; dropping it reuses v1, and saving stores nothing new
@@ -200,13 +200,13 @@ def test_publishing_then_saving_gives_the_same_versions(tmp_path, capsys):
     run3, s3 = _approved_run(tmp_path, "r3", _e2(), on_duplicate="drop", new_version_of="mapreduce-word-count")
     assert s3["workflow_id"] == "mapreduce-word-count-v1" and s3["version_reused"]
     assert not (Path(s1["version_dir"]).parent / "mapreduce-word-count-v2").exists()
-    assert catalog.main(["save-workflow", "--run", str(run3), "--catalog-dir", str(cat_dir)]) == 0
+    assert catalog.main(["save-workflow", "--session", str(run3), "--catalog-dir", str(cat_dir)]) == 0
     dropped = json.loads(capsys.readouterr().out)
     assert dropped["workflow_id"] == "mapreduce-word-count-v1" and dropped["stored"] is False
     # keeping it makes v2, in the project and then in the catalog
     run4, s4 = _approved_run(tmp_path, "r4", _e2(), on_duplicate="keep", new_version_of="mapreduce-word-count")
     assert s4["workflow_id"] == "mapreduce-word-count-v2"
-    assert catalog.main(["save-workflow", "--run", str(run4), "--catalog-dir", str(cat_dir)]) == 0
+    assert catalog.main(["save-workflow", "--session", str(run4), "--catalog-dir", str(cat_dir)]) == 0
     kept = json.loads(capsys.readouterr().out)
     assert (kept["workflow_id"], kept["version"], kept["stored"]) == ("mapreduce-word-count-v2", 2, True)
     # a version already in the catalog counts when numbering the next one (also from another project)
@@ -396,7 +396,7 @@ def test_dropping_a_duplicate_only_in_the_catalog_copies_that_version(tmp_path, 
     run1, s1 = _approved_run(tmp_path / "a", "r1", _e2())
     if stored_folder:
         (Path(s1["version_dir"]) / "runs" / "x").mkdir(parents=True)
-        assert catalog.main(["save-workflow", "--run", str(run1), "--catalog-dir", str(cat_dir)]) == 0
+        assert catalog.main(["save-workflow", "--session", str(run1), "--catalog-dir", str(cat_dir)]) == 0
         out = json.loads(capsys.readouterr().out)
         assert Path(out["version_folder"]) == cat_dir / "versions" / "mapreduce-word-count-v1"
         assert not (cat_dir / "versions" / "mapreduce-word-count-v1" / "runs").exists()
@@ -422,7 +422,7 @@ def test_a_tampered_catalog_copy_is_not_used(tmp_path, capsys):
     import spec as S
     cat_dir = tmp_path / "cat"
     run1, _ = _approved_run(tmp_path / "a", "r1", _e2())
-    assert catalog.main(["save-workflow", "--run", str(run1), "--catalog-dir", str(cat_dir)]) == 0
+    assert catalog.main(["save-workflow", "--session", str(run1), "--catalog-dir", str(cat_dir)]) == 0
     capsys.readouterr()
     f = cat_dir / "versions" / "mapreduce-word-count-v1" / "functions" / "map.py"
     f.chmod(0o644)

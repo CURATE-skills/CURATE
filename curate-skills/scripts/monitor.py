@@ -46,6 +46,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import deploy as D  # noqa: E402
 import envfile  # noqa: E402
 import leakcheck  # noqa: E402
+from runstate import RUN_HELP  # noqa: E402
 from vendor.faasr_runtime.artifacts import build_artifact_list  # noqa: E402
 
 FAILED_RX = re.compile(r"\[[\d\.]+?\] \[ERROR\]")  # vendored faasr_function.FaaSrFunction.failed_regex
@@ -614,7 +615,7 @@ def poll(run: str, chunk: int | None = None, report_only: bool = False, minutes=
            **({"rechecked": recheck} if recheck else {}),
            **({"settings_changed": settings_changed} if settings_changed else {})}
     if result in ("timeout", "failure"):
-        out.update(resume_command=resume, recheck_command=f"/curate-skills:curate-monitor --run {runstate.handle(s)}")
+        out.update(resume_command=resume, recheck_command=f"/curate-skills:curate-monitor {runstate.flag(s, 'curate-monitor')}")
     if not record:
         out["report"] = report
         return out
@@ -762,7 +763,7 @@ def main(argv=None, opener=None, s3_factory=None, clock=time.monotonic, sleep=ti
     p = argparse.ArgumentParser(prog="monitor.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     q = sub.add_parser("poll", help="poll the run's invocation (read-only), within a time budget")
-    q.add_argument("--run", required=True)
+    q.add_argument("--run", required=True, help=RUN_HELP)
     q.add_argument("--chunk-seconds", "--budget", dest="chunk", type=int,
                    help=f"poll up to this long, save progress, return (default {DEFAULT_CHUNK}; at most "
                         f"{MAX_CALL_SECONDS})")
@@ -770,17 +771,17 @@ def main(argv=None, opener=None, s3_factory=None, clock=time.monotonic, sleep=ti
     q.add_argument("--minutes", help=f"total monitoring minutes (default {DEFAULT_MINUTES}; pinned per run)")
     q.add_argument("--interval", help=f"seconds between polls (default {DEFAULT_INTERVAL})")
     q.add_argument("--config-minutes", help="plugin setting value; empty = unset")
-    sub.add_parser("status").add_argument("--run", required=True)
+    sub.add_parser("status").add_argument("--run", required=True, help=RUN_HELP)
     q = sub.add_parser("download-outputs", help="copy the declared outputs from S3 to a local folder (read-only)")
-    q.add_argument("--run", required=True)
+    q.add_argument("--run", required=True, help=RUN_HELP)
     q.add_argument("--to", required=True, help="an empty folder outside the run")
     q = sub.add_parser("accept-unconfirmed", help="the user accepted runs matched by time only (Gate 5)")
-    q.add_argument("--run", required=True)
+    q.add_argument("--run", required=True, help=RUN_HELP)
     q.add_argument("--confirmed", action="store_true")
     args = p.parse_args(argv)
-    if getattr(args, "run", None):  # an id, <workflow-id>/<run-id> or a folder
-        import runstate
-        args.run = str(runstate.resolve_run(args.run))
+    import runstate  # --run: <workflow-id>/<run-id>, a run id or folder; a session: its current run
+    if runstate.resolve_args(args, "run", note=True):
+        return 2
     if args.cmd in ("poll", "download-outputs") and _is_pegasus(args.run):
         return _pegasus_main(args, clock, sleep)
     envfile.load()  # ~/.config/curate/.env fills deploy variables the environment leaves unset

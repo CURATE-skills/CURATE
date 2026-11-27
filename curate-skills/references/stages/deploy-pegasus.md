@@ -4,6 +4,10 @@ Paths below are relative to `<plugin>`; `spec.py …`, `pegasus_deploy.py …` a
 
 Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
 
+`<run>` is the run's `<workflow-id>/<run-id>`: for a session that reached this stage, `spec.py status
+--session <session>` shows it as `reference`; a run started with `--start-at deploy` is its own. Every
+command below takes it as `--run <run>` (spec.py too: it acts on the session the run belongs to).
+
 Precondition: `spec.py begin --run <run> --stage deploy` returned `ok` and `spec.py status --run
 <run>` shows `deploy_choice` `pegasus`.
 
@@ -79,7 +83,7 @@ to both calls. It removes only what that step itself logged; anything else stays
 ## 4. Stopping
 
 `spec.py set-stage --run <run> --stage stopped`; tell the user its `resume_command` and that
-`/curate-skills:curate-deploy --run <run_id>` continues with the next unfinished step. Nothing is
+`/curate-skills:curate-deploy --run <workflow-id>/<run-id>` continues with the next unfinished step. Nothing is
 undone.
 
 ## 5. Done

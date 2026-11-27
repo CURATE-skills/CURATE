@@ -159,7 +159,7 @@ def test_import_honours_init_settings(imp):
 
 def test_review_import_can_be_resumed_at_its_gate(imp, capsys):
     code, out, run = imp("generate", FIX / "spec-resolved.json", "--review")
-    out = ok(S, ["begin", "--run", str(run), "--stage", "resolve"], capsys)
+    out = ok(S, ["begin", "--session", str(run), "--stage", "resolve"], capsys)
     assert out["mode"] == "resume" and out["stage"] == "gate2"
 
 
@@ -183,10 +183,10 @@ def test_generate_inline_code_labels_match_what_happens(imp, capsys, mode, sourc
     assert code == 0 and sorted(out["inline_code"]) == sorted(n["name"] for n in nodes)
     assert out["existing_code"] == mode and {n["source"] for n in nodes} == {source}
     assert all(bool(n["code"]) is (mode != "ignore") for n in nodes)
-    built = ok(scratch, ["build", "--run", str(run)], capsys)
+    built = ok(scratch, ["build", "--session", str(run)], capsys)
     # keep → no node is generated (no subagents); rewrite/ignore → every node gets a subagent
     assert all(n["generate"] is (mode != "keep") for n in built["nodes"])
-    md = ok(S, ["show", "--run", str(run), "--gate", "3"], capsys)["markdown"]
+    md = ok(S, ["show", "--session", str(run), "--gate", "3"], capsys)["markdown"]
     assert f"\nmap  {tag} · " in md and "[import]" not in md
     if mode == "rewrite":
         assert "seeded from import `map`" in (run / "functions" / "map" / "spec.md").read_text()

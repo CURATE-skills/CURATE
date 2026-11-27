@@ -123,11 +123,11 @@ EXISTING_CODE_OPTIONS = {
 
 # ── state I/O ────────────────────────────────────────────────────────────────
 
-def load_state(run: str | Path) -> dict:
-    path = Path(run) / "state.json"
+def load_state(session: str | Path) -> dict:
+    path = Path(session) / "state.json"
     if not path.exists():
         raise InputError(f"{path} not found — is --run a session (or run) folder or id?")
-    state = runstate.load(run)  # a session's current execution records included
+    state = runstate.load(session)  # a session's current execution records included
     if state.get("schema_version", 1) < SCHEMA_VERSION:
         raise InputError(f"{path} was made by curate-skills v1 (schema_version "
                          f"{state.get('schema_version', 1)}); continue it with the v1 plugin "
@@ -135,8 +135,8 @@ def load_state(run: str | Path) -> dict:
     return state
 
 
-def save_state(run: str | Path, state: dict) -> None:
-    runstate.save(run, state)
+def save_state(session: str | Path, state: dict) -> None:
+    runstate.save(session, state)
 
 
 def spec_of(data: Optional[dict]) -> Optional[WorkflowSpec]:
@@ -161,8 +161,8 @@ def _now() -> str:
     return _dt.datetime.now().isoformat(timespec="seconds")
 
 
-def snapshot_history(run: Path, state: dict, label: str) -> None:
-    hist = run / "history"
+def snapshot_history(session: Path, state: dict, label: str) -> None:
+    hist = session / "history"
     hist.mkdir(exist_ok=True)
     n = len(list(hist.glob("*.json"))) + 1
     (hist / f"{n:03d}-{label}.json").write_text(json.dumps(state, indent=2) + "\n")
@@ -254,15 +254,15 @@ def _new_run(args, request: str, run_id_hint: str = "") -> tuple[Path, dict, dic
     run_id = ids.new_run_id()
     while ids.session_dir(project, run_id) or (ids.sessions_root(project) / run_id).exists():
         run_id = ids.new_run_id()
-    run = ids.sessions_root(project) / run_id
-    (run / "work").mkdir(parents=True)
+    session = ids.sessions_root(project) / run_id
+    (session / "work").mkdir(parents=True)
 
     state = {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
         "created": _now(),
         "project_dir": str(project),
-        "run_dir": str(run),
+        "run_dir": str(session),
         "catalog_dir": str(catalog_dir),
         "mga_max_retries": retries,
         "stubtest_mode": mode,
@@ -294,8 +294,9 @@ def _new_run(args, request: str, run_id_hint: str = "") -> tuple[Path, dict, dic
         "stopped_from": None,
         "begun": None,
     }
-    save_state(run, state)
-    return run, state, {"ok": True, "run": str(run), "run_id": run_id,
+    save_state(session, state)
+    # "session"/"session_id"; "run"/"run_id" are their old names, kept for old callers
+    return session, state, {"ok": True, "session": str(session), "session_id": run_id, "run": str(session), "run_id": run_id,
             "settings": {
                 "catalog_dir": {"value": str(catalog_dir), "source": catalog_source},
                 "mga_max_retries": {"value": retries, "source": retries_source},
@@ -362,7 +363,7 @@ def cmd_runs(args) -> dict:
 
 
 def cmd_status(args) -> dict:
-    s = load_state(args.run)
+    s = load_state(args.session)
     spec = spec_of(s.get("spec"))
     return {"ok": True, "run_id": s["run_id"], "kind": "execution" if runstate.is_execution(s) else "generation",
             "reference": s.get("reference") or (s.get("execution") or {}).get("reference"),
@@ -450,7 +451,7 @@ def candidates_text(summary: list[dict]) -> str:
 
 
 def cmd_prompt_context(args) -> dict:
-    s = load_state(args.run)
+    s = load_state(args.session)
     if args.stage == "skeleton":
         draft = s.get("skeleton_draft") or {}
         existing = spec_of(s.get("spec"))
@@ -743,8 +744,8 @@ def ancestors(spec: WorkflowSpec, node: str) -> list[str]:
 # ── skeleton / gate 1 ────────────────────────────────────────────────────────
 
 def cmd_skeleton(args) -> dict:
-    run = Path(args.run)
-    s = load_state(run)
+    session = Path(args.session)
+    s = load_state(session)
     draft = s.get("skeleton_draft") or {}
     last_good = draft.get("last_good")
     raw_path = Path(args.json)
@@ -758,12 +759,12 @@ def cmd_skeleton(args) -> dict:
         s["skeleton_draft"] = {"spec": last_good, "last_good": last_good, "raw": raw,
                                "parse_error": msg, "refinement": None}
         s["stage"] = "gate1" if last_good else "skeleton"
-        save_state(run, s)
+        save_state(session, s)
         return {"ok": False, "error": msg, "kept_previous": bool(last_good)}
     d = dump(spec)
     s["skeleton_draft"] = {"spec": d, "last_good": d, "raw": raw, "parse_error": None, "refinement": None}
     s["stage"] = "gate1"
-    save_state(run, s)
+    save_state(session, s)
     return {"ok": True, "nodes": [n.name for n in spec.nodes], "repairs": log}
 
 
@@ -915,8 +916,8 @@ def candidate_summary(n: FunctionSpec) -> dict:
 
 
 def cmd_apply_candidates(args) -> dict:
-    run = Path(args.run)
-    s = load_state(run)
+    session = Path(args.session)
+    s = load_state(session)
     spec = spec_of(s.get("spec"))
     if spec is None:
         raise InputError("no approved skeleton yet")
@@ -953,7 +954,7 @@ def cmd_apply_candidates(args) -> dict:
     s["repairs"] = log
     s["stage"] = "resolve"
     s["begun"] = None
-    save_state(run, s)
+    save_state(session, s)
     return {"ok": True, "candidates": [{k: c[k] for k in ("name", "source", "user_model_mode",
                                                           "origin_kind", "origin_name")} for c in summary],
             "notes": notes, "repairs": log}
@@ -987,8 +988,8 @@ def merge_resolved(resolved: WorkflowSpec, enriched_nodes: list[FunctionSpec]) -
 
 
 def cmd_merge_resolved(args) -> dict:
-    run = Path(args.run)
-    s = load_state(run)
+    session = Path(args.session)
+    s = load_state(session)
     enriched = spec_of(s.get("enriched_spec"))
     if enriched is None:
         raise InputError("no candidates applied yet (run apply-candidates)")
@@ -1016,7 +1017,7 @@ def cmd_merge_resolved(args) -> dict:
     s["spec_basis"] = spec_hash(s["enriched_spec"])
     s["repairs"] = (s.get("repairs") or []) + log
     s["stage"] = "gate2"
-    save_state(run, s)
+    save_state(session, s)
     problems = check_spec(spec)
     return {"ok": True, "repairs": log, "problems": problems,
             "errors": sum(p["severity"] == "error" for p in problems)}
@@ -1102,7 +1103,7 @@ def check_spec(spec: WorkflowSpec) -> list[dict]:
 
 
 def cmd_check(args) -> dict:
-    s = load_state(args.run)
+    s = load_state(args.session)
     spec = spec_of(s.get("spec"))
     if spec is None:
         raise InputError("no spec yet")
@@ -1112,7 +1113,7 @@ def cmd_check(args) -> dict:
 
 
 def cmd_toposort(args) -> dict:
-    spec = spec_of(load_state(args.run).get("spec"))
+    spec = spec_of(load_state(args.session).get("spec"))
     if spec is None:
         raise InputError("no spec yet")
     return {"ok": True, "order": topo_order(spec),
@@ -1127,8 +1128,8 @@ def _record(s: dict, gate, decision: str, text: str = "", structural=None) -> No
 
 
 def cmd_approve(args) -> dict:
-    run = Path(args.run)
-    s = load_state(run)
+    session = Path(args.session)
+    s = load_state(session)
     g = args.gate
     if runstate.is_execution(s):
         raise InputError(f"{runstate.handle(s)} is a run: it has no Gates 1-4 to approve")
@@ -1162,7 +1163,7 @@ def cmd_approve(args) -> dict:
             raise InputError("validation has not passed; cannot approve Gate 4")
         if v.get("spec_hash") != spec_hash(s.get("spec")):
             raise InputError("the bundle was built from a different version of the spec; run "
-                             f"/{PLUGIN}:curate-emit --run {s['run_id']} again before approving Gate 4")
+                             f"/{PLUGIN}:curate-emit --session {s['run_id']} again before approving Gate 4")
         choice = getattr(args, "deploy", None) or "no"
         image = getattr(args, "image", None)
         if image and choice != "pegasus":
@@ -1170,7 +1171,7 @@ def cmd_approve(args) -> dict:
         peg_rec = pegasus_choice(s, image, IMAGE_FROM_GATE4) if choice == "pegasus" else None
         import execution as X
         if not X.is_versioned(s):
-            raise InputError(f"this session has no workflow draft; run /{PLUGIN}:curate-emit --run {s['run_id']} again "
+            raise InputError(f"this session has no workflow draft; run /{PLUGIN}:curate-emit --session {s['run_id']} again "
                              "before approving Gate 4")
         if choice == "yes":  # refuse before publishing anything if FaaSr cannot take it
             faasr_v = v.get("faasr") or {}
@@ -1178,11 +1179,11 @@ def cmd_approve(args) -> dict:
                 raise InputError(f"the FaaSr workflow built from the draft did not validate ({faasr_v.get('error')}); "
                                  "choose another target")
             try:
-                X.faasr_built(s, run)
+                X.faasr_built(s, session)
             except X.ExecutionError as e:
                 raise InputError(f"{e}; choose another target") from e
-        s.update(publish_version(s, run, getattr(args, "on_duplicate", None)))
-        s["execution"] = _start_execution(s, run, choice)
+        s.update(publish_version(s, session, getattr(args, "on_duplicate", None)))
+        s["execution"] = _start_execution(s, session, choice)
         # The bundle its execution builds is checked at deploy by its manifest (execution.check).
         s.update(feedback=None, deploy_choice=choice, deploy=None,
                  stage="deploy" if choice in ("yes", "pegasus") else "finalize")
@@ -1194,8 +1195,8 @@ def cmd_approve(args) -> dict:
         s["history"][-1]["deploy"] = s["deploy_choice"]
         if (s.get("pegasus") or {}).get("image_choice"):
             s["history"][-1]["image"] = s["pegasus"]["image_choice"]
-    snapshot_history(run, s, f"gate{g}-approve")
-    save_state(run, s)
+    snapshot_history(session, s, f"gate{g}-approve")
+    save_state(session, s)
     out = {"ok": True, "stage": s["stage"]}
     if g == 4:
         spec = spec_of(s["spec"])
@@ -1209,19 +1210,19 @@ def cmd_approve(args) -> dict:
     return out
 
 
-def _project(s: dict, run: Path) -> Path:
-    return Path(s.get("project_dir") or run.parent.parent.parent)
+def _project(s: dict, session: Path) -> Path:
+    return Path(s.get("project_dir") or session.parent.parent.parent)
 
 
-def _name_taken(name: str, s: dict, run: Path) -> dict:
+def _name_taken(name: str, s: dict, session: Path) -> dict:
     import ids
     cat = catalog_mod.Catalog(Path(s["catalog_dir"]).expanduser())
     st = ids.name_status(name, cat)
-    local = sorted(ids.versions(name, project=_project(s, run)))
+    local = sorted(ids.versions(name, project=_project(s, session)))
     return {**st, "taken": st["taken"] or bool(local), "project_versions": local}
 
 
-def publish_version(s: dict, run: Path, on_duplicate: Optional[str]) -> dict:
+def publish_version(s: dict, session: Path, on_duplicate: Optional[str]) -> dict:
     """Gate 4 approval: publish the run's draft as the workflow's next version (ids.publish), and
     return the state fields that record it. Nothing is published when the approval is refused."""
     import ids
@@ -1233,18 +1234,18 @@ def publish_version(s: dict, run: Path, on_duplicate: Optional[str]) -> dict:
         problems = s.get("draft_problems") or []
         raise InputError("there is no workflow draft to approve"
                          + (": " + "; ".join(problems) if problems else
-                            f"; run /{PLUGIN}:curate-emit --run {s['run_id']} again"))
+                            f"; run /{PLUGIN}:curate-emit --session {s['run_id']} again"))
     spec = spec_of(s["spec"])
     name = s.get("workflow_name") or ids.slug(spec.name)
     if not s.get("workflow_name"):
-        taken = _name_taken(name, s, run)
+        taken = _name_taken(name, s, session)
         if taken["taken"] and _lineage_name(s.get("workflow_lineage"), s) != name:
             raise InputError(f"the workflow name {name!r} is already used (versions "
                              f"{taken['versions'] or taken['project_versions'] or taken['legacy_entries']}) and this "
                              "run is not a new version of it: ask the user for another name, or whether this is a "
                              f"new version of {name}, and record it with spec.py set-name")
     cat = catalog_mod.Catalog(Path(s["catalog_dir"]).expanduser())
-    plan = ids.plan_publish(draft, name, _project(s, run), catalog=cat)
+    plan = ids.plan_publish(draft, name, _project(s, session), catalog=cat)
     approved = plan["draft_hash"]
     if plan["duplicates"] and on_duplicate not in ("keep", "drop"):
         raise InputError(f"this workflow is identical to {', '.join(plan['duplicates'])}: ask the user whether to keep "
@@ -1252,7 +1253,7 @@ def publish_version(s: dict, run: Path, on_duplicate: Optional[str]) -> dict:
                          "version (--on-duplicate drop)")
     if plan["duplicates"] and on_duplicate == "drop":
         wid = plan["duplicates"][-1]
-        vdir = ids.version_dir(_project(s, run), wid)
+        vdir = ids.version_dir(_project(s, session), wid)
         if not (vdir / "workflow.yml").is_file():  # only in the catalog: bring that exact version here
             import tempfile
             entry = next((e for e in cat.workflows.values() if e.workflow_id == wid), None)
@@ -1262,14 +1263,14 @@ def publish_version(s: dict, run: Path, on_duplicate: Optional[str]) -> dict:
                     raise InputError(f"the identical version {wid} cannot be copied from the catalog; keep both "
                                      "(--on-duplicate keep)")
                 try:
-                    ids.copy_version(src, _project(s, run), wid, entry.content_hash or plan["content_hash"])
+                    ids.copy_version(src, _project(s, session), wid, entry.content_hash or plan["content_hash"])
                 except ids.IdError as e:
                     raise InputError(f"{e}; keep both (--on-duplicate keep)") from e
         return {"workflow_name": name, "workflow_id": wid, "workflow_version": ids.parse_workflow_id(wid)[1],
                 "draft_hash": approved, "version_dir": str(vdir), "version_reused": True,
                 "version_hash": ids.version_hash(vdir), "workflow_content_hash": plan["content_hash"]}
     try:
-        pub = ids.publish(draft, name, _project(s, run), plan["version"], approved, approved_record(s, name))
+        pub = ids.publish(draft, name, _project(s, session), plan["version"], approved, approved_record(s, name))
     except ids.IdError as e:
         raise InputError(str(e)) from e
     return {"workflow_name": name, "workflow_id": pub["workflow_id"], "workflow_version": pub["version"],
@@ -1298,15 +1299,15 @@ def _lineage_name(lineage: Optional[dict], s: dict) -> Optional[str]:
     return s.get("workflow_name")
 
 
-def _start_execution(s: dict, run: Path, target: str) -> Optional[dict]:
+def _start_execution(s: dict, session: Path, target: str) -> Optional[dict]:
     """After Gate 4 (or "Start this run?") chose a target: FaaSr's bundle is built now, from the
     approved version; a Pegasus execution is opened (pegasus_deploy.py prepare builds its folder)."""
     import execution as X
     try:
         if target == "yes":
-            return X.build_faasr(s, run)
+            return X.build_faasr(s, session)
         if target == "pegasus":
-            return X.new_execution(s, run, "pegasus")
+            return X.new_execution(s, session, "pegasus")
     except X.ExecutionError as e:
         raise InputError(str(e)) from e
     return None
@@ -1317,14 +1318,14 @@ def cmd_set_name(args) -> dict:
     A taken name needs --new-version (the user said this is a new version of that workflow) or a
     --version-of lineage (a reused catalog workflow)."""
     import ids
-    run = Path(args.run)
-    s = load_state(run)
+    session = Path(args.session)
+    s = load_state(session)
     name = args.name
     try:
         ids.check_name(name)
     except ids.IdError as e:
         raise InputError(str(e)) from e
-    taken = _name_taken(name, s, run)
+    taken = _name_taken(name, s, session)
     lineage = s.get("workflow_lineage") if _lineage_name(s.get("workflow_lineage"), s) == name else None
     if args.version_of:
         n, _ = ids.parse_workflow_id(args.version_of)
@@ -1338,7 +1339,7 @@ def cmd_set_name(args) -> dict:
                 "error": f"{name!r} is already used: ask the user for another name, or confirm this is a new "
                          f"version of {name} (--new-version)"}
     s.update(workflow_name=name, workflow_lineage=lineage if taken["taken"] else None)
-    save_state(run, s)
+    save_state(session, s)
     return {"ok": True, "name": name, "taken": taken["taken"], "lineage": lineage}
 
 
@@ -1353,8 +1354,8 @@ def _bool(v: Optional[str]) -> Optional[bool]:
 
 
 def cmd_directive(args) -> dict:
-    run = Path(args.run)
-    s = load_state(run)
+    session = Path(args.session)
+    s = load_state(session)
     text = (args.text or "").strip()
     if not text:
         raise InputError("--text is empty")
@@ -1368,7 +1369,7 @@ def cmd_directive(args) -> dict:
         s["skeleton_draft"] = {**draft, "refinement": text}
         s["stage"] = "skeleton"
         _record(s, 1, "refine", text)
-        save_state(run, s)
+        save_state(session, s)
         return {"ok": True, "next_stage": "skeleton", "iteration": s["iteration"],
                 "cap_reached": False}
 
@@ -1405,8 +1406,8 @@ def cmd_directive(args) -> dict:
     if structural:
         s["skeleton_draft"] = None
     _record(s, g if g == "emit" else int(g), "revise", text, structural)
-    snapshot_history(run, s, f"gate{g}-revise")
-    save_state(run, s)
+    snapshot_history(session, s, f"gate{g}-revise")
+    save_state(session, s)
     return {"ok": True, "next_stage": s["stage"], "structural": structural,
             "iteration": s["iteration"], "max_iterations": s["max_iterations"],
             "cap_reached": False, "next_skill": next_skill(s)}
@@ -1415,8 +1416,8 @@ def cmd_directive(args) -> dict:
 def cmd_confirm_start(args) -> dict:
     """The user answered Yes to "Start this run?". For a run started at deploy, that answer is the
     deploy choice (the source's Gate 4 may predate the deploy option); it is recorded as such."""
-    run = Path(args.run)
-    s = load_state(run)
+    session = Path(args.session)
+    s = load_state(session)
     hist = s.get("history") or []
     first = hist[0] if hist else {}
     target = getattr(args, "deploy", None) or "yes"
@@ -1431,7 +1432,7 @@ def cmd_confirm_start(args) -> dict:
         raise InputError("--image only applies to --deploy pegasus")
     if target == "pegasus":
         s["pegasus"] = pegasus_choice(s, image, IMAGE_FROM_START)
-    s["execution"] = _start_execution(s, run, target)  # the target's bundle, from the approved version
+    s["execution"] = _start_execution(s, session, target)  # the target's bundle, from the approved version
     s["deploy_choice"] = target
     where = " (run on Pegasus)" if target == "pegasus" else ""
     _record(s, 4, "deploy-confirmed",
@@ -1440,30 +1441,30 @@ def cmd_confirm_start(args) -> dict:
     s["history"][-1]["deploy"] = target
     if (s.get("pegasus") or {}).get("image_choice"):
         s["history"][-1]["image"] = s["pegasus"]["image_choice"]
-    save_state(run, s)
+    save_state(session, s)
     return {"ok": True, "recorded": "deploy_choice", "deploy_choice": target, "stage": s["stage"],
             "next_skill": next_skill(s)}
 
 
 def cmd_set_cap(args) -> dict:
-    run = Path(args.run)
-    s = load_state(run)
+    session = Path(args.session)
+    s = load_state(session)
     if args.max < 1:
         raise InputError("--max must be >= 1")
     s["max_iterations"] = args.max
-    save_state(run, s)
+    save_state(session, s)
     return {"ok": True, "max_iterations": args.max, "iteration": s["iteration"]}
 
 
 def cmd_set_stage(args) -> dict:
     """Low-level stage change (stop, and tests). Stages are normally moved by begin/approve."""
-    run = Path(args.run)
-    s = load_state(run)
+    session = Path(args.session)
+    s = load_state(session)
     if args.stage == "stopped" and s["stage"] != "stopped":
         s["stopped_from"] = s["stage"]
     s["stage"] = args.stage
     s["begun"] = None
-    save_state(run, s)
+    save_state(session, s)
     out = {"ok": True, "stage": args.stage, "next_skill": next_skill(s)}
     if args.stage == "stopped":
         out.update(resume_commands(s))
@@ -1609,24 +1610,24 @@ def cmd_import(args) -> dict:
         warnings.append("no sketch given: the request text was built from the spec's name and "
                         "description (pass --request-file to use your own)")
 
-    run, s, out = _new_run(args, request, run_id_hint=Path(src).stem)
+    session, s, out = _new_run(args, request, run_id_hint=Path(src).stem)
     try:
-        detail = _import_into(run, s, stage, src, data, args, warnings)
+        detail = _import_into(session, s, stage, src, data, args, warnings)
     except Exception:
-        shutil.rmtree(run, ignore_errors=True)
+        shutil.rmtree(session, ignore_errors=True)
         raise
-    s = load_state(run)
+    s = load_state(session)
     out.update(stage=s["stage"], next_skill=next_skill(s), warnings=warnings, **detail)
     return out
 
 
-def _import_into(run: Path, s: dict, stage: str, src: str, data, args, warnings: list[str]) -> dict:
+def _import_into(session: Path, s: dict, stage: str, src: str, data, args, warnings: list[str]) -> dict:
     ns = argparse.Namespace
     gate = IMPORT_PREV_GATE.get(stage)
     if stage == "skeleton":
         _record(s, 0, "imported", src)
         s["history"][-1]["sha256"] = _file_sha(src)
-        save_state(run, s)
+        save_state(session, s)
         return {}
 
     if stage in ("reuse", "resolve"):
@@ -1638,29 +1639,29 @@ def _import_into(run: Path, s: dict, stage: str, src: str, data, args, warnings:
             s.update(spec=dump(spec), spec_is_seed=True, stage="reuse")
             warnings.append("full WorkflowSpec imported as a seed for reuse (inputs/outputs kept)")
         else:
-            work = run / "work" / "skeleton.json"
+            work = session / "work" / "skeleton.json"
             work.write_text(json.dumps(data, indent=2))
-            res = cmd_skeleton(ns(run=str(run), json=str(work)))
+            res = cmd_skeleton(ns(session=str(session), json=str(work)))
             if not res["ok"]:
                 raise InputError(f"{src}: {res['error']}")
             if args.review:
                 return {"review": "gate1"}
-            cmd_approve(ns(run=str(run), gate=1))
-            s = load_state(run)
+            cmd_approve(ns(session=str(session), gate=1))
+            s = load_state(session)
         _record(s, 1, "imported", src)
         s["history"][-1]["sha256"] = _file_sha(src)
         s["begun"] = None
-        save_state(run, s)
+        save_state(session, s)
         if stage == "reuse":
             return {}
         if not args.candidates:
             raise InputError("starting at resolve needs --candidates candidates.json "
                              "(the reuse decisions, as written by curate-reuse)")
-        res = cmd_apply_candidates(ns(run=str(run), json=args.candidates, strict=True))
-        s = load_state(run)
+        res = cmd_apply_candidates(ns(session=str(session), json=args.candidates, strict=True))
+        s = load_state(session)
         _record(s, "reuse", "imported", args.candidates)
         s["history"][-1]["sha256"] = _file_sha(args.candidates)
-        save_state(run, s)
+        save_state(session, s)
         return {"candidates": res["candidates"]}
 
     # generate / emit: a full spec, optionally with function files.
@@ -1678,9 +1679,9 @@ def _import_into(run: Path, s: dict, stage: str, src: str, data, args, warnings:
     s["stage"] = f"gate{gate}"
     _record(s, gate, "imported", src)
     s["history"][-1]["sha256"] = _file_sha(src)
-    save_state(run, s)
+    save_state(session, s)
     if not args.review:
-        cmd_approve(ns(run=str(run), gate=gate))
+        cmd_approve(ns(session=str(session), gate=gate))
     return {"functions_imported": found, "inline_code": inline,
             "existing_code": mode if found or inline else None}
 
@@ -1796,7 +1797,7 @@ def _start_from_run(args, at: str) -> dict:
     }
     if args.dry_run:
         return preview
-    run, s, out = _new_run(args, snap.get("user_request") or st.get("user_request") or spec.name,
+    session, s, out = _new_run(args, snap.get("user_request") or st.get("user_request") or spec.name,
                            run_id_hint=spec.name)
     s["user_models"] = snap.get("user_models") or []
     s["context_files"] = snap.get("context_files") or []
@@ -1814,7 +1815,7 @@ def _start_from_run(args, at: str) -> dict:
     if code_from:
         s["history"][-1].update(code_snapshot=code_from.name, existing_code=args.existing_code,
                                 code_sha256=hashlib.sha256(code_from.read_bytes()).hexdigest())
-    save_state(run, s)
+    save_state(session, s)
     return {**out, **preview, "stage": s["stage"], "next_skill": next_skill(s)}
 
 
@@ -2034,10 +2035,10 @@ def _import_args(args, at: str, from_file: str):
 def _start_via_import(args, at: str, from_file: str, kind: str, label: str) -> dict:
     if not args.dry_run:
         out = cmd_import(_import_args(args, at, from_file))
-        run = Path(out["run"])
-        s = load_state(run)
+        session = Path(out["run"])
+        s = load_state(session)
         s["history"][-1].update(source_kind=kind, source=label)
-        save_state(run, s)
+        save_state(session, s)
         spec = spec_of(s.get("spec"))
         return {**out, "source": {"kind": kind, "path": label}, "uses": from_file,
                 "workflow": spec.name if spec else None,
@@ -2208,7 +2209,7 @@ def _kind(s: dict) -> str:
 
 
 def _run_cmd(s: dict, name: str) -> str:
-    return f"/{skill_for(name)} --run {runstate.handle(s)}"
+    return f"/{skill_for(name)} {runstate.flag(s, skill_for(name))}"
 
 
 def _needs_generation(n: FunctionSpec) -> bool:
@@ -2275,7 +2276,7 @@ def require_problems(s: dict, name: str, env=None) -> list[str]:
             out.append(f"Gate 4 has not been approved for the current bundle — run {_run_cmd(s, 'emit')}")
         elif s.get("deploy_choice") not in ("yes", "pegasus") and hist[approvals[-1]].get("deploy") == "pending":
             out.append('the user has not confirmed starting this run yet ("Start this run?" → Yes, then '
-                       f"spec.py confirm-start --run {s['run_id']})")
+                       f"spec.py confirm-start {runstate.flag(s)})")
         elif s.get("deploy_choice") not in ("yes", "pegasus"):
             out.append("Gate 4 was approved without deploying; to deploy this version, start a run of it: "
                        f"/{PLUGIN}:curate --start-at deploy --workflow {s.get('workflow_id') or '<workflow-id>'}")
@@ -2346,17 +2347,17 @@ def _version_problems(s: dict) -> list[str]:
 
 
 def cmd_require(args) -> dict:
-    s = load_state(args.run)
+    s = load_state(args.session)
     problems = require_problems(s, args.stage)
     return {"ok": not problems, "stage": args.stage, "run_stage": s["stage"], "problems": problems,
             "next_skill": next_skill(s)}
 
 
 def cmd_next(args) -> dict:
-    s = load_state(args.run)
+    s = load_state(args.session)
     skill = next_skill(s)
     out = {"ok": True, "stage": s["stage"], "next_skill": skill,
-           "command": f"/{skill} --run {runstate.handle(s)}" if skill else None}
+           "command": f"/{skill} {runstate.flag(s, skill)}" if skill else None}
     if s["stage"] == "stopped":
         out.update(resume_commands(s))
     return out
@@ -2373,8 +2374,8 @@ def _clear_from(s: dict, name: str) -> list[str]:
 
 def cmd_begin(args) -> dict:
     """Start (or resume, or rewind to) a stage. Every stage skill calls this first."""
-    run = Path(args.run)
-    s = load_state(run)
+    session = Path(args.session)
+    s = load_state(session)
     name = args.stage
     target = STAGE_NAMES.index(name)
     cur = _current_index(s)
@@ -2388,7 +2389,8 @@ def cmd_begin(args) -> dict:
                          f"it: /{PLUGIN}:curate --start-at {name} --from-run <session_id>"}
 
     if cur < target:
-        here = f"/{next_skill(s) or skill_for(STAGE_NAMES[cur])} --run {runstate.handle(s)}"
+        skill = next_skill(s) or skill_for(STAGE_NAMES[cur])
+        here = f"/{skill} {runstate.flag(s, skill)}"
         if s["stage"].startswith("gate"):
             n = s["stage"][4:]
             how = f"it is waiting at Gate {n}. Approve Gate {n} first: {here}"
@@ -2448,15 +2450,15 @@ def cmd_begin(args) -> dict:
                 "error": "; ".join(problems)}
     s["begun"] = name
     if mode == "rewind":
-        snapshot_history(run, s, f"rewind-{name}")
-    save_state(run, s)
+        snapshot_history(session, s, f"rewind-{name}")
+    save_state(session, s)
     return {"ok": True, "mode": mode, "stage": s["stage"], "cleared": cleared,
             "iteration": s["iteration"], "next_skill": next_skill(s)}
 
 
 def cmd_end(args) -> dict:
-    run = Path(args.run)
-    s = load_state(run)
+    session = Path(args.session)
+    s = load_state(session)
     if args.stage != "generate":
         raise InputError("only the generate stage has an explicit end")
     spec = spec_of(s.get("spec"))
@@ -2466,7 +2468,7 @@ def cmd_end(args) -> dict:
         return {"ok": False, "pending": pending,
                 "error": f"function(s) {', '.join(pending)} have no final status yet; finish them first"}
     s["stage"] = "gate3"
-    save_state(run, s)
+    save_state(session, s)
     return {"ok": True, "stage": "gate3",
             "summary": {k: v.get("status") for k, v in mga.items()}}
 
@@ -2527,7 +2529,7 @@ def resume_commands(s: dict) -> dict:
     out = {"resume_command": f"/curate-skills:curate --resume {runstate.handle(s)}",
            "stopped_from": stopped_from}
     if i is not None and i < len(PIPELINE):
-        out["resume_stage_command"] = f"/{PLUGIN}:{PIPELINE[i][2]} --run {runstate.handle(s)}"
+        out["resume_stage_command"] = f"/{PLUGIN}:{PIPELINE[i][2]} {runstate.flag(s, PIPELINE[i][2])}"
     return out
 
 
@@ -2680,13 +2682,13 @@ def show_gate(s: dict, gate: int, detailed: bool = False) -> str:
 
 def deploy_plan(s: dict) -> list[str]:
     """Gate 4's "Deploy would write" (deploy.plan_lines: local, read-only)."""
-    run = s.get("run_dir")
-    if not run or not (s.get("draft_dir") or s.get("workflow_id")):
+    session = s.get("run_dir")
+    if not session or not (s.get("draft_dir") or s.get("workflow_id")):
         return ["- (no workflow draft yet)"]
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import deploy as D
-        return D.plan_lines(run)
+        return D.plan_lines(session)
     except Exception as e:  # noqa: BLE001 — informational; the deploy preflight checks everything
         return [f"- (could not work it out: {e})"]
 
@@ -2738,7 +2740,7 @@ def pegasus_choice(s: dict, image: str | None, source: str) -> dict | None:
 def cmd_pegasus_image(args) -> dict:
     """Read-only: check an image address for a Pegasus run (Gate 4's or "Start this run?"'s
     "different image" option) and show the Pegasus summary with it, package warnings included."""
-    s = load_state(args.run)
+    s = load_state(args.session)
     P = _pegasus()
     import images
     st, chk = _check_image(s, args.image)
@@ -2768,27 +2770,27 @@ def pegasus_lines(s: dict, detailed: bool = False) -> list[str]:
 
 def faasr_lines(s: dict) -> list[str]:
     """Gate 4's FaaSr summary: repo, branch, deploy name, inputs to provide (a count). Local only."""
-    run = s.get("run_dir")
+    session = s.get("run_dir")
     import execution as X
     advice = f"- deploying: {DEPLOY_ADVICE}"
-    if run and X.is_versioned(s):  # built in memory from the draft (or the approved version)
+    if session and X.is_versioned(s):  # built in memory from the draft (or the approved version)
         faasr_v = (s.get("validation") or {}).get("faasr") or {}
         if faasr_v.get("ok") is False and not X.stale_draft(s):  # emit's validation already refused it
             return ["**FaaSr (cloud)**: **cannot run on FaaSr:**"] + [f"- {p}" for p in faasr_v.get("problems")
                                                                         or [faasr_v.get("error")]]
         try:
-            n_in = len(X.faasr_built(s, run)["external_inputs"])
+            n_in = len(X.faasr_built(s, session)["external_inputs"])
         except X.ExecutionError as e:
             return ["**FaaSr (cloud)**: **cannot run on FaaSr:**"] + [f"- {p}" for p in e.problems]
     else:
         n_in = len(external_inputs(spec_of(s["spec"]))) if s.get("spec") else 0
     inputs = "- input files you must provide in S3: " + (f"{n_in} (listed in the full review)" if n_in else "none")
-    if not run or not X.is_versioned(s):
+    if not session or not X.is_versioned(s):
         return ["**FaaSr (cloud)**: (no workflow draft yet)", inputs, advice]
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import deploy as D
-        g = D.gate4_summary(run)
+        g = D.gate4_summary(session)
     except Exception as e:  # noqa: BLE001 — informational; the deploy preflight checks everything
         return [f"**FaaSr (cloud)**: (could not work it out: {e})", inputs, advice]
     out = [f"**FaaSr (cloud)**: repo `{g['user']}/{g['repo']}`, branch `{g['branch']}`, deploys as `{g['name']}`",
@@ -2845,8 +2847,8 @@ def _last_lines(text: str, n: int) -> list[str]:
 
 
 def _code_path(s: dict, name: str) -> str:
-    run = Path(s.get("run_dir") or "")
-    path = run / "functions" / name / f"{name}.py"
+    session = Path(s.get("run_dir") or "")
+    path = session / "functions" / name / f"{name}.py"
     try:
         return os.path.relpath(path, s.get("project_dir") or os.getcwd())
     except ValueError:
@@ -2996,7 +2998,7 @@ def execution_summary_md(s: dict) -> str:
 
 
 def cmd_summary(args) -> dict:
-    return {"ok": True, "markdown": summary_md(load_state(args.run))}
+    return {"ok": True, "markdown": summary_md(load_state(args.session))}
 
 
 def _cut(text: str, n: int) -> str:
@@ -3023,9 +3025,9 @@ def cmd_show(args) -> dict:
     gate's marker line), also written to <run>/review/gate<N>.md (`review_line`). The question is
     short: `question`, `header`, `options` (no previews; "Other" requests changes). --full (Gate 3):
     every function's code verbatim, for the "Show the full code" option."""
-    s = load_state(args.run)
+    s = load_state(args.session)
     marker = gate_marker(s, args.gate)
-    review = Path(args.run) / "review" / f"gate{args.gate}.md"
+    review = Path(args.session) / "review" / f"gate{args.gate}.md"
     if getattr(args, "full", False):
         if args.gate != 3:
             raise InputError("--full is only for Gate 3")
@@ -3080,7 +3082,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     def with_run(name):
         q = sub.add_parser(name)
-        q.add_argument("--run", required=True)
+        runstate.add_session_flag(q, required=True, run_help=(
+            "a run's own stages (--start-at deploy): <workflow-id>/<run-id> or its id; a session id also works"))
         return q
 
     with_run("status")
@@ -3157,13 +3160,13 @@ COMMANDS = {
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    if getattr(args, "run", None):  # an id, <workflow-id>/<run-id> or a folder
-        args.run = str(runstate.resolve_run(args.run, getattr(args, "project_dir", None)))
+    if runstate.resolve_args(args, "session", getattr(args, "project_dir", None)):  # an id, <wid>/<rid> or a folder
+        return 2
     try:
-        # One lock per run around the whole command: every read-modify-write of
+        # One lock per session (or run) around the whole command: every read-modify-write of
         # state.json happens inside it.
         # A session's current run is locked too (runstate.locked).
-        with runstate.locked(getattr(args, "run", None) or "/nonexistent"):
+        with runstate.locked(getattr(args, "session", None) or "/nonexistent"):
             result = COMMANDS[args.cmd](args)
     except (InputError, OSError, ValidationError) as e:
         print(json.dumps({"ok": False, "error": str(e), **getattr(e, "details", {})}, indent=2))

@@ -20,9 +20,9 @@ Adapted from CURATE-prototype `agents/fga.py` (`_SHARED_RULES`, `_turn_prompt`)
 ## Where you work
 
 Your task message gives absolute paths for:
-- the **run directory** `<run>`, holding `CONTEXT.md` (shared workflow context) and
+- the **session folder** `<session>`, holding `CONTEXT.md` (shared workflow context) and
   `context/` (user reference files)
-- **your folder** `<run>/functions/<name>/`, holding your `spec.md`, any seed code
+- **your folder** `<session>/functions/<name>/`, holding your `spec.md`, any seed code
   (`<name>.py` or `original_<name>.py`), `test_data/` and `test_output/`
 
 **You may write ONLY inside your folder.** Everything else — other functions'
@@ -34,14 +34,14 @@ guard denies the command. Do not install packages with pip; list them in `<name>
 
 ## Procedure
 
-1. Read `<run>/CONTEXT.md`, then your `spec.md` (inputs, outputs, data flow, rank,
+1. Read `<session>/CONTEXT.md`, then your `spec.md` (inputs, outputs, data flow, rank,
    secrets, dependencies, test command). Follow explicit implementation details in
    CONTEXT.md's "Original User Request" that apply to your step exactly as written —
    never substitute your own defaults for something the user specified.
-2. Read the real neighbor code in `<run>/functions/*/` to match DATA FORMATS exactly
+2. Read the real neighbor code in `<session>/functions/*/` to match DATA FORMATS exactly
    (columns, JSON keys, units, encodings). File names are not your concern: the steps are
    linked by the spec's file names, and your code only uses the paths it is given. Read
-   relevant reference files in `<run>/context/` to match real data formats — they are
+   relevant reference files in `<session>/context/` to match real data formats — they are
    references, never code to import and never a license to fabricate data.
 3. Write the implementation to `<your folder>/<name>.py` following the function-reference
    rules: exactly `def main(inputs, outputs, params)`, reading only the input paths and

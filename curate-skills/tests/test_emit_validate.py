@@ -233,7 +233,7 @@ def test_draft_refuses_a_leaked_secret_value(tmp_path, capsys, monkeypatch, stru
     spec.nodes[0].secrets = ["API_TOKEN"]
     spec.nodes[0].code += 'TOKEN = "api-token-value-123"\n'
     run = run_with(tmp_path, spec)
-    code = emit.main(["bundle", "--run", str(run)])
+    code = emit.main(["bundle", "--session", str(run)])
     out = capsys.readouterr().out
     res = json.loads(out)
     assert code == 1 and not res["ok"] and res["draft"]["leaked_secret_names"] == ["API_TOKEN"]
@@ -244,14 +244,14 @@ def test_draft_reports_missing_code(tmp_path, capsys, structural_only):
     spec = mapreduce_spec()
     for n in spec.nodes:
         n.code = None
-    code = emit.main(["bundle", "--run", str(run_with(tmp_path, spec))])
+    code = emit.main(["bundle", "--session", str(run_with(tmp_path, spec))])
     res = json.loads(capsys.readouterr().out)
     assert code == 1 and not res["ok"] and sum("has no code" in p for p in res["draft"]["problems"]) == 3
 
 
 def test_cli_bundle_updates_run_state(tmp_path, capsys, structural_only):
     run = run_with(tmp_path, single_node_spec())
-    code = emit.main(["bundle", "--run", str(run)])
+    code = emit.main(["bundle", "--session", str(run)])
     out = json.loads(capsys.readouterr().out)
     assert code == 0 and out["ok"]
     state = json.loads((run / "state.json").read_text())
@@ -266,7 +266,7 @@ def test_cli_bundle_updates_run_state(tmp_path, capsys, structural_only):
     assert v["spec_hash"] and state["draft_spec_hash"] == v["spec_hash"]  # which spec the draft was built from
     assert state["stage"] == "gate4"
     before = (run / "draft" / "workflow.yml").read_text()
-    assert emit.main(["bundle", "--run", str(run)]) == 0  # an unapproved draft is simply replaced
+    assert emit.main(["bundle", "--session", str(run)]) == 0  # an unapproved draft is simply replaced
     assert (run / "draft" / "workflow.yml").read_text() == before
 
 
@@ -291,7 +291,7 @@ def test_cli_bundle_writes_the_draft_when_faasr_cannot_wrap_a_step(tmp_path, cap
     spec = single_node_spec()
     spec.nodes[0].code = "calculate_number_summary = 1\n\ndef main(inputs, outputs, params):\n    pass\n"
     run = run_with(tmp_path, spec)
-    code = emit.main(["bundle", "--run", str(run)])
+    code = emit.main(["bundle", "--session", str(run)])
     out = json.loads(capsys.readouterr().out)
     state = json.loads((run / "state.json").read_text())
     assert state["stage"] == "gate4" and state["draft_dir"] and "bundle_dir" not in state

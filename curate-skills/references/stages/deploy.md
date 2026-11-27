@@ -4,6 +4,10 @@ Paths below are relative to `<plugin>`; `spec.py …`, `deploy.py …` are the s
 
 Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
 
+`<run>` is the run's `<workflow-id>/<run-id>`: for a session that reached this stage, `spec.py status
+--session <session>` shows it as `reference`; a run started with `--start-at deploy` is its own. Every
+command below takes it as `--run <run>` (spec.py too: it acts on the session the run belongs to).
+
 Precondition: `spec.py begin --run <run> --stage deploy` returned `ok` (Gate 4 was approved with
 **Approve & deploy to FaaSr (cloud)**, and the bundle was built then from the published version,
 into `<project>/.curate/workflows/<workflow-id>/runs/<run-id>/bundle/` with its `manifest.json`;
@@ -112,7 +116,7 @@ CURATE's files and paths not in this run's deploy log stay refused.
 ## 4. Stopping
 
 `spec.py set-stage --run <run> --stage stopped`; tell the user its `resume_command` and that
-`/curate-skills:curate-deploy --run <run_id>` continues with the next unfinished step (the
+`/curate-skills:curate-deploy --run <workflow-id>/<run-id>` continues with the next unfinished step (the
 finished ones are recorded and skipped). Nothing is undone.
 
 ## 5. Done

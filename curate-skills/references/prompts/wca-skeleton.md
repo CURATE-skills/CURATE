@@ -5,7 +5,7 @@ Adapted from CURATE-prototype `prompts/wca_prompts.py` `WCA_SKELETON_PROMPT` and
 
 ## Inputs
 
-Run `spec.py prompt-context --run <run> --stage skeleton`. It returns `user_request`,
+Run `spec.py prompt-context --session <session> --stage skeleton`. It returns `user_request`,
 `feedback_section`, `current_workflow_section`, `user_models_section`,
 `context_files_section`, and — on a Gate 1 refinement — `refinement` and `previous_draft`.
 Fill them into the prompt below in this order (empty sections are simply absent).
@@ -66,4 +66,4 @@ Rules:
 
 ## Output
 
-Write ONLY the JSON object to `<run>/work/skeleton.json` — no prose, no markdown fence.
+Write ONLY the JSON object to `<session>/work/skeleton.json` — no prose, no markdown fence.

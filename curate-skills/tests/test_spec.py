@@ -33,8 +33,8 @@ SKELETON = {
 
 def approved_run(make_run, capsys, **kw):
     run = make_run(**kw)
-    assert call(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", SKELETON)], capsys)[0] == 0
-    assert call(S, ["approve", "--run", str(run), "--gate", "1"], capsys)[0] == 0
+    assert call(S, ["skeleton", "--session", str(run), "--json", write(run, "skeleton.json", SKELETON)], capsys)[0] == 0
+    assert call(S, ["approve", "--session", str(run), "--gate", "1"], capsys)[0] == 0
     return run
 
 
@@ -77,7 +77,7 @@ def test_skeleton_strips_io_and_prunes(make_run, capsys):
     run = make_run()
     sk = json.loads(json.dumps(SKELETON))
     sk["nodes"][0]["inputs"] = ["words.txt"]
-    code, out = call(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", sk)], capsys)
+    code, out = call(S, ["skeleton", "--session", str(run), "--json", write(run, "skeleton.json", sk)], capsys)
     assert code == 0 and any("split_words → reduce_counts" in r for r in out["repairs"])
     draft = state(run)["skeleton_draft"]["spec"]
     assert draft["nodes"][0]["inputs"] == [] and len(draft["edges"]) == 2
@@ -86,9 +86,9 @@ def test_skeleton_strips_io_and_prunes(make_run, capsys):
 
 def test_bad_revision_keeps_last_good(make_run, capsys):
     run = make_run()
-    ok(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", SKELETON)], capsys)
+    ok(S, ["skeleton", "--session", str(run), "--json", write(run, "skeleton.json", SKELETON)], capsys)
     bad = {"nodes": [{"name": "Bad-Name"}]}
-    code, out = call(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", bad)], capsys)
+    code, out = call(S, ["skeleton", "--session", str(run), "--json", write(run, "skeleton.json", bad)], capsys)
     assert code == 1 and out["kept_previous"]
     s = state(run)
     assert s["skeleton_draft"]["spec"]["name"] == "word_count" and s["stage"] == "gate1"
@@ -96,23 +96,23 @@ def test_bad_revision_keeps_last_good(make_run, capsys):
 
 def test_gate1_refinement_does_not_count(make_run, capsys):
     run = make_run()
-    ok(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", SKELETON)], capsys)
-    code, out = call(S, ["directive", "--run", str(run), "--gate", "1", "--text", "split map"], capsys)
+    ok(S, ["skeleton", "--session", str(run), "--json", write(run, "skeleton.json", SKELETON)], capsys)
+    code, out = call(S, ["directive", "--session", str(run), "--gate", "1", "--text", "split map"], capsys)
     assert code == 0 and out["iteration"] == 0 and out["next_stage"] == "skeleton"
-    code, ctx = call(S, ["prompt-context", "--run", str(run), "--stage", "skeleton"], capsys)
+    code, ctx = call(S, ["prompt-context", "--session", str(run), "--stage", "skeleton"], capsys)
     assert ctx["refinement"] == "split map"
 
 
 def test_approve_gate1_prior_spec_rules(make_run, capsys):
     coded = WorkflowSpec(name="old", nodes=[FunctionSpec(name="split_words", code="def split_words(): pass")])
     run = make_run(spec=coded)
-    ok(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", SKELETON)], capsys)
-    ok(S, ["approve", "--run", str(run), "--gate", "1"], capsys)
+    ok(S, ["skeleton", "--session", str(run), "--json", write(run, "skeleton.json", SKELETON)], capsys)
+    ok(S, ["approve", "--session", str(run), "--gate", "1"], capsys)
     assert state(run)["prior_spec"]["name"] == "old"
 
     run2 = make_run(spec=coded, spec_is_seed=True)
-    ok(S, ["skeleton", "--run", str(run2), "--json", write(run2, "skeleton.json", SKELETON)], capsys)
-    ok(S, ["approve", "--run", str(run2), "--gate", "1"], capsys)
+    ok(S, ["skeleton", "--session", str(run2), "--json", write(run2, "skeleton.json", SKELETON)], capsys)
+    ok(S, ["approve", "--session", str(run2), "--gate", "1"], capsys)
     assert state(run2)["prior_spec"] is None
 
 
@@ -138,7 +138,7 @@ def test_candidate_mapping(make_run, capsys, seeded_catalog):
          "adaptation_notes": "count instead", "updated_outputs": ["counts_{rank}.json"]},
         {"node": "reduce_counts", "decision": "reuse", "catalog_id": "nope"},
     ]
-    code, out = call(S, ["apply-candidates", "--run", str(run), "--json", write(run, "candidates.json", cands)], capsys)
+    code, out = call(S, ["apply-candidates", "--session", str(run), "--json", write(run, "candidates.json", cands)], capsys)
     assert code == 0
     enriched = WorkflowSpec.model_validate(state(run)["enriched_spec"])
     by = {n.name: n for n in enriched.nodes}
@@ -158,7 +158,7 @@ def test_rename_collision_downgrades_to_adapt(make_run, capsys, seeded_catalog):
     cands = [{"node": "split_words", "decision": "reuse", "catalog_id": seeded_catalog},
              {"node": "map_words", "decision": "reuse", "catalog_id": seeded_catalog},
              {"node": "reduce_counts", "decision": "new"}]
-    code, out = call(S, ["apply-candidates", "--run", str(run), "--json", write(run, "candidates.json", cands)], capsys)
+    code, out = call(S, ["apply-candidates", "--session", str(run), "--json", write(run, "candidates.json", cands)], capsys)
     names = [c["name"] for c in out["candidates"]]
     assert names == ["split_words", "map_words", "reduce_counts"]
     assert [c["source"] for c in out["candidates"][:2]] == ["adapt", "adapt"]
@@ -174,7 +174,7 @@ def test_cached_and_adapt_from_cache(make_run, capsys):
     cands = [{"node": "split_words", "decision": "cached"},
              {"node": "map_words", "decision": "adapt", "adapt_from": "cached", "adaptation_notes": "faster"},
              {"node": "reduce_counts", "decision": "cached"}]
-    code, out = call(S, ["apply-candidates", "--run", str(run), "--json", write(run, "candidates.json", cands)], capsys)
+    code, out = call(S, ["apply-candidates", "--session", str(run), "--json", write(run, "candidates.json", cands)], capsys)
     src = {c["name"]: (c["source"], c["origin_kind"]) for c in out["candidates"]}
     assert src == {"split_words": ("cached", "cache"), "map_words": ("adapt", "cache"),
                    "reduce_counts": ("new", None)}
@@ -188,7 +188,7 @@ def test_old_style_cached_code_is_regenerated_not_reused(make_run, capsys):
     run = approved_run(make_run, capsys, prior_spec=json.loads(prior.model_dump_json()))
     cands = [{"node": "split_words", "decision": "cached"}, {"node": "map_words", "decision": "new"},
              {"node": "reduce_counts", "decision": "new"}]
-    code, out = call(S, ["apply-candidates", "--run", str(run), "--json", write(run, "candidates.json", cands)], capsys)
+    code, out = call(S, ["apply-candidates", "--session", str(run), "--json", write(run, "candidates.json", cands)], capsys)
     assert code == 0, out
     c = out["candidates"][0]
     assert (c["source"], c["origin_kind"]) == ("adapt", "cache")
@@ -202,7 +202,7 @@ def test_old_style_catalog_hit_is_regenerated_not_reused(make_run, capsys, tmp_p
     run = approved_run(make_run, capsys)
     cands = [{"node": "split_words", "decision": "reuse", "catalog_id": e.id},
              {"node": "map_words", "decision": "new"}, {"node": "reduce_counts", "decision": "new"}]
-    code, out = call(S, ["apply-candidates", "--run", str(run), "--json", write(run, "candidates.json", cands)], capsys)
+    code, out = call(S, ["apply-candidates", "--session", str(run), "--json", write(run, "candidates.json", cands)], capsys)
     assert code == 0, out
     c = out["candidates"][0]
     assert (c["source"], c["origin_kind"], c["origin_name"]) == ("adapt", "catalog", "split_text")
@@ -215,7 +215,7 @@ def test_user_model_wins(make_run, capsys, tmp_path):
     run = approved_run(make_run, capsys, extra_args=["--user-model", str(model)])
     cands = [{"node": "split_words", "decision": "new"}, {"node": "map_words", "decision": "new"},
              {"node": "reduce_counts", "decision": "new", "user_model_mode": "adapt"}]
-    ok(S, ["apply-candidates", "--run", str(run), "--json", write(run, "candidates.json", cands)], capsys)
+    ok(S, ["apply-candidates", "--session", str(run), "--json", write(run, "candidates.json", cands)], capsys)
     node = next(n for n in state(run)["enriched_spec"]["nodes"] if n["name"] == "reduce_counts")
     assert node["source"] == "user_provided" and node["user_model_mode"] == "adapt"
     assert node["code"].startswith("def model")
@@ -223,7 +223,7 @@ def test_user_model_wins(make_run, capsys, tmp_path):
 
 def test_candidates_must_cover_all_nodes(make_run, capsys):
     run = approved_run(make_run, capsys)
-    code, out = call(S, ["apply-candidates", "--run", str(run), "--json",
+    code, out = call(S, ["apply-candidates", "--session", str(run), "--json",
                          write(run, "candidates.json", [{"node": "split_words", "decision": "new"}])], capsys)
     assert code == 2 and "map_words" in out["error"]
 
@@ -255,15 +255,15 @@ def resolved_run(make_run, capsys, seeded_catalog):
     sk["nodes"].append({"name": "plot", "description": "plot"})
     sk["edges"].append({"from_node": "reduce_counts", "to_node": "plot"})
     run = make_run()
-    ok(S, ["skeleton", "--run", str(run), "--json", write(run, "skeleton.json", sk)], capsys)
-    ok(S, ["approve", "--run", str(run), "--gate", "1"], capsys)
+    ok(S, ["skeleton", "--session", str(run), "--json", write(run, "skeleton.json", sk)], capsys)
+    ok(S, ["approve", "--session", str(run), "--gate", "1"], capsys)
     cands = [{"node": "split_words", "decision": "reuse", "catalog_id": seeded_catalog},
              {"node": "map_words", "decision": "new"}, {"node": "reduce_counts", "decision": "new"},
              {"node": "plot", "decision": "new"}]
-    ok(S, ["apply-candidates", "--run", str(run), "--json", write(run, "candidates.json", cands)], capsys)
+    ok(S, ["apply-candidates", "--session", str(run), "--json", write(run, "candidates.json", cands)], capsys)
     resolved = json.loads(json.dumps(RESOLVED))
     resolved["edges"] = resolved["edges"][:2]  # drop reduce->plot: plot is an orphan data consumer
-    return run, call(S, ["merge-resolved", "--run", str(run), "--json",
+    return run, call(S, ["merge-resolved", "--session", str(run), "--json",
                          write(run, "resolved.json", resolved)], capsys)
 
 
@@ -284,7 +284,7 @@ def test_merge_rejects_node_mismatch(make_run, capsys, seeded_catalog):
     run, _ = resolved_run(make_run, capsys, seeded_catalog)
     bad = json.loads(json.dumps(RESOLVED))
     bad["nodes"] = bad["nodes"][:3]
-    code, out = call(S, ["merge-resolved", "--run", str(run), "--json", write(run, "resolved.json", bad)], capsys)
+    code, out = call(S, ["merge-resolved", "--session", str(run), "--json", write(run, "resolved.json", bad)], capsys)
     assert code == 2 and "plot" in out["error"]
 
 
@@ -325,22 +325,22 @@ def test_toposort_and_ancestors():
 def test_directive_routing_and_cap(make_run, capsys):
     spec = WorkflowSpec(name="w", nodes=[FunctionSpec(name="a", code="def a(): pass")])
     run = make_run(spec=spec, stage="gate3", max_iterations=2)
-    code, out = call(S, ["directive", "--run", str(run), "--gate", "3", "--text", "use pandas",
+    code, out = call(S, ["directive", "--session", str(run), "--gate", "3", "--text", "use pandas",
                          "--structural", "false"], capsys)
     s = state(run)
     assert out["next_stage"] == "reuse" and s["code_feedback"] == "use pandas"  # v2: functional → reuse
     assert s["prior_spec"]["nodes"][0]["code"] and not out["cap_reached"]
-    code, out = call(S, ["directive", "--run", str(run), "--gate", "2", "--text", "add a node",
+    code, out = call(S, ["directive", "--session", str(run), "--gate", "2", "--text", "add a node",
                          "--structural", "true"], capsys)
     s = state(run)
     assert out["next_stage"] == "skeleton" and s["spec_is_seed"] and not out["cap_reached"]
     assert s["revision_directives"] == ["use pandas", "add a node"]
     assert len(list((run / "history").glob("*.json"))) == 2
     # v2: at the cap the directive is refused before anything changes
-    code, out = call(S, ["directive", "--run", str(run), "--gate", "2", "--text", "third",
+    code, out = call(S, ["directive", "--session", str(run), "--gate", "2", "--text", "third",
                          "--structural", "false"], capsys)
     assert code == 1 and out["cap_reached"] and state(run) == s
-    code, out = call(S, ["directive", "--run", str(run), "--gate", "2", "--text", "x"], capsys)
+    code, out = call(S, ["directive", "--session", str(run), "--gate", "2", "--text", "x"], capsys)
     assert code == 2
 
 
@@ -348,34 +348,34 @@ def test_gate4_requires_validation_and_reports_reuse(make_run, capsys):
     spec = WorkflowSpec(name="w", nodes=[FunctionSpec(name="a", source="catalog", catalog_id="c1"),
                                          FunctionSpec(name="b", source="new")])
     run = make_run(spec=spec)
-    assert call(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)[0] == 2
+    assert call(S, ["approve", "--session", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)[0] == 2
     s = state(run)
     s["validation"] = {"ok": True, "level": "structural", "error": None,
                        "spec_hash": spec_hash(s["spec"])}  # v2: the bundle must match the spec
     (run / "state.json").write_text(json.dumps(s))
-    code, out = call(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
+    code, out = call(S, ["approve", "--session", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
     assert code == 2 and "no workflow draft" in out["error"]
     import emit  # a draft (any valid one; this test is about the approval's report)
     e2 = WorkflowSpec.model_validate(json.loads((Path(__file__).parent / "fixtures" / "e2-stages" /
                                                  "spec-with-code.json").read_text()))
     s["draft_dir"] = emit.write_draft(e2, run)["dir"]
     (run / "state.json").write_text(json.dumps(s))
-    code, out = call(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
+    code, out = call(S, ["approve", "--session", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
     assert code == 0 and out["reused_catalog_ids"] == ["c1"] and out["stage"] == "finalize"
     assert out["workflow_id"] == "w-v1"  # the spec's name; the draft's content is published under it
 
 
 def test_show_and_prompt_context(make_run, capsys, seeded_catalog):
     run, _ = resolved_run(make_run, capsys, seeded_catalog)
-    code, out = call(S, ["show", "--run", str(run), "--gate", "2"], capsys)
+    code, out = call(S, ["show", "--session", str(run), "--gate", "2"], capsys)
     md = out["markdown"]
     assert "[catalog] ← [catalog] split_text" in md and "map_words ×3" in md and "`workflow_data/words.txt`" in md
-    code, ctx = call(S, ["prompt-context", "--run", str(run), "--stage", "mca"], capsys)
+    code, ctx = call(S, ["prompt-context", "--session", str(run), "--stage", "mca"], capsys)
     node = next(n for n in ctx["nodes"] if n["name"] == "split_text")
     # one-entry catalog: the inherited BM25 quirk returns no matches (see test_catalog)
     assert node["catalog_matches"] == [] and node["catalog_query"].startswith("split text")
     assert "Original user request (verbatim): count words" in ctx["workflow_context"]
-    code, ctx = call(S, ["prompt-context", "--run", str(run), "--stage", "resolve"], capsys)
+    code, ctx = call(S, ["prompt-context", "--session", str(run), "--stage", "resolve"], capsys)
     assert "[CATALOG]" in ctx["fca_candidates"]
     nodes = ctx["workflow_json"]["nodes"]
     assert len(nodes) == 4 and all("code" not in n for n in nodes)
@@ -397,14 +397,14 @@ def test_status_counts_auto_emit_retries(make_run, capsys):
     run = make_run(spec=spec, history=[{"gate": "emit", "decision": "revise"},
                                        {"gate": 3, "decision": "approve"},
                                        {"gate": "emit", "decision": "revise"}])
-    assert ok(S, ["status", "--run", str(run)], capsys)["auto_emit_retries"] == 1
+    assert ok(S, ["status", "--session", str(run)], capsys)["auto_emit_retries"] == 1
 
 
 def test_gate4_display_flags_missing_code_and_failures(make_run, capsys):
     spec = WorkflowSpec(name="w", nodes=[FunctionSpec(name="a", code="def a(): pass"), FunctionSpec(name="b")])
     run = make_run(spec=spec, validation={"ok": True, "level": "faasr_py", "error": None},
                    mga={"b": {"status": "failed"}})
-    md = ok(S, ["show", "--run", str(run), "--gate", "4"], capsys)["markdown"]
+    md = ok(S, ["show", "--session", str(run), "--gate", "4"], capsys)["markdown"]
     assert "functions without code (not in the bundle): b" in md and "stub test failed: b" in md
 
 
@@ -414,7 +414,7 @@ def test_gate4_says_deploy_fills_the_placeholders(make_run, capsys, tmp_path):
     (bundle / "README.md").write_text("- `<FAASR_GH_USERNAME>`\n- `<FAASR_S3_BUCKET>`\n- `<FAASR_S3_REGION>`\n")
     spec = WorkflowSpec(name="w", nodes=[FunctionSpec(name="a", code="def a(): pass")])
     run = make_run(spec=spec, bundle_dir=str(bundle), validation={"ok": True, "level": "faasr_py", "error": None})
-    md = ok(S, ["show", "--run", str(run), "--gate", "4"], capsys)["markdown"]
+    md = ok(S, ["show", "--session", str(run), "--gate", "4"], capsys)["markdown"]
     assert ("- deploying: Placeholders are filled from your settings at deploy; run "
             "`/curate-skills:curate-doctor --deploy --online` if you haven't.") in md
     for outdated in ("placeholders to fill", "Secrets to set before deploying", "<FAASR_GH_USERNAME>"):
@@ -430,7 +430,7 @@ def test_summary_markdown(make_run, capsys):
     run = make_run(spec=spec, stage="finalize", mga={"a": {"status": "passed", "attempts": 2}},
                    validation={"ok": True, "level": "faasr_py", "error": None},
                    history=[{"gate": 3, "decision": "revise", "text": "use numpy", "structural": False}])
-    md = ok(S, ["summary", "--run", str(run)], capsys)["markdown"]
+    md = ok(S, ["summary", "--session", str(run)], capsys)["markdown"]
     assert "| `a` | [new] | 1 | passed | 2 | 2 | numpy | — |" in md
     assert "| `b` | [catalog] ← [catalog] b0 | 2 | — | 0 | 1 |" in md
     assert "Gate 3: revise — use numpy" in md and "validation passed (level `faasr_py`)" in md
@@ -440,5 +440,5 @@ def test_gate3_attention_shows_last_line(make_run, capsys):
     spec = WorkflowSpec(name="w", nodes=[FunctionSpec(name="a", code="x")])
     tail = "=== rank 1/1 ===\nTraceback (most recent call last):\n  File x\nValueError: bad input\n"
     run = make_run(spec=spec, mga={"a": {"status": "failed", "attempts": 1, "last_output_tail": tail}})
-    md = ok(S, ["show", "--run", str(run), "--gate", "3"], capsys)["markdown"]
+    md = ok(S, ["show", "--session", str(run), "--gate", "3"], capsys)["markdown"]
     assert "  last test lines:\n    Traceback (most recent call last):\n      File x\n    ValueError: bad input" in md

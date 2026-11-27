@@ -1,7 +1,7 @@
 # Gates, routing, stopping and resuming (shared by every stage)
 
 CURATE has five human gates. Each stage skill ends at its own gate (curate-reuse has none);
-`spec.py next --run <run>` always names the skill for wherever the run is now.
+`spec.py next --session <session>` always names the skill for wherever the run is now.
 
 | Stage skill | Run `stage` | Ends at | Original CURATE node (`orchestrator.py`) |
 |---|---|---|---|
@@ -19,7 +19,7 @@ CURATE has five human gates. Each stage skill ends at its own gate (curate-reuse
 Do all three, at every gate, every time — including after a change request, after the user
 asked to see something, and after the user answered in chat:
 
-1. `spec.py show --run <run> --gate N` (N = 1–5). **Print its `markdown` exactly as a message,
+1. `spec.py show --session <session> --gate N` (N = 1–5). **Print its `markdown` exactly as a message,
    then its `review_line`** (`Full review: <path>`, the same content saved in the run's
    `review/gate<N>.md`; for Gate 4 the review file is the detailed version, with every file each
    target would write) on its own line. **Print the content first, then ask — never ask before
@@ -36,7 +36,7 @@ asked to see something, and after the user answered in chat:
    `preview`** — the full content is already printed above. Typing in "Other" requests changes.
 3. If the answer is not a decision (e.g. "show me the table", "show me the code"), show what was
    asked and go back to step 2 — with AskUserQuestion again. **Show the full code** (Gate 3):
-   `spec.py show --run <run> --gate 3 --full`, print its `markdown` verbatim, then ask again. It is
+   `spec.py show --session <session> --gate 3 --full`, print its `markdown` verbatim, then ask again. It is
    not a change request and costs no revision round.
 
 **Gate decisions are always the user's.** Never approve, stop or submit a change request on the
@@ -61,19 +61,19 @@ approve; `stop` stops; anything else is a change request. Never approve on the u
 - **Cap.** If `directive` returns `"cap_reached": true`, nothing was changed. Ask: approve the
   current version as-is (`approve`), stop, or raise the cap (`spec.py set-cap --max N`, then repeat
   the same directive).
-- **Stop.** `spec.py set-stage --run <run> --stage stopped` (records where it stopped). Tell the
+- **Stop.** `spec.py set-stage --session <session> --stage stopped` (records where it stopped). Tell the
   user the `resume_command` it returns (and `resume_stage_command`, to resume just that stage).
 - **Override a classification.** If the user disputes STRUCTURE/FUNCTION after it was recorded,
   go back with a rewind (below).
 - **Rewinding** (going back to an earlier stage of a run that is already past it) is always the
   user's decision. First mention the alternative that costs nothing: a new run from this run's
-  approved results, `/curate-skills:curate --start-at <stage> --from-run <run_id>` (the original
+  approved results, `/curate-skills:curate --start-at <stage> --from-run <session_id>` (the original
   stays as it is; to change only some functions, start at generate with `--existing-code keep`
   and ask for the change at Gate 3). Tell them what the rewind costs — one revision round, and
   that stage plus every stage after it is redone (working code is kept for `[cached]` decisions;
   functions marked new are regenerated from scratch) — and ask with AskUserQuestion whenever it
   is available (options **Yes, rewind** / **No**; chat only without the tool). Only after a clear yes:
-  `spec.py begin --run <run> --stage <S> --rewind --confirmed`. Never pass `--confirmed` without
+  `spec.py begin --session <session> --stage <S> --rewind --confirmed`. Never pass `--confirmed` without
   asking; `begin` refuses a rewind without it.
 
 **Deploy steps are the user's too.** curate-deploy asks before each of its four steps (publish,
@@ -82,8 +82,8 @@ their latest answer (`stages/deploy.md`).
 
 ## After the gate decision
 
-Run `spec.py next --run <run>` and tell the user the result in one line, e.g.
-`Next: /curate-skills:curate-reuse --run <run_id>`.
+Run `spec.py next --session <session>` and tell the user the result in one line, e.g.
+`Next: /curate-skills:curate-reuse --session <session_id>`.
 
 - **Started standalone** (no `--chain` in the arguments): stop here. Do not start the next stage
   yourself, even if the user's reply was "approve".
@@ -92,7 +92,7 @@ Run `spec.py next --run <run>` and tell the user the result in one line, e.g.
 
 ## Starting and resuming a stage
 
-Every stage starts with `spec.py begin --run <run> --stage <S>`:
+Every stage starts with `spec.py begin --session <session> --stage <S>`:
 
 | `mode` | Meaning |
 |---|---|

@@ -100,12 +100,12 @@ def at_gate4(run):
 def test_pegasus_image_command_is_read_only_and_shows_the_summary(source_run, capsys):  # noqa: F811
     at_gate4(source_run)
     before = (source_run / "state.json").read_text()
-    out = ok(S, ["pegasus-image", "--run", str(source_run), "--image", "docker://me/tools:2"], capsys)
+    out = ok(S, ["pegasus-image", "--session", str(source_run), "--image", "docker://me/tools:2"], capsys)
     assert out["image"] == "docker:///me/tools:2" and out["question"] == "Run on Pegasus with docker:///me/tools:2?"
     assert out["options"] == ["Yes, use this image", "Choose another image", "Back"]
     assert out["summary"].startswith("**Pegasus** on this machine: `mapreduce-word-count-")
     assert "image `docker:///me/tools:2` (this run only)" in out["summary"]
-    code, bad = call(S, ["pegasus-image", "--run", str(source_run), "--image", "python:3.12"], capsys)
+    code, bad = call(S, ["pegasus-image", "--session", str(source_run), "--image", "python:3.12"], capsys)
     assert code == 1 and "has no accepted scheme" in bad["error"] and bad["accepted"].startswith("docker:///")
     assert (source_run / "state.json").read_text() == before
 
@@ -118,7 +118,7 @@ def test_pegasus_image_summary_shows_package_warnings(source_run, capsys):  # no
     from conftest import redraft
     redraft(source_run, s)  # emit again after the spec changed
     runstate.save(source_run, s)
-    out = ok(S, ["pegasus-image", "--run", str(source_run), "--image", "docker:///me/tools:2"], capsys)
+    out = ok(S, ["pegasus-image", "--session", str(source_run), "--image", "docker:///me/tools:2"], capsys)
     name = s["spec"]["nodes"][1]["name"]
     assert f"- note: step {name} imports numpy: these must already be in the image docker:///me/tools:2" in out["summary"]
 
@@ -128,7 +128,7 @@ def test_approve_with_image_records_it_for_this_run_only(source_run, capsys, mon
     f.write_text("CURATE_PEGASUS_IMAGE=docker:///from/settings:1\n")
     monkeypatch.setattr(envfile, "default_path", lambda: f)
     at_gate4(source_run)
-    out = ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus",
+    out = ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus",
                  "--image", "docker://me/tools:2"], capsys)
     assert out["deploy"] == "pegasus" and out["stage"] == "deploy"
     s = state(source_run)
@@ -141,18 +141,18 @@ def test_approve_with_image_records_it_for_this_run_only(source_run, capsys, mon
 def test_approve_with_a_bad_image_changes_nothing(source_run, capsys):  # noqa: F811
     at_gate4(source_run)
     before = (source_run / "state.json").read_text()
-    code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus",
+    code, out = call(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus",
                          "--image", "file:///nowhere/img.tar"], capsys)
     assert code == 2 and "does not exist or is not readable" in out["error"]
     assert (source_run / "state.json").read_text() == before
-    code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes",
+    code, out = call(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes",
                          "--image", DEFAULT_IMG], capsys)
     assert code == 2 and out["error"] == "--image only applies to --deploy pegasus"
 
 
 def test_normal_pegasus_option_unchanged(source_run, capsys):  # noqa: F811
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
+    ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     s = state(source_run)
     assert s["pegasus"] is None and "image" not in s["history"][-1] and s["deploy_choice"] == "pegasus"
 
@@ -163,7 +163,7 @@ def test_normal_pegasus_option_unchanged(source_run, capsys):  # noqa: F811
 def chosen(source_run, capsys, monkeypatch, tmp_path):  # noqa: F811
     monkeypatch.setattr(PD, "RUN", Fake(tmp_path))
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus",
+    ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus",
            "--image", "docker://me/tools:2"], capsys)
     return source_run
 
@@ -204,7 +204,7 @@ def test_monitor_and_gate5_show_the_image(chosen, monkeypatch, capsys):
     run_steps(chosen, "prepare", "launch")
     out = poll(chosen, Host([ALL], collect=report()), monkeypatch)
     assert out["result"] == "success"
-    md = ok(S, ["show", "--run", str(chosen), "--gate", "5"], capsys)["markdown"]
+    md = ok(S, ["show", "--session", str(chosen), "--gate", "5"], capsys)["markdown"]
     assert "- Image: `docker:///me/tools:2` (chosen at Gate 4, this run only)" in md
 
 
@@ -215,10 +215,10 @@ def test_start_at_deploy_with_a_different_image(source_run, capsys):  # noqa: F8
     code, out = start(capsys, source_run, "deploy", "--from-run", state(source_run)["run_id"])
     assert out["start_options"][2] == "Yes, run on Pegasus with a different image…"
     new = Path(out["run"])
-    code, bad = call(S, ["confirm-start", "--run", str(new), "--deploy", "pegasus", "--image", "python"], capsys)
+    code, bad = call(S, ["confirm-start", "--session", str(new), "--deploy", "pegasus", "--image", "python"], capsys)
     assert code == 2 and "has no accepted scheme" in bad["error"] and state(new)["deploy_choice"] is None
-    assert ok(S, ["pegasus-image", "--run", str(new), "--image", "docker://me/tools:2"], capsys)["ok"]
-    res = ok(S, ["confirm-start", "--run", str(new), "--deploy", "pegasus", "--image", "docker://me/tools:2"], capsys)
+    assert ok(S, ["pegasus-image", "--session", str(new), "--image", "docker://me/tools:2"], capsys)["ok"]
+    res = ok(S, ["confirm-start", "--session", str(new), "--deploy", "pegasus", "--image", "docker://me/tools:2"], capsys)
     assert res["deploy_choice"] == "pegasus"
     s = state(new)
     assert s["pegasus"] == {"image_choice": "docker:///me/tools:2",
@@ -263,7 +263,7 @@ def test_failure_copies_partial_outputs_with_a_marker_once_per_launch(launched, 
     assert marker.startswith("This Pegasus run FAILED: step reduce failed; DAGMan exit 1; missing outputs:")
     assert "(partial; marked FAILED)" in state(launched)["monitor"]["summary"]
     # a re-check of the same launch reuses the folder: no -2
-    ok(S, ["begin", "--run", str(launched), "--stage", "monitor"], capsys)
+    ok(S, ["begin", "--session", str(launched), "--stage", "monitor"], capsys)
     out = poll(launched, Host([failed], collect=rep), monkeypatch)
     assert out["lines"][-1].endswith(f"; partial outputs in {d}")
     assert not Path(f"{d}-2").exists()

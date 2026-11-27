@@ -1,6 +1,6 @@
 # Stage inputs, imports and preconditions
 
-Every stage skill accepts `--run <run_id>` (an existing run) or `--from <file>` (start a new run
+Every stage skill accepts `--session <session_id>` (an existing session) or `--from <file>` (start a new session
 from your own file, via `spec.py import`). Before doing anything, `spec.py begin` checks the
 stage's inputs (`spec.py require`) and, if something is missing, says what and which skill
 produces it.
@@ -70,7 +70,7 @@ description; `--request-file` overrides it.
 | resolve | `skeleton.json` | `--candidates candidates.json` (required; catalog ids must exist in the run's catalog) |
 | generate | complete WorkflowSpec (or a bundle's `spec.json`) | `--functions DIR`; `--existing-code keep\|rewrite\|ignore` (required whenever there is code); `--review` |
 | emit | WorkflowSpec with code for every node | `--functions DIR`, `--review` |
-| finalize | not supported (a bundle has no stub-test results) | use `--run` |
+| finalize | not supported (a bundle has no stub-test results) | use `--session` |
 
 At generate, any code you bring — a `--functions` folder, or code already inside the spec
 (e.g. a bundle's `spec.json`) — needs an explicit `--existing-code`. Without one, the import creates nothing and returns

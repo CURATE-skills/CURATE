@@ -6,7 +6,7 @@ Nolan Cutler; see NOTICE). The original's "FCA" is the paper's MCA.
 
 ## Inputs
 
-Run `spec.py prompt-context --run <run> --stage reuse`. It returns `workflow_context`,
+Run `spec.py prompt-context --session <session> --stage reuse`. It returns `workflow_context`,
 `feedback` (standing change requests) and one entry per node with `name`, `description`,
 `inputs`, `outputs`, `catalog_matches` (BM25 top-5 lines, `[id] name: description |
 inputs=[..] | outputs=[..]`), `prior_implementation` and `user_model`.
@@ -147,6 +147,6 @@ hint only; the generation agent reports the real dependency list for each functi
 
 ## Output
 
-Write ONE JSON array to `<run>/work/candidates.json`: one object per node, in node order,
+Write ONE JSON array to `<session>/work/candidates.json`: one object per node, in node order,
 each being the JSON above plus `"node": "<node name>"` (and `"user_model_mode"` for user
-model nodes). Then run `spec.py apply-candidates --run <run> --json <run>/work/candidates.json`.
+model nodes). Then run `spec.py apply-candidates --session <session> --json <session>/work/candidates.json`.

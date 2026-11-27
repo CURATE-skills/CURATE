@@ -195,11 +195,19 @@ def _owner(ex_dir: Path) -> Path:
     return ex_dir
 
 
-def resolve_run(ref: str | Path, project: str | Path | None = None) -> Path:
+class AmbiguousRef(ValueError):
+    """A bare id names more than one thing (a session and a run, or runs of two versions)."""
+
+
+def resolve_run(ref: str | Path, project: str | Path | None = None, prefer: str | None = None) -> Path:
     """The folder `--run` names: a folder with a state.json, a session id (.curate/sessions/, or
     .curate/runs/ from before), <workflow-id>/<run-id> or a run id (workflows/*/runs/, or
     .curate/workflows/*/runs/ from before). Anything else is returned unchanged (the command then
-    says it is not a run)."""
+    says it is not a run).
+
+    Sessions and runs share one id format, so a bare id can name both: that raises AmbiguousRef,
+    unless `prefer="session"` (the user wrote `--session <id>`). A run id found under two
+    versions raises it too."""
     import ids
     p = Path(str(ref)).expanduser()
     if (p / "state.json").is_file():
@@ -207,17 +215,44 @@ def resolve_run(ref: str | Path, project: str | Path | None = None) -> Path:
         return _owner(p) if is_execution(read_state(p)) else p
     project = Path(project or ".").resolve()
     ref = str(ref).strip().strip("/")
-    if "/" not in ref and ref and (d := ids.session_dir(project, ref)) is not None:
-        return d.resolve()
     if ref.count("/") == 1:
         cand = ids.execution_dir(project, *ref.split("/"))
-        if (cand / "state.json").is_file():
-            return _owner(cand.resolve())
-    elif "/" not in ref and ref:
-        found = ids.execution_dirs(project, ref)
-        if len(found) == 1:
-            return _owner(found[0].resolve())
-    return p
+        return _owner(cand.resolve()) if (cand / "state.json").is_file() else p
+    if "/" in ref or not ref:
+        return p
+    session = ids.session_dir(project, ref)
+    if session is not None and prefer == "session":
+        return session.resolve()
+    runs = [d for d in ids.execution_dirs(project, ref) if (d / "state.json").is_file()]
+    names = [f"{d.parent.parent.name}/{d.name}" for d in runs]
+    if session is not None and runs:
+        raise AmbiguousRef(f"{ref} names both a session and a run ({', '.join(names)}); say which: "
+                           f"--session {ref} for the session, or --run {names[0]} for the run")
+    if len(runs) > 1:
+        raise AmbiguousRef(f"{ref} names runs of more than one version ({', '.join(names)}); "
+                           f"say which with --run <workflow-id>/<run-id>")
+    if session is not None:
+        return session.resolve()
+    return _owner(runs[0].resolve()) if runs else p
+
+
+def resolve_args(args, attr: str, project: str | Path | None = None, note: bool = False) -> str | None:
+    """Resolve `args.<attr>` in place (see resolve_run; `--session` prefers the session). With
+    `note`, print session_note to stderr (the run scripts). On an ambiguous id, print the JSON
+    error and return it, for main to exit 2; None when all is well."""
+    ref = getattr(args, attr, None)
+    if not ref:
+        return None
+    try:
+        resolved = resolve_run(ref, project, "session" if getattr(args, "session_flag", None) == "--session" else None)
+    except AmbiguousRef as e:
+        print(json.dumps({"ok": False, "error": str(e)}))
+        return str(e)
+    if note and (msg := session_note(ref, project)):
+        import sys
+        print(msg, file=sys.stderr)
+    setattr(args, attr, str(resolved))
+    return None
 
 
 def files_dir(run: str | Path, s: dict | None = None) -> Path:
@@ -235,3 +270,52 @@ def is_legacy(run: str | Path, s: dict | None = None) -> bool:
     runs had their own state)."""
     s = load(run) if s is None else s
     return not is_execution(s) and linked_execution(s) is None
+
+
+# ── the command-line flags ───────────────────────────────────────────────────
+
+def add_session_flag(parser, required: bool = False, group=None, run_help: str | None = None) -> None:
+    """`--session <id or folder>` (dest "session"). `--run` is its old name, kept for old command lines:
+    hidden, unless `run_help` says what it means for this command (spec.py: a run's own stages)."""
+    import argparse
+    target = group if group is not None else parser.add_mutually_exclusive_group(required=required)
+    class _Store(argparse.Action):  # remembers which flag named it (resolve_args: --session prefers a session)
+        def __call__(self, parser, namespace, values, option_string=None):
+            setattr(namespace, self.dest, values)
+            namespace.session_flag = option_string
+
+    target.add_argument("--session", dest="session", metavar="SESSION", action=_Store,
+                        help="the /curate session: its id (.curate/sessions/<id>) or its folder")
+    target.add_argument("--run", dest="session", metavar="RUN", action=_Store, help=run_help or argparse.SUPPRESS)
+
+
+RUN_HELP = "the run: <workflow-id>/<run-id>, its run id or its folder (a session id: that session's current run)"
+
+
+def session_note(ref: str | Path, project: str | Path | None = None) -> str | None:
+    """For deploy.py, pegasus_deploy.py and monitor.py, which take a run: if `ref` names a session
+    rather than a run, one line saying which run it stands for (None if `ref` names a run)."""
+    import ids
+    p = Path(str(ref)).expanduser()
+    if (p / "state.json").is_file():
+        s = read_state(p)
+    else:
+        d = ids.session_dir(Path(project or ".").resolve(), str(ref)) if "/" not in str(ref) else None
+        if d is None:
+            return None
+        s = read_state(d)
+    if is_execution(s):
+        return None
+    ex = (s.get("execution") or {}).get("reference")
+    return (f"note: {ref} is a session; using its current run {ex}" if ex else
+            f"note: {ref} is a session and has no run yet (Gate 4 or \"Start this run?\" opens one)")
+
+
+def flag(s: dict, skill: str = "") -> str:
+    """How a command names this session or run: `--session <id>` for a session, `--run
+    <workflow-id>/<run-id>` for a run, and for the deploy and monitor skills, a session's run."""
+    if is_execution(s):
+        return f"--run {handle(s)}"
+    if skill.rsplit(":", 1)[-1] in ("curate-deploy", "curate-monitor"):  # they take a run (a session: its run)
+        return f"--run {(s.get('execution') or {}).get('reference') or s['run_id']}"
+    return f"--session {s['run_id']}"

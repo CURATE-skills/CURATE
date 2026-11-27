@@ -62,20 +62,20 @@ def _now() -> str:
     return _dt.datetime.now().isoformat(timespec="seconds")
 
 
-def node_dir(run: Path, name: str) -> Path:
-    return run / "functions" / name
+def node_dir(session: Path, name: str) -> Path:
+    return session / "functions" / name
 
 
 def needs_generation(n: FunctionSpec) -> bool:
     return not (n.source in ("catalog", "cached") and n.code)
 
 
-def stubtest_cmd(run: Path, name: str, plugin: str = "<plugin>") -> str:
+def stubtest_cmd(session: Path, name: str, plugin: str = "<plugin>") -> str:
     """The stub-test command for a function. spec.md stores it with a literal `<plugin>` (no
-    absolute, versioned plugin path in the run); the spawn prompt fills in the plugin folder.
+    absolute, versioned plugin path in the session); the spawn prompt fills in the plugin folder.
     Its form, `uv run --quiet <plugin>/scripts/...`, is the one the README's allow rule and the
     skills' allowed-tools match."""
-    return f'uv run --quiet {plugin}/scripts/stubtest.py run --run "{run}" --node {name}'
+    return f'uv run --quiet {plugin}/scripts/stubtest.py run --session "{session}" --node {name}'
 
 
 # ── test data seeding (context_dir.py _seed_real_input / _write_test_data) ──
@@ -185,7 +185,7 @@ def slot_lines(spec: FunctionSpec, wf: WorkflowSpec) -> tuple[str, str]:
     return "\n".join(ins) or "  (none)", "\n".join(outs) or "  (none)"
 
 
-def shared_context_md(run: Path, wf: WorkflowSpec, state: dict) -> str:
+def shared_context_md(session: Path, wf: WorkflowSpec, state: dict) -> str:
     request = (state.get("user_request") or "").strip()
     request_block = ""
     if request:
@@ -196,7 +196,7 @@ def shared_context_md(run: Path, wf: WorkflowSpec, state: dict) -> str:
             "the user specified. Details about other steps belong to those steps.\n")
     ctx_block = ""
     if state.get("context_files"):
-        listing = "\n".join(f"  - {run}/context/{c['name']}"
+        listing = "\n".join(f"  - {session}/context/{c['name']}"
                             + (f" — {c['description']}" if c.get("description") else "")
                             for c in state["context_files"])
         ctx_block = (
@@ -217,16 +217,16 @@ def shared_context_md(run: Path, wf: WorkflowSpec, state: dict) -> str:
 # Workflow: {wf.name}
 {wf.description}
 
-Run directory: `{run}`
+Session folder: `{session}`
 
 ## All Workflow Functions (topological order)
 {', '.join(topo_order(wf))}
 
 Each function is implemented by its own curate-mga subagent, in the order above. A function's
-full specification is in `{run}/functions/<function>/spec.md`.
+full specification is in `{session}/functions/<function>/spec.md`.
 {request_block}
 ## Where you may write
-Only inside YOUR function's folder, `{run}/functions/<your function>/`. Everything else —
+Only inside YOUR function's folder, `{session}/functions/<your function>/`. Everything else —
 other functions' folders, this file, state.json, the catalog — is read-only. Writes elsewhere
 are blocked and fail the attempt.
 
@@ -243,7 +243,7 @@ local paths it is given (see the function-reference skill). `inputs` / `outputs`
 unchanged on every target: FaaSr, Pegasus, and the local stub test each hand it paths. So it
 never names a workflow system: no faasr_* calls or imports, no boto3/S3, no folder or bucket.
 
-## Neighbor Code (`{run}/functions/*/`)
+## Neighbor Code (`{session}/functions/*/`)
 Every function that already exists (catalog/cached reuse, seeds, user-provided originals
 `original_<name>.py`, and functions implemented earlier in this run) lives in its own folder.
 Steps are linked by the FILE NAMES in the spec, which the runtime turns into the paths each
@@ -274,10 +274,10 @@ YOU ARE NOT DONE UNTIL THIS RUNS CLEANLY on representative inputs:
 {ctx_block}"""
 
 
-def node_spec_md(run: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: str,
+def node_spec_md(session: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: str,
                  seeded: list[str]) -> str:
     signature, test_call = signature_and_test_call(spec, wf)
-    me = node_dir(run, spec.name)
+    me = node_dir(session, spec.name)
     inputs_lines, outputs_lines = slot_lines(spec, wf)
     cond = conditional_edges(spec, wf)
     return_line = ("Return `True` or `False`: "
@@ -285,7 +285,7 @@ def node_spec_md(run: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: str,
                    + ". Every declared output must still be written." if cond else
                    "Return `None` (nothing). Every declared output must exist when `main` returns.")
     incoming = "\n".join(f"  '{d.file}' ({d.format or 'any'}) ← from {d.from_node} "
-                         f"(code: {node_dir(run, d.from_node)}/{d.from_node}.py)"
+                         f"(code: {node_dir(session, d.from_node)}/{d.from_node}.py)"
                          for d in wf.data_flow if d.to_node == spec.name) \
         or "  (none — this is a source node)"
     outgoing = "\n".join(f"  '{d.file}' ({d.format or 'any'}) → to {d.to_node}"
@@ -448,7 +448,7 @@ Test call (rank 1): `{test_call}`
 Run it with exactly this, where `<plugin>` is the plugin folder given in your spawn prompt
 (your spawn prompt repeats the command with it filled in):
 ```bash
-{stubtest_cmd(run, spec.name)}
+{stubtest_cmd(session, spec.name)}
 ```
 {seeded_note}{parity_block}{feedback_block}{prior_block}"""
 
@@ -456,12 +456,12 @@ Run it with exactly this, where `<plugin>` is the plugin folder given in your sp
 # ── build ────────────────────────────────────────────────────────────────────
 
 def cmd_build(args) -> dict:
-    run = Path(args.run).resolve()
-    s = load_state(run)
+    session = Path(args.session).resolve()
+    s = load_state(session)
     wf = spec_of(s.get("spec"))
     if wf is None:
         raise InputError("no resolved spec yet")
-    ctx = run / "context"
+    ctx = session / "context"
     ctx.mkdir(exist_ok=True)
     warnings = []
     for c in s.get("context_files") or []:
@@ -472,7 +472,7 @@ def cmd_build(args) -> dict:
 
     # The spec is the source of truth: rebuild every node folder from it. On
     # --resume, folders of nodes that already finished are kept as they are.
-    fns = run / "functions"
+    fns = session / "functions"
     old_mga = s.get("mga") or {}
     keep = {k for k, v in old_mga.items() if v.get("status") in DONE_STATUSES} if args.resume else set()
     if keep:
@@ -487,7 +487,7 @@ def cmd_build(args) -> dict:
     nodes_out = []
     for name in topo_order(wf):
         n = next(x for x in wf.nodes if x.name == name)
-        d = node_dir(run, name)
+        d = node_dir(session, name)
         if name in keep:
             mga[name] = old_mga[name]
             nodes_out.append({"name": name, "generate": False, "source": n.source, "seeded": [],
@@ -506,14 +506,14 @@ def cmd_build(args) -> dict:
         seeded = seed_test_data(d / "test_data", n, s.get("context_files") or [])
         generate = needs_generation(n)
         if generate:
-            (d / "spec.md").write_text(node_spec_md(run, n, wf, feedback, seeded))
+            (d / "spec.md").write_text(node_spec_md(session, n, wf, feedback, seeded))
         mga[name] = {"status": "pending" if generate else "reused", "attempts": 0,
                      "last_output_tail": "", "violations": []}
         nodes_out.append({"name": name, "generate": generate, "source": n.source, "seeded": seeded})
-    (run / "CONTEXT.md").write_text(shared_context_md(run, wf, s))
+    (session / "CONTEXT.md").write_text(shared_context_md(session, wf, s))
     s["mga"] = mga
     s["stage"] = "generate"
-    save_state(run, s)
+    save_state(session, s)
     return {"ok": True, "order": [x["name"] for x in nodes_out], "nodes": nodes_out,
             "warnings": warnings}
 
@@ -525,17 +525,17 @@ def lock_path(project: Path) -> Path:
 
 
 def cmd_lock(args) -> dict:
-    run = Path(args.run).resolve()
-    s = load_state(run)
+    session = Path(args.session).resolve()
+    s = load_state(session)
     if not any(n["name"] == args.node for n in (s.get("spec") or {}).get("nodes", [])):
         raise InputError(f"node {args.node!r} is not in the spec")
     lp = lock_path(Path(s["project_dir"]))
     if lp.exists() and not args.force:
         held = json.loads(lp.read_text())
         return {"ok": False, "error": "an MGA lock is already held", "lock": held}
-    allowed = node_dir(run, args.node)
+    allowed = node_dir(session, args.node)
     allowed.mkdir(parents=True, exist_ok=True)
-    lock = {"run_id": s["run_id"], "run_dir": str(run), "node": args.node,
+    lock = {"run_id": s["run_id"], "run_dir": str(session), "node": args.node,
             "allowed_dir": str(allowed.resolve()), "ts": _now()}
     lp.parent.mkdir(parents=True, exist_ok=True)
     lp.write_text(json.dumps(lock, indent=2) + "\n")
@@ -543,21 +543,21 @@ def cmd_lock(args) -> dict:
 
 
 def cmd_unlock(args) -> dict:
-    if args.run:
-        project = Path(load_state(Path(args.run))["project_dir"])
+    if args.session:
+        project = Path(load_state(Path(args.session))["project_dir"])
     elif args.project_dir:
         project = Path(args.project_dir).resolve()
     else:
         raise InputError("pass --run or --project-dir")
     lp = lock_path(project)
     existed = lp.exists()
-    if existed and args.run:
+    if existed and args.session:
         # Only this run's lock: another run's subagent may still be working.
         try:
             held = json.loads(lp.read_text()).get("run_id")
         except (OSError, ValueError):
             held = None
-        mine = load_state(Path(args.run))["run_id"]
+        mine = load_state(Path(args.session))["run_id"]
         if held and held != mine:
             return {"ok": True, "removed": False, "held_by": held,
                     "note": f"the MGA lock belongs to session {held}; left in place"}
@@ -583,11 +583,11 @@ def _walk(root: Path, skip: set[Path], skip_names: set[str] = frozenset()):
             yield dp / f
 
 
-def manifest(run: Path, node: str, state: dict) -> dict:
-    own = node_dir(run, node).resolve()
-    snaps = (run / "snapshots").resolve()
+def manifest(session: Path, node: str, state: dict) -> dict:
+    own = node_dir(session, node).resolve()
+    snaps = (session / "snapshots").resolve()
     out = {"run": {}, "catalog": {}, "project": {}, "truncated": False}
-    for p in _walk(run.resolve(), {own, snaps}, {"__pycache__"}):
+    for p in _walk(session.resolve(), {own, snaps}, {"__pycache__"}):
         out["run"][str(p)] = _sha(p)
     cat = Path(state["catalog_dir"])
     if cat.is_dir():
@@ -607,23 +607,23 @@ def manifest(run: Path, node: str, state: dict) -> dict:
 
 
 def cmd_snapshot(args) -> dict:
-    run = Path(args.run).resolve()
-    s = load_state(run)
-    m = manifest(run, args.node, s)
-    (run / "snapshots").mkdir(exist_ok=True)
-    (run / "snapshots" / f"{args.node}.json").write_text(json.dumps(m))
+    session = Path(args.session).resolve()
+    s = load_state(session)
+    m = manifest(session, args.node, s)
+    (session / "snapshots").mkdir(exist_ok=True)
+    (session / "snapshots" / f"{args.node}.json").write_text(json.dumps(m))
     return {"ok": True, "files": {k: len(m[k]) for k in ("run", "catalog", "project")},
             "project_truncated": m["truncated"]}
 
 
 def cmd_verify_writes(args) -> dict:
-    run = Path(args.run).resolve()
-    s = load_state(run)
-    snap = run / "snapshots" / f"{args.node}.json"
+    session = Path(args.session).resolve()
+    s = load_state(session)
+    snap = session / "snapshots" / f"{args.node}.json"
     if not snap.exists():
         raise InputError(f"no snapshot for {args.node}; run snapshot first")
     before = json.loads(snap.read_text())
-    after = manifest(run, args.node, s)
+    after = manifest(session, args.node, s)
     violations = []
     for area in ("run", "catalog", "project"):
         b, a = before[area], after[area]
@@ -635,7 +635,7 @@ def cmd_verify_writes(args) -> dict:
             if a[path] != b[path]:
                 violations.append({"area": area, "change": "modified", "path": path})
     s.setdefault("mga", {}).setdefault(args.node, {})["violations"] = violations
-    save_state(run, s)
+    save_state(session, s)
     return {"ok": not violations, "violations": violations}
 
 
@@ -654,12 +654,12 @@ def read_reported_deps(path: Path) -> list[str]:
 
 
 def cmd_harvest(args) -> dict:
-    run = Path(args.run).resolve()
-    s = load_state(run)
+    session = Path(args.session).resolve()
+    s = load_state(session)
     wf = spec_of(s.get("spec"))
     if wf is None:
         raise InputError("no spec yet")
-    d = node_dir(run, args.node)
+    d = node_dir(session, args.node)
     impl = d / f"{args.node}.py"
     if not impl.exists():
         return {"ok": False, "error": f"{impl} was not produced"}
@@ -680,7 +680,7 @@ def cmd_harvest(args) -> dict:
         nodes.append(n)
     s["spec"] = dump(wf.model_copy(update={"nodes": nodes}))
     s["validation"] = None  # the code changed, so any earlier bundle no longer matches
-    save_state(run, s)
+    save_state(session, s)
     return {"ok": True, "node": args.node, **harvested}
 
 
@@ -702,24 +702,24 @@ def stub_result(log: Path) -> dict:
 
 
 def cmd_record(args) -> dict:
-    run = Path(args.run).resolve()
-    s = load_state(run)
+    session = Path(args.session).resolve()
+    s = load_state(session)
     if args.status not in MGA_STATUSES:
         raise InputError(f"--status must be one of {MGA_STATUSES}")
     entry = s.setdefault("mga", {}).setdefault(args.node, {"attempts": 0, "violations": []})
     entry["status"] = args.status
     if args.attempts is not None:
         entry["attempts"] = args.attempts
-    log = node_dir(run, args.node) / "stubtest.log"
+    log = node_dir(session, args.node) / "stubtest.log"
     entry["last_output_tail"] = log.read_text()[-6000:] if log.exists() else ""
     entry["empty_external_inputs"] = stub_result(log).get("empty_external_inputs") or []
-    entry["assumptions"] = read_assumptions(node_dir(run, args.node) / "assumptions.txt")
+    entry["assumptions"] = read_assumptions(node_dir(session, args.node) / "assumptions.txt")
     if args.note:
         entry["note"] = args.note
     node = next((n for n in (s.get("spec") or {}).get("nodes", []) if n["name"] == args.node), None)
     if node is not None:
         entry["basis"] = node_basis(node)  # lets emit detect a spec change after generation
-    save_state(run, s)
+    save_state(session, s)
     return {"ok": True, "node": args.node, "status": args.status, "attempts": entry.get("attempts", 0)}
 
 
@@ -729,11 +729,11 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="scratch.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     sp = sub.add_parser("build")
-    sp.add_argument("--run", required=True)
+    runstate.add_session_flag(sp, required=True)
     sp.add_argument("--resume", action="store_true", help="keep folders of finished nodes")
     for name in ("lock", "snapshot", "verify-writes", "harvest", "record"):
         sp = sub.add_parser(name)
-        sp.add_argument("--run", required=True)
+        runstate.add_session_flag(sp, required=True)
         sp.add_argument("--node", required=True)
         if name == "lock":
             sp.add_argument("--force", action="store_true")
@@ -742,14 +742,14 @@ def main(argv=None) -> int:
             sp.add_argument("--attempts", type=int)
             sp.add_argument("--note")
     sp = sub.add_parser("unlock")
-    sp.add_argument("--run")
+    runstate.add_session_flag(sp)
     sp.add_argument("--project-dir")
     args = p.parse_args(argv)
     commands = {"build": cmd_build, "lock": cmd_lock, "unlock": cmd_unlock,
                 "snapshot": cmd_snapshot, "verify-writes": cmd_verify_writes,
                 "harvest": cmd_harvest, "record": cmd_record}
     try:
-        with runstate.locked(getattr(args, "run", None) or "/nonexistent"):
+        with runstate.locked(getattr(args, "session", None) or "/nonexistent"):
             result = commands[args.cmd](args)
     except (InputError, OSError, json.JSONDecodeError) as e:
         print(json.dumps({"ok": False, "error": str(e)}))

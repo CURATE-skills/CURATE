@@ -1,7 +1,7 @@
 ---
 name: curate-monitor
 description: CURATE monitor stage — watch a deployed workflow's invocation read-only (Actions runs, FaaSr logs, fresh output files) until it succeeds, fails or the time budget runs out. Run it by name; /curate runs it after curate-deploy.
-argument-hint: "--run <run_id> [--minutes N]"
+argument-hint: "--run <workflow-id>/<run-id> [--minutes N]"
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*)
 ---
@@ -20,8 +20,8 @@ Arguments: `$ARGUMENTS`
 
 ## 1. Find the run
 
-`--run <run_id>`: `spec.py runs` lists the runs in this project; use the matching `run` path.
-Without it, ask for `--run`.
+`--run <workflow-id>/<run-id>` (a run id works too; a session id stands for that session's current run): `spec.py
+runs` lists the runs in this project as `runs`; use the matching `run` path. Without it, ask for `--run`.
 
 ## 2. Begin
 

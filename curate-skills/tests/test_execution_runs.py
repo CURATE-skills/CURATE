@@ -69,7 +69,7 @@ def test_publish_writes_approved_json_outside_the_version_hash(source_run):
 def test_gate4_opens_an_execution_run_that_holds_the_records(source_run, capsys, monkeypatch):
     monkeypatch.chdir(state(source_run)["project_dir"])  # commands run in the project (<workflow-id>/<run-id>)
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
+    ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
     gen = raw(source_run)
     ex_dir = Path(gen["execution"]["dir"])
     ex = raw(ex_dir)
@@ -90,7 +90,7 @@ def test_gate4_opens_an_execution_run_that_holds_the_records(source_run, capsys,
     import deploy as D
     from test_deploy import FakeGitHub, FakeS3
     faasr_env(monkeypatch)
-    ok(S, ["begin", "--run", str(source_run), "--stage", "deploy"], capsys)
+    ok(S, ["begin", "--session", str(source_run), "--stage", "deploy"], capsys)
     fake = FakeGitHub(writable=True)
     for argv in (["publish", "--run", ex["reference"], "--confirmed"], ["upload", "--run", ex["reference"], "--confirmed"]):
         code = D.main(argv, opener=fake, s3_factory=FakeS3())
@@ -103,10 +103,10 @@ def test_gate4_opens_an_execution_run_that_holds_the_records(source_run, capsys,
 
 def test_a_rewind_detaches_the_execution_run_and_keeps_its_records(source_run, capsys):
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
+    ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     ex_dir = Path(raw(source_run)["execution"]["dir"])
     runstate.update(source_run, lambda st: st.update(pegasus={"steps": {"launch": {"ok": True}}}))
-    ok(S, ["begin", "--run", str(source_run), "--stage", "emit", "--rewind", "--confirmed"], capsys)
+    ok(S, ["begin", "--session", str(source_run), "--stage", "emit", "--rewind", "--confirmed"], capsys)
     assert state(source_run)["execution"] is None and state(source_run)["pegasus"] is None
     assert raw(ex_dir)["pegasus"] == {"steps": {"launch": {"ok": True}}}  # what ran stays recorded
     assert runstate.resolve_run(raw(ex_dir)["reference"], raw(source_run)["project_dir"]) == ex_dir.resolve()
@@ -115,16 +115,16 @@ def test_a_rewind_detaches_the_execution_run_and_keeps_its_records(source_run, c
 def test_resuming_a_generation_run_still_works(source_run, capsys):
     """A stopped session resumes where it stopped, before and after Gate 4 opened an execution."""
     at_gate4(source_run)
-    ok(S, ["set-stage", "--run", str(source_run), "--stage", "stopped"], capsys)
-    out = ok(S, ["next", "--run", str(source_run)], capsys)
+    ok(S, ["set-stage", "--session", str(source_run), "--stage", "stopped"], capsys)
+    out = ok(S, ["next", "--session", str(source_run)], capsys)
     rid = state(source_run)["run_id"]
     assert out["resume_command"] == f"/curate-skills:curate --resume {rid}"
-    assert ok(S, ["begin", "--run", str(source_run), "--stage", "emit"], capsys)["mode"] == "resume"
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
-    ok(S, ["set-stage", "--run", str(source_run), "--stage", "stopped"], capsys)
-    out = ok(S, ["status", "--run", str(source_run)], capsys)
+    assert ok(S, ["begin", "--session", str(source_run), "--stage", "emit"], capsys)["mode"] == "resume"
+    ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
+    ok(S, ["set-stage", "--session", str(source_run), "--stage", "stopped"], capsys)
+    out = ok(S, ["status", "--session", str(source_run)], capsys)
     assert out["stopped_from"] == "deploy" and out["resume_command"].endswith(f"--resume {rid}")
-    out = ok(S, ["begin", "--run", str(source_run), "--stage", "deploy"], capsys)
+    out = ok(S, ["begin", "--session", str(source_run), "--stage", "deploy"], capsys)
     assert out["mode"] == "resume" and out["stage"] == "deploy"
     assert state(source_run)["execution"]["target"] == "faasr"
 
@@ -252,13 +252,13 @@ def test_gate5_of_a_standalone_execution_run_reports_and_saves_nothing(source_ru
 
 def test_gate5_of_a_generation_run_reads_its_execution_run(source_run, capsys):
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
+    ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
     ex_dir = Path(raw(source_run)["execution"]["dir"])
     runstate.update(ex_dir, lambda st: st.update(monitor={"result": "success", "summary": "✓ from the run"},
                                                  deploy={"steps": {"invoke": {"ok": True}}, "invocation_id": "i"}))
     runstate.update(source_run, lambda st: st.update(stage="finalize"))
-    assert ok(S, ["require", "--run", str(source_run), "--stage", "finalize"], capsys)["problems"] == []
-    g5 = ok(S, ["show", "--run", str(source_run), "--gate", "5"], capsys)
+    assert ok(S, ["require", "--session", str(source_run), "--stage", "finalize"], capsys)["problems"] == []
+    g5 = ok(S, ["show", "--session", str(source_run), "--gate", "5"], capsys)
     assert not g5.get("execution_run") and g5["options"] == S.GATE_OPTIONS[5]
     assert "✓ from the run" in g5["markdown"] and "### What would be saved" in g5["markdown"]
     assert catalog.deployed_run_problem(state(source_run)) is None
@@ -340,11 +340,11 @@ def test_a_workflows_folder_that_is_not_curates_is_refused(make_run, capsys, mon
     from test_start import FIX
     work = run / "work"
     (work / "sk.json").write_text((FIX / "skeleton.json").read_text())
-    ok(S, ["skeleton", "--run", str(run), "--json", str(work / "sk.json")], capsys)
-    ok(S, ["approve", "--run", str(run), "--gate", "1"], capsys)
-    ok(S, ["apply-candidates", "--run", str(run), "--json", str(FIX / "candidates.json")], capsys)
-    ok(S, ["merge-resolved", "--run", str(run), "--json", str(FIX / "resolved.json")], capsys)
-    ok(S, ["approve", "--run", str(run), "--gate", "2"], capsys)
+    ok(S, ["skeleton", "--session", str(run), "--json", str(work / "sk.json")], capsys)
+    ok(S, ["approve", "--session", str(run), "--gate", "1"], capsys)
+    ok(S, ["apply-candidates", "--session", str(run), "--json", str(FIX / "candidates.json")], capsys)
+    ok(S, ["merge-resolved", "--session", str(run), "--json", str(FIX / "resolved.json")], capsys)
+    ok(S, ["approve", "--session", str(run), "--gate", "2"], capsys)
     s = state(run)
     code = {n["name"]: n["code"] for n in json.loads((FIX / "spec-with-code.json").read_text())["nodes"]}
     for n in s["spec"]["nodes"]:
@@ -352,10 +352,10 @@ def test_a_workflows_folder_that_is_not_curates_is_refused(make_run, capsys, mon
     s["mga"] = {n["name"]: {"status": "passed", "attempts": 1} for n in s["spec"]["nodes"]}
     s["stage"] = "gate3"
     runstate.save(run, s)
-    ok(S, ["approve", "--run", str(run), "--gate", "3"], capsys)
-    emit.main(["bundle", "--run", str(run)])
+    ok(S, ["approve", "--session", str(run), "--gate", "3"], capsys)
+    emit.main(["bundle", "--session", str(run)])
     capsys.readouterr()
-    code, out = call(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
+    code, out = call(S, ["approve", "--session", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
     assert code == 2 and f"{theirs} exists and is not CURATE's" in out["error"]
     assert ids.WORKFLOWS_MARKER in out["error"]
     assert sorted(p.name for p in theirs.iterdir()) == ["ci.yml"] and state(run).get("workflow_id") is None
@@ -408,7 +408,7 @@ import runstate, spec as S
 kind, run, n = sys.argv[2], sys.argv[3], int(sys.argv[4])
 for i in range(n):
     if kind == "stage":      # a generation stage: spec.py loads and saves the whole state
-        S.main(["set-cap", "--run", run, "--max", str(100 + i)])
+        S.main(["set-cap", "--session", run, "--max", str(100 + i)])
     elif kind == "gen":      # a stage's own change to the session
         runstate.update(run, lambda s: s.update(iteration=s["iteration"] + 1))
     elif kind == "monitor":  # monitor.py / pegasus_monitor.py: the monitor record, through the session
@@ -425,7 +425,7 @@ def test_concurrent_writes_lose_nothing_and_do_not_deadlock(source_run, capsys):
     import subprocess
     import sys
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
+    ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
     ex_dir = Path(raw(source_run)["execution"]["dir"])
     runstate.update(source_run, lambda s: s.update(iteration=0, monitor={"polls": 0, "direct": 0}))
     plugin = str(Path(__file__).resolve().parents[1])
@@ -452,11 +452,11 @@ def test_resuming_a_generation_run_mid_pipeline(source_run, capsys, monkeypatch)
                       "--existing-code", "keep")
     assert code == 0, out
     run = Path(out["run"])
-    assert ok(S, ["begin", "--run", str(run), "--stage", "generate"], capsys)["mode"] == "fresh"
-    ok(S, ["set-stage", "--run", str(run), "--stage", "stopped"], capsys)
-    assert ok(S, ["next", "--run", str(run)], capsys)["resume_stage_command"] == \
-        f"/curate-skills:curate-generate --run {run.name}"
-    out = ok(S, ["begin", "--run", str(run), "--stage", "generate"], capsys)
+    assert ok(S, ["begin", "--session", str(run), "--stage", "generate"], capsys)["mode"] == "fresh"
+    ok(S, ["set-stage", "--session", str(run), "--stage", "stopped"], capsys)
+    assert ok(S, ["next", "--session", str(run)], capsys)["resume_stage_command"] == \
+        f"/curate-skills:curate-generate --session {run.name}"
+    out = ok(S, ["begin", "--session", str(run), "--stage", "generate"], capsys)
     assert out["mode"] == "resume" and out["stage"] == "generate" and state(run).get("execution") is None
 
 
@@ -464,15 +464,15 @@ def test_resuming_a_run_made_before_execution_runs_had_their_own_state(source_ru
     """A session whose execution folder has no state.json (made before this change) keeps
     every record in its own state.json: resuming reads them there and writes them there."""
     at_gate4(source_run)
-    ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
+    ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     s = state(source_run)  # turn it into the old layout: the records in the session's own file
     ex_dir = Path(s["execution"]["dir"])
     (ex_dir / "state.json").unlink()
     s["pegasus"] = {"steps": {"prepare": {"ok": True}}, "name": "old"}
     (source_run / "state.json").write_text(json.dumps(s))
     assert runstate.is_legacy(source_run) and runstate.files_dir(source_run) == source_run
-    ok(S, ["set-stage", "--run", str(source_run), "--stage", "stopped"], capsys)
-    out = ok(S, ["begin", "--run", str(source_run), "--stage", "deploy"], capsys)
+    ok(S, ["set-stage", "--session", str(source_run), "--stage", "stopped"], capsys)
+    out = ok(S, ["begin", "--session", str(source_run), "--stage", "deploy"], capsys)
     assert out["mode"] == "resume" and out["stage"] == "deploy"
     runstate.update(source_run, lambda st: st["pegasus"].update(name="still here"))
     assert raw(source_run)["pegasus"]["name"] == "still here" and not (ex_dir / "state.json").exists()

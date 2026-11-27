@@ -33,11 +33,11 @@ def source_run(make_run, capsys, monkeypatch, tmp_path):
     run = make_run()
     work = run / "work"
     (work / "sk.json").write_text((FIX / "skeleton.json").read_text())
-    ok(S, ["skeleton", "--run", str(run), "--json", str(work / "sk.json")], capsys)
-    ok(S, ["approve", "--run", str(run), "--gate", "1"], capsys)
-    ok(S, ["apply-candidates", "--run", str(run), "--json", str(FIX / "candidates.json")], capsys)
-    ok(S, ["merge-resolved", "--run", str(run), "--json", str(FIX / "resolved.json")], capsys)
-    ok(S, ["approve", "--run", str(run), "--gate", "2"], capsys)
+    ok(S, ["skeleton", "--session", str(run), "--json", str(work / "sk.json")], capsys)
+    ok(S, ["approve", "--session", str(run), "--gate", "1"], capsys)
+    ok(S, ["apply-candidates", "--session", str(run), "--json", str(FIX / "candidates.json")], capsys)
+    ok(S, ["merge-resolved", "--session", str(run), "--json", str(FIX / "resolved.json")], capsys)
+    ok(S, ["approve", "--session", str(run), "--gate", "2"], capsys)
     s = state(run)
     code = {n["name"]: n["code"] for n in json.loads((FIX / "spec-with-code.json").read_text())["nodes"]}
     for n in s["spec"]["nodes"]:
@@ -45,10 +45,10 @@ def source_run(make_run, capsys, monkeypatch, tmp_path):
     s["mga"] = {n["name"]: {"status": "passed", "attempts": 1} for n in s["spec"]["nodes"]}
     s["stage"] = "gate3"
     (run / "state.json").write_text(json.dumps(s))
-    ok(S, ["approve", "--run", str(run), "--gate", "3"], capsys)
-    emit.main(["bundle", "--run", str(run)])
+    ok(S, ["approve", "--session", str(run), "--gate", "3"], capsys)
+    emit.main(["bundle", "--session", str(run)])
     capsys.readouterr()
-    ok(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
+    ok(S, ["approve", "--session", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
     return run
 
 
@@ -94,7 +94,7 @@ def test_from_run_copies_the_approved_results_into_a_new_run(source_run, capsys,
     has_code = at in ("emit", "finalize")
     assert all(bool(n["code"]) is has_code for n in s["spec"]["nodes"])
     # the new run passes its own stage's precondition
-    assert ok(S, ["require", "--run", str(new), "--stage", at], capsys)["problems"] == []
+    assert ok(S, ["require", "--session", str(new), "--stage", at], capsys)["problems"] == []
 
 
 def test_dry_run_prints_what_will_be_used_and_creates_nothing(source_run, capsys):
@@ -119,7 +119,7 @@ def test_refuses_an_approval_superseded_by_a_revision(source_run, capsys):
     s = state(source_run)
     s["stage"] = "gate4"
     (source_run / "state.json").write_text(json.dumps(s))
-    ok(S, ["directive", "--run", str(source_run), "--gate", "4", "--text", "use csv",
+    ok(S, ["directive", "--session", str(source_run), "--gate", "4", "--text", "use csv",
            "--structural", "false"], capsys)  # functional → back to reuse
     for at in ("generate", "emit", "finalize"):
         code, out = start(capsys, source_run, at, "--from-run", rid)
@@ -244,9 +244,9 @@ def test_from_run_at_generate_carries_the_gate3_code(source_run, capsys, monkeyp
     assert {n["name"]: n["code"] for n in nodes} == approved and {n["source"] for n in nodes} == {source}
     rec = state(new)["history"][-1]
     assert rec["code_snapshot"].endswith("gate3-approve.json") and rec["existing_code"] == mode
-    assert ok(S, ["require", "--run", str(new), "--stage", "generate"], capsys)["problems"] == []
-    ok(S, ["begin", "--run", str(new), "--stage", "generate"], capsys)
-    built = ok(scratch, ["build", "--run", str(new)], capsys)
+    assert ok(S, ["require", "--session", str(new), "--stage", "generate"], capsys)["problems"] == []
+    ok(S, ["begin", "--session", str(new), "--stage", "generate"], capsys)
+    built = ok(scratch, ["build", "--session", str(new)], capsys)
     assert all(n["generate"] is generated for n in built["nodes"])  # keep → no subagents at all
     if mode == "keep":
         assert "keeps generate_text, split, map, shuffle, reduce (stub-tested only" in out["summary"]
@@ -261,7 +261,7 @@ def test_from_run_at_generate_refuses_without_the_foreground_variable(source_run
     code, out = start(capsys, source_run, "generate", "--from-run", state(source_run)["run_id"],
                       "--existing-code", "rewrite")
     assert code == 0, out
-    code, out = call(S, ["require", "--run", out["run"], "--stage", "generate"], capsys)
+    code, out = call(S, ["require", "--session", out["run"], "--stage", "generate"], capsys)
     assert code == 1 and "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS" in out["problems"][0]
 
 
@@ -277,11 +277,11 @@ def test_keep_without_approved_code_is_refused(make_run, capsys):
     run = make_run()
     work = run / "work"
     (work / "sk.json").write_text((FIX / "skeleton.json").read_text())
-    ok(S, ["skeleton", "--run", str(run), "--json", str(work / "sk.json")], capsys)
-    ok(S, ["approve", "--run", str(run), "--gate", "1"], capsys)
-    ok(S, ["apply-candidates", "--run", str(run), "--json", str(FIX / "candidates.json")], capsys)
-    ok(S, ["merge-resolved", "--run", str(run), "--json", str(FIX / "resolved.json")], capsys)
-    ok(S, ["approve", "--run", str(run), "--gate", "2"], capsys)
+    ok(S, ["skeleton", "--session", str(run), "--json", str(work / "sk.json")], capsys)
+    ok(S, ["approve", "--session", str(run), "--gate", "1"], capsys)
+    ok(S, ["apply-candidates", "--session", str(run), "--json", str(FIX / "candidates.json")], capsys)
+    ok(S, ["merge-resolved", "--session", str(run), "--json", str(FIX / "resolved.json")], capsys)
+    ok(S, ["approve", "--session", str(run), "--gate", "2"], capsys)
     rid = state(run)["run_id"]
     code, out = start(capsys, run, "generate", "--from-run", rid, "--existing-code", "keep")
     assert code == 2 and "no approved code to keep" in out["error"] and "--from-bundle" in out["error"]
@@ -307,15 +307,15 @@ def test_gate4_approve_and_deploy_goes_to_the_deploy_stage(source_run, capsys, m
     s = state(source_run)
     s["stage"] = "gate4"
     (source_run / "state.json").write_text(json.dumps(s))
-    out = ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
+    out = ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
     assert out["stage"] == "deploy" and out["deploy"] == "yes" and out["next_skill"] == "curate-skills:curate-deploy"
-    assert ok(S, ["require", "--run", str(source_run), "--stage", "deploy"], capsys)["problems"] == []
-    code, out = call(S, ["approve", "--run", str(source_run), "--gate", "3", "--deploy", "yes"], capsys)
+    assert ok(S, ["require", "--session", str(source_run), "--stage", "deploy"], capsys)["problems"] == []
+    code, out = call(S, ["approve", "--session", str(source_run), "--gate", "3", "--deploy", "yes"], capsys)
     assert code == 2 and "only applies to Gate 4" in out["error"]
 
 
 def test_deploy_requires_the_deploy_choice(source_run, capsys):
-    code, out = call(S, ["require", "--run", str(source_run), "--stage", "deploy"], capsys)
+    code, out = call(S, ["require", "--session", str(source_run), "--stage", "deploy"], capsys)
     assert code == 1 and f"--start-at deploy --workflow {state(source_run)['workflow_id']}" in out["problems"][0]
 
 
@@ -326,7 +326,7 @@ def test_approve_and_deploy_builds_the_faasr_bundle_from_the_version(source_run,
     s = state(source_run)
     s.update(stage="gate4")
     (source_run / "state.json").write_text(json.dumps(s))
-    out = ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
+    out = ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
     s = state(source_run)
     ex = s["execution"]
     assert out["stage"] == "deploy" and ex["target"] == "faasr" and ex["reference"].startswith(s["workflow_id"] + "/")
@@ -346,7 +346,7 @@ def test_approve_and_deploy_refused_before_publishing_when_faasr_cannot_build(so
     def cannot(*a, **kw):
         raise X.ExecutionError("cannot be built for FaaSr: step x scatters over several axes")
     monkeypatch.setattr(X, "faasr_built", cannot)
-    code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
+    code, out = call(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
     assert code == 2 and "cannot be built for FaaSr" in out["error"] and "choose another target" in out["error"]
     assert sorted(p.name for p in (Path(s["project_dir"]) / "workflows").iterdir()) == versions
 
@@ -380,7 +380,7 @@ def test_start_at_deploy_only_from_a_run(source_run, capsys):
 def test_confirm_start_records_nothing_for_other_start_points(source_run, capsys):
     code, out = start(capsys, source_run, "emit", "--from-run", state(source_run)["run_id"])
     before = state(Path(out["run"]))
-    assert ok(S, ["confirm-start", "--run", out["run"]], capsys)["recorded"] is None
+    assert ok(S, ["confirm-start", "--session", out["run"]], capsys)["recorded"] is None
     assert state(Path(out["run"])) == before
 
 
@@ -399,8 +399,8 @@ def test_start_at_deploy_end_to_end_with_fakes(source_run, capsys, monkeypatch):
     code, out = start(capsys, source_run, "deploy", "--from-run", state(source_run)["run_id"])
     assert code == 0, out
     new = out["run"]
-    ok(S, ["confirm-start", "--run", new], capsys)
-    assert ok(S, ["begin", "--run", new, "--stage", "deploy"], capsys)["mode"] == "fresh"
+    ok(S, ["confirm-start", "--session", new], capsys)
+    assert ok(S, ["begin", "--session", new, "--stage", "deploy"], capsys)["mode"] == "fresh"
 
     fake = FakeGitHub(writable=True)
     code = D.main(["preflight", "--run", new], opener=fake, s3_factory=FakeS3())
@@ -438,7 +438,7 @@ def test_redoing_emit_clears_a_versioned_approval(source_run, capsys):
     vdir = Path(s["version_dir"])
     s.update(deploy_choice="yes", deploy={"steps": {"publish": {"ok": True}}})
     (source_run / "state.json").write_text(json.dumps(s))
-    out = ok(S, ["begin", "--run", str(source_run), "--stage", "emit", "--rewind", "--confirmed"], capsys)
+    out = ok(S, ["begin", "--session", str(source_run), "--stage", "emit", "--rewind", "--confirmed"], capsys)
     assert {"workflow_id", "version_dir", "version_hash", "deploy_choice", "deploy"} <= set(out["cleared"])
     s = state(source_run)
     assert s["workflow_id"] is None and s["execution"] is None and (vdir / "workflow.yml").is_file()

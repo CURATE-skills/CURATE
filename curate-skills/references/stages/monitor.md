@@ -4,6 +4,10 @@ Paths below are relative to `<plugin>`; `spec.py …`, `monitor.py …` are the 
 
 Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
 
+`<run>` is the run's `<workflow-id>/<run-id>`: for a session that reached this stage, `spec.py status
+--session <session>` shows it as `reference`; a run started with `--start-at deploy` is its own. Every
+command below takes it as `--run <run>` (spec.py too: it acts on the session the run belongs to).
+
 Precondition: `spec.py begin --run <run> --stage monitor` returned `ok` (the deploy stage started
 the workflow and recorded its InvocationID; or the run stopped here and this is a re-check).
 

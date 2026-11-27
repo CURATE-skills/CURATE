@@ -61,6 +61,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import envfile  # noqa: E402
 import leakcheck  # noqa: E402
+from runstate import RUN_HELP  # noqa: E402
 
 NATIVE_CONTAINERS = SCRIPT_DIR / "vendor" / "curate_deploy" / "native_containers.txt"
 SUFFIX_RX = re.compile(r"^[-_A-Za-z0-9]+$")
@@ -555,7 +556,10 @@ def project_runs(run: str | Path) -> list[tuple[Path, dict]]:
 
 def _find(project: Path, ref: str) -> Path:
     import runstate
-    return runstate.resolve_run(ref, project)
+    try:
+        return runstate.resolve_run(ref, project)
+    except runstate.AmbiguousRef as e:
+        raise InputError(str(e)) from None
 
 
 def lineage(run: str | Path, s: dict) -> list[tuple[str, dict | None]]:
@@ -1174,7 +1178,8 @@ RUNNERS = {"register": run_register, "invoke": run_invoke}
 
 
 def _resume_cmd(s: dict) -> str:
-    return f"/curate-skills:curate-deploy --run {s['run_id']}"
+    import runstate
+    return f"/curate-skills:curate-deploy {runstate.flag(s, 'curate-deploy')}"
 
 
 def deploy_step(run: str, step: str, suffix: str, gh: GitHub | None, token: str | None,
@@ -1833,7 +1838,7 @@ def main(argv=None, opener=None, s3_factory=boto3_s3) -> int:
     for name, help_ in [("preflight", "read-only check of what deploying would do"),
                         *[(x, STEP_WHAT[x] + " (needs --confirmed)") for x in STEPS]]:
         q = sub.add_parser(name, help=help_)
-        q.add_argument("--run", required=True)
+        q.add_argument("--run", required=True, help=RUN_HELP)
         q.add_argument("--name-suffix", default=None,
                        help="deploy name suffix (default: $CURATE_DEPLOY_NAME_SUFFIX, else -<MMDD-HHMM> of the "
                             "run that approved Gate 4)")
@@ -1845,15 +1850,15 @@ def main(argv=None, opener=None, s3_factory=boto3_s3) -> int:
                            help="the user said yes to this step (passed only after asking them)")
     q = sub.add_parser("reuse", help="invoke only: reuse the identical deployment of the run this one was "
                                      "started from (needs --confirmed)")
-    q.add_argument("--run", required=True)
+    q.add_argument("--run", required=True, help=RUN_HELP)
     q.add_argument("--name-suffix", default=None)
     q.add_argument("--confirmed", action="store_true")
-    sub.add_parser("status", help="which deploy steps are done").add_argument("--run", required=True)
+    sub.add_parser("status", help="which deploy steps are done").add_argument("--run", required=True, help=RUN_HELP)
     q = sub.add_parser("list", help="deployments recorded in this project's runs (read-only)")
     q.add_argument("--project", default=".", help="the project folder (default: the current one)")
     q = sub.add_parser("teardown", help="delete exactly what one run's deploy log recorded (needs --confirmed "
                                         "and the --plan id shown)")
-    q.add_argument("--run", required=True)
+    q.add_argument("--run", required=True, help=RUN_HELP)
     q.add_argument("--confirmed", action="store_true")
     q.add_argument("--plan", help="the plan_id of the list the user saw")
     q.add_argument("--outputs", default="keep", choices=sorted(OUTPUT_CHOICES),
@@ -1862,9 +1867,9 @@ def main(argv=None, opener=None, s3_factory=boto3_s3) -> int:
     q.add_argument("--to", help="with --outputs download: an empty folder outside the run "
                                 "(default <project>/teardown-outputs/<deploy name>)")
     args = p.parse_args(argv)
-    if getattr(args, "run", None):  # an id, <workflow-id>/<run-id> or a folder
-        import runstate
-        args.run = str(runstate.resolve_run(args.run))
+    import runstate  # --run: <workflow-id>/<run-id>, a run id or folder; a session: its current run
+    if runstate.resolve_args(args, "run", note=True):
+        return 2
     envfile.load()  # ~/.config/curate/.env fills deploy variables the environment leaves unset
     if args.cmd in ("status", "list"):
         try:

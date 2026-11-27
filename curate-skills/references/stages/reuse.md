@@ -5,14 +5,14 @@ is the script shorthand. This stage has no gate.
 
 Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`: no variable assignments, no `&&` chains, no subshells.
 
-Precondition: `spec.py begin --run <run> --stage reuse` returned `ok`.
+Precondition: `spec.py begin --session <session> --stage reuse` returned `ok`.
 
 1. Read `<plugin>/references/prompts/mca-candidates.md`, and `<plugin>/references/prompts/mca-user-model.md`
    if any node has a user model.
-2. `spec.py prompt-context --run <run> --stage reuse`. It includes each node's BM25 catalog
+2. `spec.py prompt-context --session <session> --stage reuse`. It includes each node's BM25 catalog
    matches (top 5), any prior implementation, and the standing change requests. Decide every
-   node independently, as `mca-candidates.md` says, and write `<run>/work/candidates.json`.
-3. `spec.py apply-candidates --run <run> --json <run>/work/candidates.json`. On exit 2, fix the
+   node independently, as `mca-candidates.md` says, and write `<session>/work/candidates.json`.
+3. `spec.py apply-candidates --session <session> --json <session>/work/candidates.json`. On exit 2, fix the
    file and re-run. This moves the run to `resolve`.
 4. **Show the decisions** as a table — function, source (`new`, `catalog`, `adapt`, `cached`,
    user model), and origin (`← [catalog] name` / `← [cache] name`) — plus every `note` and

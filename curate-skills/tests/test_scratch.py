@@ -46,7 +46,7 @@ def built(make_run, tmp_path, capsys):
                                   {"name": "chunk_2.csv", "path": str(shard), "description": ""}])
     stale = run / "functions" / "ghost"
     stale.mkdir(parents=True)
-    code, out = call(scratch, ["build", "--run", str(run)], capsys)
+    code, out = call(scratch, ["build", "--session", str(run)], capsys)
     assert code == 0, out
     return run, out
 
@@ -74,7 +74,7 @@ def test_build_layout(built):
 def test_spec_md_content(built):
     run, _ = built
     work = (run / "functions" / "work" / "spec.md").read_text()
-    assert "Parallel Execution (RANK = 2)" in work and "<plugin>/scripts/stubtest.py run --run" in work
+    assert "Parallel Execution (RANK = 2)" in work and "<plugin>/scripts/stubtest.py run --session" in work
     assert f"Your folder (the only place you may write): `{run}/functions/work`" in work
     load_ctx = (run / "CONTEXT.md").read_text()
     assert "Every rank 1..N is run" in load_ctx and "count words" in load_ctx
@@ -86,30 +86,30 @@ def test_spec_md_content(built):
 
 def test_lock_unlock(built, capsys):
     run, _ = built
-    code, out = call(scratch, ["lock", "--run", str(run), "--node", "work"], capsys)
+    code, out = call(scratch, ["lock", "--session", str(run), "--node", "work"], capsys)
     lock = json.loads((Path(state(run)["project_dir"]) / ".curate" / "mga.lock.json").read_text())
     assert code == 0 and lock["allowed_dir"] == str((run / "functions" / "work").resolve())
-    code, out = call(scratch, ["lock", "--run", str(run), "--node", "model"], capsys)
+    code, out = call(scratch, ["lock", "--session", str(run), "--node", "model"], capsys)
     assert code == 1 and out["lock"]["node"] == "work"
-    assert call(scratch, ["lock", "--run", str(run), "--node", "model", "--force"], capsys)[0] == 0
-    code, out = call(scratch, ["unlock", "--run", str(run)], capsys)
-    assert out["removed"] and call(scratch, ["unlock", "--run", str(run)], capsys)[1]["removed"] is False
-    assert call(scratch, ["lock", "--run", str(run), "--node", "ghost"], capsys)[0] == 2
+    assert call(scratch, ["lock", "--session", str(run), "--node", "model", "--force"], capsys)[0] == 0
+    code, out = call(scratch, ["unlock", "--session", str(run)], capsys)
+    assert out["removed"] and call(scratch, ["unlock", "--session", str(run)], capsys)[1]["removed"] is False
+    assert call(scratch, ["lock", "--session", str(run), "--node", "ghost"], capsys)[0] == 2
 
 
 def test_snapshot_and_verify_writes(built, capsys, tmp_path):
     run, _ = built
-    ok(scratch, ["snapshot", "--run", str(run), "--node", "work"], capsys)
+    ok(scratch, ["snapshot", "--session", str(run), "--node", "work"], capsys)
     (run / "functions" / "work" / "work.py").write_text("ok")
     (run / "functions" / "work" / "test_output" / "x").write_text("ok")
-    code, out = call(scratch, ["verify-writes", "--run", str(run), "--node", "work"], capsys)
+    code, out = call(scratch, ["verify-writes", "--session", str(run), "--node", "work"], capsys)
     assert code == 0 and out["violations"] == []
 
-    ok(scratch, ["snapshot", "--run", str(run), "--node", "work"], capsys)
+    ok(scratch, ["snapshot", "--session", str(run), "--node", "work"], capsys)
     (run / "functions" / "load" / "load.py").write_text("tampered")
     (run / "CONTEXT.md").unlink()
     (Path(state(run)["project_dir"]) / "stray.txt").write_text("x")
-    code, out = call(scratch, ["verify-writes", "--run", str(run), "--node", "work"], capsys)
+    code, out = call(scratch, ["verify-writes", "--session", str(run), "--node", "work"], capsys)
     changes = {(v["area"], v["change"], Path(v["path"]).name) for v in out["violations"]}
     assert code == 1 and changes == {("run", "modified", "load.py"), ("run", "removed", "CONTEXT.md"),
                                      ("project", "added", "stray.txt")}
@@ -120,30 +120,30 @@ def test_verify_detects_catalog_writes(built, capsys):
     run, _ = built
     cat = Path(state(run)["catalog_dir"])
     cat.mkdir(parents=True, exist_ok=True)
-    ok(scratch, ["snapshot", "--run", str(run), "--node", "work"], capsys)
+    ok(scratch, ["snapshot", "--session", str(run), "--node", "work"], capsys)
     (cat / "evil.json").write_text("{}")
-    code, out = call(scratch, ["verify-writes", "--run", str(run), "--node", "work"], capsys)
+    code, out = call(scratch, ["verify-writes", "--session", str(run), "--node", "work"], capsys)
     assert code == 1 and out["violations"][0]["area"] == "catalog"
 
 
 def test_harvest_and_record(built, capsys):
     run, _ = built
     d = run / "functions" / "work"
-    code, out = call(scratch, ["harvest", "--run", str(run), "--node", "work"], capsys)
+    code, out = call(scratch, ["harvest", "--session", str(run), "--node", "work"], capsys)
     assert code == 1  # nothing produced yet
     (d / "work.py").write_text('import os\n\ndef main(inputs, outputs, params):\n    k = os.environ["API_KEY"]\n')
     (d / "work.deps.txt").write_text("# deps\nnumpy\njson\nfaasr\n")
-    code, out = call(scratch, ["harvest", "--run", str(run), "--node", "work"], capsys)
+    code, out = call(scratch, ["harvest", "--session", str(run), "--node", "work"], capsys)
     assert code == 0 and out["secrets"] == ["API_KEY"] and out["dependencies"] == ["numpy"]
     node = next(n for n in state(run)["spec"]["nodes"] if n["name"] == "work")
     assert node["code"].startswith("import os") and node["dependencies"] == ["numpy"]
 
     (d / "stubtest.log").write_text("boom")
-    code, out = call(scratch, ["record", "--run", str(run), "--node", "work", "--status", "failed",
+    code, out = call(scratch, ["record", "--session", str(run), "--node", "work", "--status", "failed",
                                "--attempts", "2"], capsys)
     m = state(run)["mga"]["work"]
     assert m["status"] == "failed" and m["attempts"] == 2 and m["last_output_tail"] == "boom"
-    assert call(scratch, ["record", "--run", str(run), "--node", "work", "--status", "great"], capsys)[0] == 2
+    assert call(scratch, ["record", "--session", str(run), "--node", "work", "--status", "great"], capsys)[0] == 2
 
 
 def test_fan_out_text_depends_on_rank_placeholder(make_run, capsys):
@@ -156,7 +156,7 @@ def test_fan_out_text_depends_on_rank_placeholder(make_run, capsys):
             edges=[{"from_node": "src", "to_node": "par"}],
             data_flow=[{"from_node": "src", "to_node": "par", "file": handed_file}])
         run = make_run(spec=wf)
-        ok(scratch, ["build", "--run", str(run)], capsys)
+        ok(scratch, ["build", "--session", str(run)], capsys)
         return (run / "functions" / "src" / "spec.md").read_text()
 
     shared = spec_md("numbers.txt")
@@ -175,7 +175,7 @@ def plain_mapreduce_md(make_run, capsys):
         n.source, n.code = "new", None
     wf.nodes[2].secrets = ["API_KEY"]
     run = make_run(spec=wf)
-    ok(scratch, ["build", "--run", str(run)], capsys)
+    ok(scratch, ["build", "--session", str(run)], capsys)
     md = {n.name: (run / "functions" / n.name / "spec.md").read_text() for n in wf.nodes}
     return run, md
 
@@ -214,7 +214,7 @@ def test_spec_md_list_input_and_conditional_return(make_run, capsys):
         edges=[{"from_node": "a", "to_node": "g"}, {"from_node": "g", "to_node": "yes", "condition": "True"},
                {"from_node": "g", "to_node": "no", "condition": "False"}])
     run = make_run(spec=wf)
-    ok(scratch, ["build", "--run", str(run)], capsys)
+    ok(scratch, ["build", "--session", str(run)], capsys)
     g = (run / "functions" / "g" / "spec.md").read_text()
     assert "a LIST of 2 paths, every copy in rank order 1..2" in g
     assert "-> bool" in g and "`False` runs no; `True` runs yes" in g
@@ -235,7 +235,7 @@ def test_record_keeps_empty_external_inputs(built, capsys):
     run, _ = built
     d = run / "functions" / "work"
     (d / "stubtest.log").write_text(json.dumps({"ok": True, "empty_external_inputs": ["raw.csv"]}) + "\n\nlines")
-    ok(scratch, ["record", "--run", str(run), "--node", "work", "--status", "passed"], capsys)
+    ok(scratch, ["record", "--session", str(run), "--node", "work", "--status", "passed"], capsys)
     assert state(run)["mga"]["work"]["empty_external_inputs"] == ["raw.csv"]
 
 
@@ -243,15 +243,15 @@ def test_build_resume_keeps_finished_nodes(built, capsys):
     run, _ = built
     (run / "functions" / "work" / "work.py").write_text("def work(): 'done'\n")
     (run / "functions" / "model" / "model.py").write_text("partial")
-    ok(scratch, ["record", "--run", str(run), "--node", "work", "--status", "passed", "--attempts", "1"], capsys)
-    out = ok(scratch, ["build", "--run", str(run), "--resume"], capsys)
+    ok(scratch, ["record", "--session", str(run), "--node", "work", "--status", "passed", "--attempts", "1"], capsys)
+    out = ok(scratch, ["build", "--session", str(run), "--resume"], capsys)
     kept = {n["name"]: n.get("kept") for n in out["nodes"]}
     assert kept["work"] == "passed" and kept["model"] is None
     assert (run / "functions" / "work" / "work.py").read_text() == "def work(): 'done'\n"
     assert not (run / "functions" / "model" / "model.py").exists()  # unfinished node rebuilt
     m = state(run)["mga"]
     assert m["work"]["status"] == "passed" and m["model"]["status"] == "pending"
-    ok(scratch, ["build", "--run", str(run)], capsys)  # without --resume everything is rebuilt
+    ok(scratch, ["build", "--session", str(run)], capsys)  # without --resume everything is rebuilt
     assert not (run / "functions" / "work" / "work.py").exists()
 
 
@@ -259,5 +259,5 @@ def test_spec_md_stores_no_plugin_path(built):
     run, _ = built
     text = (run / "functions" / "work" / "spec.md").read_text()
     plugin = str(Path(__file__).resolve().parents[1])
-    assert f'uv run --quiet <plugin>/scripts/stubtest.py run --run "{run}" --node work' in text
+    assert f'uv run --quiet <plugin>/scripts/stubtest.py run --session "{run}" --node work' in text
     assert plugin not in text  # not the checkout, nor a versioned plugin-cache path

@@ -1,7 +1,7 @@
 ---
 name: curate-skeleton
 description: CURATE stage 1 of 6 — ask for the workflow's name, turn a workflow sketch into a skeleton (the steps and their order) and stop at Gate 1. Run it by name; /curate runs it as part of the full pipeline.
-argument-hint: "--run <run_id> | --from <sketch> | <sketch text> [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity]"
+argument-hint: "--session <session_id> | --from <sketch> | <sketch text> [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity]"
 disable-model-invocation: true
 allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*)
 ---
@@ -19,7 +19,8 @@ Arguments: `$ARGUMENTS`
 
 ## 1. Find or create the run
 
-- `--run <run_id>`: `spec.py runs` lists the runs in this project; use the matching `run` path.
+- `--session <session_id>` (the old `--run <session_id>` works too): `spec.py sessions` lists the
+  sessions in this project; use the matching `session` path.
 - `--from <file>`: create a run from your file —
   `spec.py import --stage skeleton --from <file> [--catalog-dir D] [--mga-retries N]
   [--stubtest-mode M] [--user-model P]... [--context-file P]...
@@ -30,11 +31,11 @@ Arguments: `$ARGUMENTS`
   run id, the settings and any `warnings`. Accepted files: `${CLAUDE_PLUGIN_ROOT}/references/stage-io.md`.
 - Plain text and no flags: it is the sketch. Write it verbatim to
   `.curate/sketches/<short-name>.txt` and import that file as above.
-- Neither: ask for `--run` or `--from`. On exit 2, show the `error` exactly and stop.
+- Neither: ask for `--session` or `--from`. On exit 2, show the `error` exactly and stop.
 
 ## 2. Begin
 
-`spec.py begin --run <run> --stage skeleton`. If `ok` is false, show the `error` exactly — it
+`spec.py begin --session <session> --stage skeleton`. If `ok` is false, show the `error` exactly — it
 names what to do instead — and stop, with one exception: if it has `needs_confirmation` (the run
 is already past this stage), ask the user whether to go back, stating what it costs (the error
 says). Only if they clearly say yes, run `begin` again with `--rewind --confirmed`; never pass

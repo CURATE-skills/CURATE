@@ -62,12 +62,12 @@ def test_missing_file_and_bad_node(make_run):
 def test_cli_exit_codes(make_run, capsys):
     run = _setup(make_run, [GEN])
     _write(run, "gen", P_GEN)
-    assert stubtest.main(["run", "--run", str(run), "--node", "gen"]) == 0
+    assert stubtest.main(["run", "--session", str(run), "--node", "gen"]) == 0
     assert json.loads(capsys.readouterr().out)["ok"]
     _write(run, "gen", GEN_CODE)
-    assert stubtest.main(["run", "--run", str(run), "--node", "gen"]) == 1
+    assert stubtest.main(["run", "--session", str(run), "--node", "gen"]) == 1
     capsys.readouterr()
-    assert stubtest.main(["run", "--run", str(run), "--node", "ghost"]) == 2
+    assert stubtest.main(["run", "--session", str(run), "--node", "ghost"]) == 2
 
 
 # ── plain functions: main(inputs, outputs, params) on local paths ──

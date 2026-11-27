@@ -1,7 +1,7 @@
 ---
 name: curate-emit
 description: CURATE stage 5 of 6 — write the workflow draft (CWL), validate it with what each target's builder makes of it, and stop at Gate 4, where approving publishes it as the workflow's next version. Run it by name; /curate runs it as part of the full pipeline.
-argument-hint: "--run <run_id> | --from <spec.json> [--functions DIR] [--review] [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity]"
+argument-hint: "--session <session_id> | --from <spec.json> [--functions DIR] [--review] [--catalog DIR] [--mga-retries N] [--stubtest-mode strict|parity]"
 disable-model-invocation: true
 allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*)
 ---
@@ -19,7 +19,8 @@ Arguments: `$ARGUMENTS`
 
 ## 1. Find or create the run
 
-- `--run <run_id>`: `spec.py runs` lists the runs in this project; use the matching `run` path.
+- `--session <session_id>` (the old `--run <session_id>` works too): `spec.py sessions` lists the
+  sessions in this project; use the matching `session` path.
 - `--from <file>`: create a run from your file —
   `spec.py import --stage emit --from <file> [--functions DIR] [--review] [--catalog-dir D] [--mga-retries N]
   [--stubtest-mode M] [--user-model P]... [--context-file P]...
@@ -28,11 +29,11 @@ Arguments: `$ARGUMENTS`
   Keep the `--config-*` values in single quotes exactly as written. Map `--catalog` →
   `--catalog-dir`, `--attach` → `--user-model`, `--context` → `--context-file`. Tell the user the
   run id, the settings and any `warnings`. Accepted files: `${CLAUDE_PLUGIN_ROOT}/references/stage-io.md`.
-- Neither: ask for `--run` or `--from`. On exit 2, show the `error` exactly and stop.
+- Neither: ask for `--session` or `--from`. On exit 2, show the `error` exactly and stop.
 
 ## 2. Begin
 
-`spec.py begin --run <run> --stage emit`. If `ok` is false, show the `error` exactly — it
+`spec.py begin --session <session> --stage emit`. If `ok` is false, show the `error` exactly — it
 names what to do instead — and stop, with one exception: if it has `needs_confirmation` (the run
 is already past this stage), ask the user whether to go back, stating what it costs (the error
 says). Only if they clearly say yes, run `begin` again with `--rewind --confirmed`; never pass

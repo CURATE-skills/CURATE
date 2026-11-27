@@ -33,6 +33,7 @@ from pydantic import ValidationError
 
 import faasr_wrapper
 from curate_models import WorkflowSpec
+import runstate
 from runstate import run_lock, spec_hash, write_json_atomic
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -348,8 +349,8 @@ def load_spec(args) -> WorkflowSpec:
     if args.spec:
         path = Path(args.spec)
         data = json.loads(path.read_text())
-    elif args.run:
-        path = Path(args.run) / "state.json"
+    elif args.session:
+        path = Path(args.session) / "state.json"
         data = json.loads(path.read_text()).get("spec")
         if not data:
             raise InputError(f"{path} has no 'spec' yet")
@@ -367,11 +368,11 @@ def load_spec(args) -> WorkflowSpec:
     return spec
 
 
-def update_state(run: str | None, **fields) -> None:
-    if not run:
+def update_state(session: str | None, **fields) -> None:
+    if not session:
         return
-    path = Path(run) / "state.json"
-    with run_lock(run):
+    path = Path(session) / "state.json"
+    with run_lock(session):
         state = json.loads(path.read_text())
         state.update(fields)
         write_json_atomic(path, state)
@@ -393,12 +394,12 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="emit.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("bundle", help="write the session's workflow draft for Gate 4")
-    b.add_argument("--run", required=True, help="run dir containing state.json")
+    runstate.add_session_flag(b, required=True)
     b.add_argument("--level", choices=["auto", "faasr_py", "structural"], default="auto")
     e = sub.add_parser("external-inputs")
     src = e.add_mutually_exclusive_group(required=True)
     src.add_argument("--spec", help="WorkflowSpec JSON file")
-    src.add_argument("--run", help="run dir containing state.json")
+    runstate.add_session_flag(e, group=src)
     v = sub.add_parser("validate", help="validate a FaaSr workflow JSON")
     v.add_argument("--workflow", required=True, help="a FaaSr workflow JSON file")
     v.add_argument("--level", choices=["auto", "faasr_py", "structural"], default="auto")
@@ -417,19 +418,19 @@ def main(argv=None) -> int:
         print(json.dumps({"ok": False, "error": str(e)}))
         return 2
     # Gate 4 approves the workflow draft, validated with what the builders make of it.
-    draft = write_draft(spec, Path(args.run), args.level)
+    draft = write_draft(spec, Path(args.session), args.level)
     sh = spec_hash(spec.model_dump(mode="json"))
     fields = {"draft_dir": draft.get("dir"), "draft_problems": draft.get("problems") or None,
               "draft_spec_hash": sh if draft["ok"] else None,
               "validation": {**draft["validation"], "spec_hash": sh}}
     if draft["ok"]:
         fields["stage"] = "gate4"
-    update_state(args.run, **fields)
+    update_state(args.session, **fields)
     return _print({"ok": bool(draft["ok"] and draft["validation"]["ok"]), "draft": draft,
                    "validation": draft["validation"]}, secret_names(spec))
 
 
-def write_draft(spec: WorkflowSpec, run: Path, level: str = "auto") -> dict:
+def write_draft(spec: WorkflowSpec, session: Path, level: str = "auto") -> dict:
     """The workflow's draft for Gate 4: <run>/draft/ (workflow.yml, inputs.yml, functions/), built from
     the spec by spec_cwl. An earlier, unapproved draft is replaced; Gate 4 approves the draft by its
     tree hash, and only then is it published as a version (ids.publish).
@@ -441,7 +442,7 @@ def write_draft(spec: WorkflowSpec, run: Path, level: str = "auto") -> dict:
     take it); Gate 4 shows both results, and approving a refused target is refused."""
     import ids
     import spec_cwl
-    target = ids.draft_dir(run)
+    target = ids.draft_dir(session)
     failed = {"ok": False, "level": "cwl", "error": None, "source": "draft"}
     try:
         built = spec_cwl.build(spec)

@@ -266,7 +266,7 @@ def test_timeout_then_resume_continues_the_same_invocation(run, env, capsys):
     assert s["stage"] == "stopped" and s["stopped_from"] == "monitor" and s["history"][-1]["decision"] == "timed-out"
     assert "not finished (timed out)" in report(out)
     # resume: begin re-enters monitor (never deploy), and the same invocation is polled again
-    S.main(["begin", "--run", str(run), "--stage", "monitor"])
+    S.main(["begin", "--session", str(run), "--stage", "monitor"])
     assert json.loads(capsys.readouterr().out)["mode"] == "resume" and state(run)["stage"] == "monitor"
     world.runs["plot"] = plot
     code, out = poll(capsys, run, world)
@@ -299,7 +299,7 @@ def test_job_logs_are_fetched_once_and_runs_of_other_invocations_ignored(run, en
     first = dict(world.blob_fetches)
     assert all(n == 1 for n in first.values()) and other in first
     S = __import__("spec")
-    S.main(["begin", "--run", str(run), "--stage", "monitor"])
+    S.main(["begin", "--session", str(run), "--stage", "monitor"])
     capsys.readouterr()
     world.runs["plot"] = plot
     code, out = poll(capsys, run, world)
@@ -346,7 +346,7 @@ def test_runs_without_a_log_are_success_unconfirmed_and_need_the_users_acceptanc
 def test_catalog_refuses_to_save_a_deployed_run_before_success(run, env, capsys):
     import catalog
     assert "not been confirmed to work" in catalog.deployed_run_problem(state(run))
-    code = catalog.main(["save-workflow", "--run", str(run), "--catalog-dir", str(run / "cat")])
+    code = catalog.main(["save-workflow", "--session", str(run), "--catalog-dir", str(run / "cat")])
     assert code != 0 and "not been confirmed to work" in capsys.readouterr().out
 
 
@@ -418,7 +418,7 @@ def test_minutes_given_on_resume_replace_the_pinned_value(run, env, capsys):
     plot = world.runs.pop("plot")
     code, out = poll(capsys, run, world, "--minutes", "0.5")
     assert out["result"] == "timeout" and state(run)["monitor"]["settings"]["minutes"] == 0.5
-    S.main(["begin", "--run", str(run), "--stage", "monitor"])
+    S.main(["begin", "--session", str(run), "--stage", "monitor"])
     capsys.readouterr()
     world.runs["plot"] = plot
     code, out = poll(capsys, run, world, "--minutes", "10")
@@ -537,9 +537,10 @@ def test_recheck_after_a_failure_polls_the_same_invocation_and_can_replace_the_v
     world.runs["plot"].remove(next(r for r in world.runs["plot"] if r["id"] == late))
     code, out = poll(capsys, run, world)  # the old false FAILURE: the late run not listed yet
     assert out["result"] == "failure" and state(run)["stage"] == "stopped"
-    assert out["recheck_command"] == "/curate-skills:curate-monitor --run r1"
+    # the run, by its reference (curate-monitor takes a run)
+    assert out["recheck_command"] == f"/curate-skills:curate-monitor --run {state(run)['execution']['reference']}"
     # curate-monitor --run r1: begin resumes monitor; poll re-checks the same invocation
-    S.main(["begin", "--run", str(run), "--stage", "monitor"])
+    S.main(["begin", "--session", str(run), "--stage", "monitor"])
     assert json.loads(capsys.readouterr().out)["mode"] == "resume"
     world.add_run("plot")
     world.s3["wx-cs/fig.png"] = ("new figure", AFTER)

@@ -31,7 +31,7 @@ def test_gate4_shows_both_targets_built_from_the_draft(source_run, capsys):  # n
     def add_input(s):  # a file the user must provide, so the inputs line has something to count
         s["spec"]["nodes"][0]["inputs"] = [{"name": "seed.txt"}]
     at_gate4_with_draft(source_run, add_input)
-    md = ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)["markdown"]
+    md = ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)["markdown"]
     sec = where_section(md)
     assert "**FaaSr (cloud)**" in sec and "deploys as `mapreduce-word-count-" in sec
     assert "- input files you must provide in S3: 1 (listed in the full review)" in sec
@@ -45,10 +45,10 @@ def test_a_draft_older_than_the_spec_is_refused_with_what_to_do(source_run, caps
     s["spec"]["nodes"][1]["description"] = "changed after emit"
     s["validation"]["spec_hash"] = S.spec_hash(s["spec"])
     (source_run / "state.json").write_text(json.dumps(s))
-    code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep"], capsys)
+    code, out = call(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep"], capsys)
     assert code == 2 and "built from an earlier version of the spec" in out["error"]
-    assert f"curate-emit --run {s['run_id']} again" in out["error"]
-    sec = where_section(ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)["markdown"])
+    assert f"curate-emit --session {s['run_id']} again" in out["error"]
+    sec = where_section(ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)["markdown"])
     assert "built from an earlier version of the spec" in sec
 
 
@@ -69,7 +69,7 @@ def test_a_run_approved_before_versions_is_no_longer_deployed(source_run, capsys
     # approving Gate 4 again needs a draft: the refusal says to run emit again
     s["stage"] = "gate4"
     (source_run / "state.json").write_text(json.dumps(s))
-    code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4"], capsys)
+    code, out = call(S, ["approve", "--session", str(source_run), "--gate", "4"], capsys)
     assert code == 2 and "no workflow draft" in out["error"] and "curate-emit" in out["error"]
 
 
@@ -93,7 +93,7 @@ def test_emit_validates_both_targets_and_gate4_shows_them(source_run, capsys):  
     assert v["ok"] and v["faasr"]["ok"] and v["pegasus"]["ok"] is False
     assert f"step {e['to_node']} runs only if {e['from_node']} returns True (curate:run_if)" in v["pegasus"]["error"]
     assert v["level"].startswith("cwl: passed, faasr: passed (structural), pegasus: refused (step ")
-    md = ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)["markdown"]
+    md = ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)["markdown"]
     assert f"- validation: passed — {v['level']}" in md
     sec = where_section(md)
     assert "**Pegasus** on this machine: **cannot run on Pegasus:**" in sec and "(curate:run_if)" in sec
@@ -107,5 +107,5 @@ def test_gate4_uses_the_recorded_refusal_without_rebuilding(source_run, capsys, 
         s["spec"]["edges"][0]["condition"] = "True"
     at_gate4_with_draft(source_run, conditional)
     monkeypatch.setattr(X, "pegasus_built", lambda *a, **k: (_ for _ in ()).throw(AssertionError("rebuilt")))
-    sec = where_section(ok(S, ["show", "--run", str(source_run), "--gate", "4"], capsys)["markdown"])
+    sec = where_section(ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)["markdown"])
     assert "cannot run on Pegasus" in sec

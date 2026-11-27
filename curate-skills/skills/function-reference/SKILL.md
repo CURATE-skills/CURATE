@@ -101,7 +101,7 @@ Run exactly the stub-test command from your spawn prompt (`spec.md` → "Local S
 the same command with `<plugin>` standing for the plugin folder):
 
 ```bash
-uv run --quiet <plugin>/scripts/stubtest.py run --run "<run dir>" --node <name>
+uv run --quiet <plugin>/scripts/stubtest.py run --session "<session folder>" --node <name>
 ```
 
 It calls your `main` with your folder as the working directory, once per rank:

@@ -62,12 +62,12 @@ def _usable(value: Optional[str]) -> bool:
     return bool(value and value.strip() and "${" not in value)
 
 
-def resolve_catalog_dir(catalog_dir: Optional[str] = None, run: Optional[str] = None,
+def resolve_catalog_dir(catalog_dir: Optional[str] = None, session: Optional[str] = None,
                         config_dir: Optional[str] = None) -> tuple[Path, str]:
     if _usable(catalog_dir):
         return Path(catalog_dir).expanduser().resolve(), "--catalog-dir"
-    if run:
-        state_path = Path(run) / "state.json"
+    if session:
+        state_path = Path(session) / "state.json"
         if state_path.exists():
             pinned = json.loads(state_path.read_text()).get("catalog_dir")
             if _usable(pinned):
@@ -204,14 +204,14 @@ def entry_summary(e) -> dict:
 
 # ── save (from orchestrator.py _do_save) ─────────────────────────────────────
 
-def load_run(run: Optional[str], spec_file: Optional[str]) -> tuple[WorkflowSpec, dict]:
+def load_run(session: Optional[str], spec_file: Optional[str]) -> tuple[WorkflowSpec, dict]:
     if spec_file:
         data, state = json.loads(Path(spec_file).read_text()), {}
-    elif run:
-        state = _run_state(run)
+    elif session:
+        state = _run_state(session)
         data = state.get("spec")
         if not data:
-            raise InputError(f"{run}/state.json has no 'spec' yet")
+            raise InputError(f"{session}/state.json has no 'spec' yet")
     else:
         raise InputError("pass --run DIR or --spec FILE")
     try:
@@ -412,17 +412,18 @@ def deployed_run_problem(state: dict) -> Optional[str]:
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
-def _run_state(run) -> dict:
+def _run_state(session) -> dict:
     """The run's state; a session's with its current execution's records (runstate.load)."""
     import runstate
-    return runstate.load(run)
+    return runstate.load(session)
 
 
 def main(argv=None) -> int:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--catalog-dir")
     common.add_argument("--config-catalog-dir", help="plugin setting value; empty = unset")
-    common.add_argument("--run", help="run dir containing state.json")
+    import runstate
+    runstate.add_session_flag(common)
 
     p = argparse.ArgumentParser(prog="catalog.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -455,12 +456,12 @@ def main(argv=None) -> int:
     sp.add_argument("--out", required=True)
     sp.add_argument("--ids", nargs="*")
     args = p.parse_args(argv)
-    if getattr(args, "run", None):  # an id, <workflow-id>/<run-id> or a folder
-        import runstate
-        args.run = str(runstate.resolve_run(args.run))
+    import runstate  # --session: an id, <workflow-id>/<run-id> or a folder
+    if runstate.resolve_args(args, "session"):
+        return 2
 
     try:
-        root, source = resolve_catalog_dir(args.catalog_dir, args.run, args.config_catalog_dir)
+        root, source = resolve_catalog_dir(args.catalog_dir, args.session, args.config_catalog_dir)
         result = run_command(args, root)
         result.setdefault("catalog_dir", str(root))
         result.setdefault("catalog_dir_source", source)
@@ -486,9 +487,9 @@ def run_command(args, root: Path) -> dict:
     if cmd == "search":
         return {"ok": True, "hits": [hit_json(s, e) for s, e in cat.search(args.query, args.k)]}
     if cmd == "search-nodes":
-        if not args.run:
+        if not args.session:
             raise InputError("search-nodes needs --run DIR")
-        state = _run_state(args.run)
+        state = _run_state(args.session)
         data = state.get("spec") or (state.get("skeleton_draft") or {}).get("spec")
         if not data:
             raise InputError("run has no spec or skeleton yet")
@@ -507,20 +508,20 @@ def run_command(args, root: Path) -> dict:
         e.usage_count += 1
         (cat.save_workflow if args.workflow else cat.save_function)(e)
         return {"ok": True, "id": e.id, "usage_count": e.usage_count}
-    if cmd in ("save-functions", "save-workflow") and args.run and _run_state(args.run).get("kind") == "execution":
+    if cmd in ("save-functions", "save-workflow") and args.session and _run_state(args.session).get("kind") == "execution":
         raise InputError("this is a run (an execution): it deployed a version that the session which approved it published "
                          "(and saved); nothing is saved from it")
-    if cmd in ("save-functions", "save-workflow") and args.run and not args.dry_run:
-        problem = deployed_run_problem(_run_state(args.run))
+    if cmd in ("save-functions", "save-workflow") and args.session and not args.dry_run:
+        problem = deployed_run_problem(_run_state(args.session))
         if problem:
             raise InputError(problem)
     if cmd == "save-functions":
-        if args.only_verified and not args.run:
+        if args.only_verified and not args.session:
             raise InputError("--only-verified needs --run (stub-test status lives in state.json)")
-        spec, state = load_run(args.run, args.spec)
+        spec, state = load_run(args.session, args.spec)
         return save_functions(cat, spec, state, args.only_verified, args.dry_run)
     if cmd == "save-workflow":
-        spec, state = load_run(args.run, args.spec)
+        spec, state = load_run(args.session, args.spec)
         state = state or {}
         return save_workflow(cat, spec, args.dry_run, args.workflow_id or state.get("workflow_id"),
                              state.get("workflow_content_hash"), state.get("version_dir"))

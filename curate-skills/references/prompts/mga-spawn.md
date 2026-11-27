@@ -22,23 +22,23 @@ Adapted from CURATE-prototype `agents/fga.py` (`_turn_prompt` 700-763, `_impleme
 ## Per node (order from `scratch.py build`)
 
 **Reused node** (`generate: false` in the build output — catalog or cached code):
-`stubtest.py run --run <run> --node N`, so downstream nodes get its real outputs. Then
-`scratch.py record --run <run> --node N --status reused` if it passed, or `--status
+`stubtest.py run --session <session> --node N`, so downstream nodes get its real outputs. Then
+`scratch.py record --session <session> --node N --status reused` if it passed, or `--status
 reused_failed` if not (report that at Gate 3; do not regenerate it).
 
 **Node to generate:** attempts = 1 + the run's `mga_max_retries` (from `spec.py status`;
 0 retries means exactly one attempt, as in the original CURATE). For attempt k:
 
-1. `scratch.py snapshot --run <run> --node N`
-2. `scratch.py lock --run <run> --node N`
+1. `scratch.py snapshot --session <session> --node N`
+2. `scratch.py lock --session <session> --node N`
 3. Spawn: Agent tool, `subagent_type: "curate-skills:curate-mga"`, description
    `"MGA: N (attempt k)"`, prompt = the template below.
 4. Wait for the `MGA_RESULT` report (see Rules).
-5. `scratch.py unlock --run <run>`
-6. `scratch.py verify-writes --run <run> --node N` — any violation fails this attempt; the
+5. `scratch.py unlock --session <session>`
+6. `scratch.py verify-writes --session <session> --node N` — any violation fails this attempt; the
    retry feedback must list the paths.
-7. `stubtest.py run --run <run> --node N` — this result decides.
-8. If `<run>/functions/N/N.py` exists: `scratch.py harvest --run <run> --node N`.
+7. `stubtest.py run --session <session> --node N` — this result decides.
+8. If `<session>/functions/N/N.py` exists: `scratch.py harvest --session <session> --node N`.
 9. Decide:
    - step 6 clean and step 7 `ok` → `scratch.py record ... --status passed --attempts k`; next node.
    - step 7 failed, the report says `EXTERNAL_ONLY`, and step 7 has
@@ -51,7 +51,7 @@ reused_failed` if not (report that at Gate 3; do not regenerate it).
 Report one line per node as you go, e.g. `square_part ×2 — passed (attempt 1)`.
 
 `record` also stores each function's input hash, so emit can tell if the spec changes later.
-When every node has a final status, run `spec.py end --run <run> --stage generate`; it moves the
+When every node has a final status, run `spec.py end --session <session> --stage generate`; it moves the
 run to `gate3` (and refuses, listing them, if any node is still pending).
 
 ## Spawn prompt template
@@ -60,20 +60,20 @@ Fill every `<…>` placeholder; `<plugin>` is the plugin folder (absolute, as th
 written without quotes so the command matches `uv run --quiet <plugin>/scripts/*`.
 
 ```
-Implement the function `<N>` for CURATE run <run_id>.
+Implement the function `<N>` for CURATE session <session_id>.
 
-Run directory: <run>
-Your folder (the only place you may write): <run>/functions/<N>
-Read <run>/CONTEXT.md first, then <run>/functions/<N>/spec.md.
+Session folder: <session>
+Your folder (the only place you may write): <session>/functions/<N>
+Read <session>/CONTEXT.md first, then <session>/functions/<N>/spec.md.
 
 - Signature must be exactly: `<signature from spec.md>` (a plain function: it works only on the
   local paths in inputs/outputs; no faasr_* calls, no S3, no hard-coded file names)
 <rank rule>
-- Write the implementation to <run>/functions/<N>/<N>.py and the PyPI packages it imports to
-  <run>/functions/<N>/<N>.deps.txt (empty file if none) before testing.
+- Write the implementation to <session>/functions/<N>/<N>.py and the PyPI packages it imports to
+  <session>/functions/<N>/<N>.deps.txt (empty file if none) before testing.
 - Plugin folder (`<plugin>` in spec.md): <plugin>
 - Validate it through the stub test with exactly:
-    uv run --quiet <plugin>/scripts/stubtest.py run --run "<run>" --node <N>
+    uv run --quiet <plugin>/scripts/stubtest.py run --session "<session>" --node <N>
 - When that test passes, stop immediately and end with the MGA_RESULT block.
 <user-model block, if any>
 <retry block, if attempt > 1>

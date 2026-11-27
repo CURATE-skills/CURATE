@@ -1,7 +1,7 @@
 ---
 name: curate
-description: Build a FaaSr serverless scientific workflow from a natural-language sketch with CURATE: skeleton, catalog reuse, code generation, a validated bundle, approval gates. Use to build, generate or revise a FaaSr workflow or multi-step serverless pipeline. To change or redo part of an existing CURATE run, never run CURATE's scripts or rewind yourself: name the command, say what it redoes, and ask. Change some functions: /curate-skills:curate --start-at generate --from-run <run_id> --existing-code keep (new run keeping all approved code; the user types the change at Gate 3, only that function is redone). Regenerate all: same with --existing-code ignore. Alternative the user types: /curate-skills:curate-generate --run <run_id> (rewinds that run; 1 revision round). Other stages: replace generate, drop --existing-code. After an explicit yes to a /curate-skills:curate command you named, invoke this skill with its arguments. Gate decisions are the user's: never approve or submit a change for them.
-argument-hint: "<workflow sketch> | --start-at <stage> (--from-run <run_id> | --from-bundle <folder> | --from-file <file> | --sketch \"<text>\" | --sketch-file <file>) | --resume <run_id> | --from <file> --stage <stage> [--catalog DIR] [--attach model.py] [--context FILE] [--mga-retries N] [--stubtest-mode strict|parity]"
+description: Build a FaaSr serverless scientific workflow from a natural-language sketch with CURATE: skeleton, catalog reuse, code generation, a validated bundle, approval gates. Use to build, generate or revise a FaaSr workflow or multi-step serverless pipeline. To change or redo part of an existing CURATE session, never run CURATE's scripts or rewind yourself: name the command, say what it redoes, and ask. Change some functions: /curate-skills:curate --start-at generate --from-run <session_id> --existing-code keep (new session keeping all approved code; the user types the change at Gate 3, only that function is redone). Regenerate all: same with --existing-code ignore. Alternative the user types: /curate-skills:curate-generate --session <session_id> (rewinds it; 1 revision round). Other stages: replace generate, drop --existing-code. After an explicit yes to a /curate-skills:curate command you named, invoke this skill with its arguments. Gate decisions are the user's: never approve or submit a change for them.
+argument-hint: "<workflow sketch> | --start-at <stage> (--from-run <session_id> | --workflow <workflow-id> | --from-bundle <folder> | --from-file <file> | --sketch \"<text>\" | --sketch-file <file>) | --resume <session_id> | --from <file> --stage <stage> [--catalog DIR] [--attach model.py] [--context FILE] [--mga-retries N] [--stubtest-mode strict|parity]"
 allowed-tools: Read, Write, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/*), Agent(curate-skills:curate-mga)
 ---
 
@@ -24,9 +24,10 @@ Arguments: `$ARGUMENTS`
 
 ## Start
 
-- `--start-at <stage>` with exactly one source starts a **new** run; the source is never changed:
-  `--from-run <run_id>` (copies that run's gate-approved results; `--start-at deploy` deploys
-  that run's workflow version: any run of it works, including a run `<workflow-id>/<run-id>`),
+- `--start-at <stage>` with exactly one source starts a **new** session (`--start-at deploy`: a new
+  run); the source is never changed:
+  `--from-run <session_id>` (copies that session's gate-approved results; `--start-at deploy` deploys
+  its workflow version: a run of it works too, as `<workflow-id>/<run-id>`),
   `--workflow <workflow-id>` (`--start-at deploy` only: deploys that version, e.g. `corvallis-winter-weather-v1`;
   a deploy opens a **run** `<workflow-id>/<run-id>` under `workflows/<workflow-id>/runs/`, not a new
   session: it deploys, monitors and ends at Gate 5 without saving),
@@ -39,27 +40,31 @@ Arguments: `$ARGUMENTS`
      A `needs_choice` gets the Keep / Rewrite / Ignore question below.
   3. **Ask before any stage work** — also when the user already said yes to the command:
      print the returned `summary` exactly as a message, then ask with AskUserQuestion — question
-     "Start this run?", header "Start", options **Yes** and **Stop** (no previews: the summary is
+     "Start this session?" (for `--start-at deploy`: "Start this run?"), header "Start", options
+     **Yes** and **Stop** (no previews: the summary is
      already printed). Use AskUserQuestion whenever it is available; only without it (e.g. headless)
      end with "Reply **yes** to start or **stop** to leave it." and end the turn. Wait.
      For `--start-at deploy` the returned `start_options` replace Yes / Stop (use them exactly as
      returned): the answer is also where the run goes.
-     - **Yes** → `spec.py confirm-start --run <new run>`, then the loop.
-     - **Yes, deploy to FaaSr (cloud)** → `spec.py confirm-start --run <new run>` (records it as the
+     Below, `<new>` is `--session <the returned session>`, or for `--start-at deploy` `--run <the
+     returned reference>` (a run, not a session); the loop then uses the same flag.
+     - **Yes** → `spec.py confirm-start <new>`, then the loop.
+     - **Yes, deploy to FaaSr (cloud)** → `spec.py confirm-start <new>` (records it as the
        deploy choice), then the loop.
-     - **Yes, run on Pegasus (…)** → `spec.py confirm-start --run <new run> --deploy pegasus`, then
+     - **Yes, run on Pegasus (…)** → `spec.py confirm-start <new> --deploy pegasus`, then
        the loop. If it is refused, show the `error` exactly (why the workflow cannot run on
        Pegasus) and ask again.
      - **Yes, run on Pegasus with a different image…** → the same image steps as at Gate 4
        (`${CLAUDE_PLUGIN_ROOT}/references/stages/emit.md`, step 3: ask for the address,
-       `spec.py pegasus-image --run <new run> --image '<address>'`, print its `summary`, ask its
-       question); on **Yes**, `spec.py confirm-start --run <new run> --deploy pegasus --image
+       `spec.py pegasus-image <new> --image '<address>'`, print its `summary`, ask its
+       question); on **Yes**, `spec.py confirm-start <new> --deploy pegasus --image
        '<the returned image>'`, then the loop; **Back** asks "Start this run?" again.
-     - **Stop** → `spec.py set-stage --run <new run> --stage stopped`. Nothing is deleted: the
-       source was never touched, and the new run stays, marked stopped and unchanged otherwise.
-       Tell the user the `resume_command` it returns.
-- `--resume <run_id>`: find it with `spec.py runs`; also run `scratch.py unlock --run <run>`
-  (clears this run's leftover subagent lock, if any).
+     - **Stop** → `spec.py set-stage <new> --stage stopped`. Nothing is deleted: the
+       source was never touched, and the new session (or run) stays, marked stopped and unchanged
+       otherwise. Tell the user the `resume_command` it returns.
+- `--resume <session_id>` (or `--resume <workflow-id>/<run-id>` for a run started with `--start-at
+  deploy`): find it with `spec.py sessions` (`sessions`, and `runs`); for a session also run
+  `scratch.py unlock --session <session>` (clears its leftover subagent lock, if any).
 - `--from <file> --stage <stage>`: `spec.py import --stage <stage> --from <file> …` with the
   extra flags described in `${CLAUDE_PLUGIN_ROOT}/references/stage-io.md`.
 - Otherwise the text is the sketch: write it verbatim to `.curate/sketches/<short-name>.txt`
@@ -68,7 +73,8 @@ Arguments: `$ARGUMENTS`
 With `import` or `start`, always add `--config-catalog-dir '${user_config.catalog_dir}'
 --config-mga-retries '${user_config.mga_retries}' --config-stubtest-mode '${user_config.stubtest_mode}'`
 in single quotes exactly as written, and map `--catalog` → `--catalog-dir`, `--attach` →
-`--user-model`, `--context` → `--context-file`. Tell the user the run id and the settings.
+`--user-model`, `--context` → `--context-file`. Tell the user the session id (for `--start-at deploy`, the
+run's `<workflow-id>/<run-id>`) and the settings.
 - If `import` or `start` fails with `needs_choice: "existing_code"` (some functions already have
   code and you didn't say what to do with it): ask the user with AskUserQuestion — question "What
   should happen to the existing code of <functions>?", options **Keep**, **Rewrite**, **Ignore**
@@ -76,17 +82,18 @@ in single quotes exactly as written, and map `--catalog` → `--catalog-dir`, `-
   `--existing-code keep|rewrite|ignore`. If you cannot ask (no AskUserQuestion, e.g. a headless
   run), show the error and the three options and stop. Never choose for the user.
 
-## The loop — standing instructions for this whole session
+## The loop — standing instructions for this whole conversation
 
-These hold until the run is done or stopped, including after the user answers a gate in a
+These hold until the session (or run) is done or stopped, including after the user answers a gate in a
 later turn:
 
-1. `spec.py next --run <run>` → `next_skill`, e.g. `curate-skills:curate-reuse`. If it is none,
-   the run is done or stopped: summarize and stop (for a stopped run, give its `resume_command`).
+1. `spec.py next --session <session>` (for a run started with `--start-at deploy`, `--run <run>` here and
+   in step 3) → `next_skill`, e.g. `curate-skills:curate-reuse`. If it is none, the session is done or
+   stopped: summarize and stop (if stopped, give its `resume_command`).
 2. Its stage is the part after `curate-` (`skeleton`, `reuse`, `resolve`, `generate`, `emit`,
    `deploy`, `monitor`);
    for `wda-finalize` it is `finalize`. Tell the user one line: `Stage: <stage>`.
-3. `spec.py begin --run <run> --stage <stage>`. If refused, show the `error` exactly and stop.
+3. `spec.py begin --session <session> --stage <stage>`. If refused, show the `error` exactly and stop.
 4. Read `${CLAUDE_PLUGIN_ROOT}/references/stages/<stage>.md` and follow it **as if started with
    `--chain`**: at its end ("After the gate decision"), do not stop — go back to step 1.
 5. At a gate, the turn ends while you wait for the user. When they answer, apply the decision
