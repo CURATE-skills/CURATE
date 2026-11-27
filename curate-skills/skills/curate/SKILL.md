@@ -55,7 +55,8 @@ Arguments: `$ARGUMENTS`
      - **Yes, run on Pegasus (…)** → `spec.py confirm-start <new> --deploy pegasus`, then
        the loop. If it is refused, show the `error` exactly (why the workflow cannot run on
        Pegasus) and ask again.
-     - **Yes, run on Pegasus with a different image…** → the same image steps as at Gate 4
+     - **Yes, run on Pegasus with a different image…** (offered only when the workflow can run on
+       Pegasus, as at Gate 4) → the same image steps as at Gate 4
        (`${CLAUDE_PLUGIN_ROOT}/references/stages/emit.md`, step 3: ask for the address,
        `spec.py pegasus-image <new> --image '<address>'`, print its `summary`, ask its
        question); on **Yes**, `spec.py confirm-start <new> --deploy pegasus --image

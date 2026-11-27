@@ -29,12 +29,13 @@ step 3.
    options exactly as returned: **Approve & deploy to FaaSr (cloud)** / **Approve & run on Pegasus
    (<where> · <image>)** / **Approve & run on Pegasus with a different image…** / **Approve, no
    deploy** when the workflow can run on Pegasus (then the question says to type "stop" to stop);
-   otherwise the "different image" option is missing and **Stop here** is an option —
+   otherwise the "different image" option is missing, the Pegasus option reads **Approve & run on
+   Pegasus (not available: <short reason>)**, and **Stop here** is an option —
    every time, also after a change request or a question from the user
    (`<plugin>/references/gates.md`, "Asking at a gate").
    - Approve & deploy to FaaSr (cloud) → `spec.py approve --session <session> --gate 4 --deploy yes` (the
      run goes to the deploy stage, which asks again before each of its four steps).
-   - Approve & run on Pegasus (<where> · <image>) → `spec.py approve --session <session> --gate 4 --deploy
+   - Approve & run on Pegasus (<where> · <image>), or (not available: …) → `spec.py approve --session <session> --gate 4 --deploy
      pegasus` (the run goes to the deploy stage). If it is refused, show the `error` exactly (it
      names why the workflow cannot run on Pegasus, as the Gate 4 content did) and ask again.
    - Approve & run on Pegasus with a different image… → this run only; the settings file is never

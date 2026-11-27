@@ -109,6 +109,13 @@ def run_if_refusal(e) -> str:
             "DAG in which every step runs, so it cannot honour the condition. Deploy to FaaSr instead.")
 
 
+def test_short_reason_keeps_an_option_label_short():
+    assert S.short_reason("no workflow draft yet: run /curate-skills:curate-emit --run r") == "no workflow draft yet"
+    long = S.short_reason("x" * 100)
+    assert len(long) == 70 and long.endswith("…")
+    assert S.short_reason("") == "unknown reason"
+
+
 def test_gate4_says_why_it_cannot_run_and_drops_the_image_option(source_run, capsys):
     e = with_conditional_edge(source_run)
     out = ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)
@@ -116,7 +123,8 @@ def test_gate4_says_why_it_cannot_run_and_drops_the_image_option(source_run, cap
     assert "**Pegasus** on this machine: **cannot run on Pegasus:**" in sec
     assert f"- {run_if_refusal(e)}" in sec
     # not available: no "different image" option; Stop is a button again
-    assert out["options"] == ["Approve & deploy to FaaSr (cloud)", f"Approve & run on Pegasus (this machine · {DEFAULT_IMG})",
+    reason = f"step {e['to_node']} runs only if {e['from_node']} returns True (curate:run_if)"
+    assert out["options"] == ["Approve & deploy to FaaSr (cloud)", f"Approve & run on Pegasus (not available: {reason})",
                               "Approve, no deploy", "Stop here"]
 
 
@@ -286,7 +294,15 @@ def test_start_at_deploy_pegasus_refused_when_it_cannot_run(source_run, capsys):
     ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep"], capsys)
     code, out = start(capsys, source_run, "deploy", "--from-run", state(source_run)["run_id"])
     assert code == 0, out
+    # as at Gate 4: no "different image" when it cannot run on Pegasus; the Pegasus option stays and says why
+    assert len(out["start_options"]) == 3 and out["start_options"][0] == "Yes, deploy to FaaSr (cloud)"
+    reason = f"step {e['to_node']} runs only if {e['from_node']} returns True (curate:run_if)"
+    assert out["start_options"][1] == f"Yes, run on Pegasus (not available: {reason})"
+    assert out["start_options"][2] == "Stop"
+    assert not any("different image" in o for o in out["start_options"])
     new = Path(out["run"])
+    assert S.gate4_options(state(new))[1:] == [f"Approve & run on Pegasus (not available: {reason})",
+                                               "Approve, no deploy", "Stop here"]  # the same answer at Gate 4
     code, res = call(S, ["confirm-start", "--session", str(new), "--deploy", "pegasus"], capsys)
     assert code == 2 and res["error"].startswith(f"this workflow cannot run on Pegasus: {run_if_refusal(e)}")
     assert state(new)["deploy_choice"] is None

@@ -2233,10 +2233,12 @@ def cmd_start(args) -> dict:
 def start_deploy_options(s: dict | None = None) -> list[str]:
     """"Start this run?" for --start-at deploy: the answer is also where it runs (confirm-start
     --deploy yes|pegasus [--image]). The Pegasus label names the target and image, as at Gate 4."""
-    P = _pegasus()
-    peg = P.option_label(P.effective(s or {})).replace("Approve & run on Pegasus", "Yes, run on Pegasus")
-    diff = P.DIFFERENT_IMAGE_OPTION.replace("Approve & run on Pegasus", "Yes, run on Pegasus")
-    return ["Yes, deploy to FaaSr (cloud)", peg, diff, "Stop"]
+    label, available = pegasus_option(s)
+    peg = label.replace("Approve & run on Pegasus", "Yes, run on Pegasus")
+    diff = _pegasus().DIFFERENT_IMAGE_OPTION.replace("Approve & run on Pegasus", "Yes, run on Pegasus")
+    # as at Gate 4: no "different image" when the workflow cannot run on Pegasus (picking the
+    # Pegasus option then says why)
+    return ["Yes, deploy to FaaSr (cloud)", peg, *([diff] if available else []), "Stop"]
 
 
 def start_summary(at: str, p: dict) -> str:
@@ -2929,16 +2931,34 @@ def gate4_options(s: dict | None = None) -> list[str]:
     """Gate 4's options. The Pegasus one names where it would run and its image. When the
     workflow can run on Pegasus, a "different image" option takes the place of Stop (typed
     instead, as the question says)."""
+    peg, available = pegasus_option(s)
+    if available:
+        return [FAASR_OPTION, peg, _pegasus().DIFFERENT_IMAGE_OPTION, "Approve, no deploy"]
+    return [FAASR_OPTION, peg, "Approve, no deploy", "Stop here"]
+
+
+def pegasus_option(s: dict | None) -> tuple[str, bool]:
+    """(the Pegasus option's label, whether the workflow can run on Pegasus): Gate 4 and "Start
+    this run?" offer "a different image" only when it can. When it cannot, the label says why in
+    a few words ("Approve & run on Pegasus (not available: <reason>)"); choosing it still gives the
+    full error."""
     try:
         P = _pegasus()
         st = P.effective(s or {})
-        peg = P.option_label(st)
-        available = bool(s and s.get("spec")) and P.plan(s, st)["ok"]
-    except Exception:  # noqa: BLE001 — never block the gate on the label
-        peg, available = GATE_OPTIONS[4][1], False
-    if available:
-        return [FAASR_OPTION, peg, P.DIFFERENT_IMAGE_OPTION, "Approve, no deploy"]
-    return [FAASR_OPTION, peg, "Approve, no deploy", "Stop here"]
+        if not (s and s.get("spec")):
+            return P.option_label(st), False
+        p = P.plan(s, st)
+        if p["ok"]:
+            return P.option_label(st), True
+        return f"Approve & run on Pegasus (not available: {short_reason((p.get('problems') or [''])[0])})", False
+    except Exception:  # noqa: BLE001 — never block the question on the label
+        return GATE_OPTIONS[4][1], False
+
+
+def short_reason(problem: str, limit: int = 70) -> str:
+    """A problem's first clause, at most `limit` characters, for an option label."""
+    text = " ".join(str(problem or "unknown reason").split()).split(": ")[0].rstrip(".")
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 
 FAASR_OPTION = "Approve & deploy to FaaSr (cloud)"
