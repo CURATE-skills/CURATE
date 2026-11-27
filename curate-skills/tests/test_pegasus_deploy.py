@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+import runstate
+
 import pegasus_deploy as PD
 import spec as S
 from conftest import ok
@@ -83,7 +85,7 @@ class Fake:
 def peg_run(source_run, capsys):  # noqa: F811
     s = state(source_run)
     s["stage"] = "gate4"
-    (source_run / "state.json").write_text(json.dumps(s))
+    runstate.save(source_run, s)
     ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     return source_run
 
@@ -122,14 +124,15 @@ def test_preflight_local(peg_run, fake):
     assert ir.parent.parent.parent.name == state(peg_run)["workflow_id"] and ref.startswith(state(peg_run)["workflow_id"] + "/")
     assert f"- writes `{ir}/` (workflow.yml, functions/ 5 files, inputs/): new" in out["summary"]
     assert "- input files: none" in out["summary"]
-    assert not ir.parent.exists()  # read-only
+    # read-only: the execution run Gate 4 opened holds only its state
+    assert not ir.exists() and {p.name for p in ir.parent.iterdir()} <= {"state.json", "state.lock"}
 
 
 def test_each_step_asks_first_then_runs(peg_run, fake):
     out = PD.step(str(peg_run), "prepare")
     assert out["needs_confirmation"] and out["plan"]["what"].startswith("write the Pegasus workflow folder")
     ir, work_p, _ = ex(peg_run)
-    assert not ir.parent.exists()
+    assert not ir.exists() and {p.name for p in ir.parent.iterdir()} <= {"state.json", "state.lock"}
     out = PD.step(str(peg_run), "prepare", confirmed=True)
     assert out["ok"] and out["progress"] == "prepared" and out["next_step"] == "launch"
     assert (ir / "workflow.yml").is_file() and len(list((ir / "functions").iterdir())) == 5

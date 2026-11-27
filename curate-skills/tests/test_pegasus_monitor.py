@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+import runstate
+
 import catalog
 import deploy as D
 import hostcmd
@@ -251,7 +253,7 @@ def test_real_backend_local(launched, monkeypatch, tmp_path):
         (work / "output" / f"b_{i}.txt").write_text(f"b{i}")
     s = state(launched)
     s["pegasus"].update(ir_dir=str(ir.parent), work_dir=str(work), run_dir=str(run_dir))
-    (launched / "state.json").write_text(json.dumps(s))
+    runstate.save(launched, s)
     c = Clock()
     out = PM.poll(str(launched), clock=c, sleep=c.sleep)  # PM.RUN is the real hostcmd.run
     assert out["result"] == "success", out

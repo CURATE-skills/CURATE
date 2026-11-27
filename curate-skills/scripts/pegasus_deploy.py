@@ -24,7 +24,7 @@ preflight is read-only. Each step without --confirmed writes nothing and returns
 
 Nothing is overwritten: a target that exists is refused. A failed step can be repeated with
 --overwrite-own, which first removes only what that step itself wrote (from
-<run>/pegasus/deploy-log.jsonl). Settings (CURATE_PEGASUS_HOST / _RUNTIME / _IMAGE) are pinned
+the execution run's deploy-log.jsonl). Settings (CURATE_PEGASUS_HOST / _RUNTIME / _IMAGE) are pinned
 by prepare; later steps refuse if they changed. Prints JSON {"ok", ...}; exit 0 ok, 1 needs
 attention (or confirmation), 2 bad input.
 """
@@ -46,11 +46,12 @@ import leakcheck  # noqa: E402
 import pegasus_ir as P  # noqa: E402
 import spec as S  # noqa: E402
 from curate_models import WorkflowSpec  # noqa: E402
-from runstate import run_lock, write_json_atomic  # noqa: E402
+import runstate  # noqa: E402
 
 PLUGIN_DIR = SCRIPT_DIR.parent
 IR_TOOLS = PLUGIN_DIR / "curate_ir"
-LOG = Path("pegasus") / "deploy-log.jsonl"
+LOG = Path("deploy-log.jsonl")  # in the execution run
+LEGACY_LOG = Path("pegasus") / "deploy-log.jsonl"  # runs made before execution runs had their own state
 REMOTE_ROOT = "curate-runs"
 SSH_OPTS = hostcmd.SSH_OPTS
 PEGASUS_PY = 'PYTHONPATH="$(pegasus-config --python)" python3'
@@ -85,25 +86,32 @@ def q(x) -> str:
 
 # ── state and log ────────────────────────────────────────────────────────────
 
+def _no_leak(text: str) -> None:
+    if leakcheck.find_leaks(text):
+        raise StepError("refusing to write state.json: it would contain a secret value")
+
+
 def _update(run: Path, change) -> dict:
-    with run_lock(run):
-        path = run / "state.json"
-        s = json.loads(path.read_text())
-        change(s)
-        if leakcheck.find_leaks(json.dumps(s)):
-            raise StepError("refusing to write state.json: it would contain a secret value")
-        write_json_atomic(path, s)
-        return s
+    """Change the run's state (runstate.update: an execution's records go to its execution run)."""
+    return runstate.update(run, change, _no_leak)
+
+
+def log_path(run: Path) -> Path:
+    """The execution run's deploy-log.jsonl (<run>/pegasus/ for a run made before execution runs
+    had their own state)."""
+    s = runstate.load(run)
+    return Path(run) / LEGACY_LOG if runstate.is_legacy(run, s) else runstate.files_dir(run, s) / LOG
 
 
 def _log(run: Path, step: str, where: str, path: str) -> None:
-    (run / LOG).parent.mkdir(parents=True, exist_ok=True)
-    with open(run / LOG, "a") as fh:
+    f = log_path(run)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    with open(f, "a") as fh:
         fh.write(json.dumps({"ts": _now(), "step": step, "where": where, "path": str(path)}) + "\n")
 
 
 def read_log(run: Path) -> list[dict]:
-    f = run / LOG
+    f = log_path(run)
     return [json.loads(l) for l in f.read_text().splitlines() if l.strip()] if f.is_file() else []
 
 
@@ -428,6 +436,7 @@ def main(argv=None) -> int:
             q_.add_argument("--inputs")
     sub.add_parser("status").add_argument("--run", required=True)
     a = p.parse_args(argv)
+    a.run = str(runstate.resolve_run(a.run))  # an id, <workflow-id>/<run-id> or a folder
     if not (Path(a.run) / "state.json").is_file():
         print(json.dumps({"ok": False, "error": f"no run at {a.run}"}))
         return 2

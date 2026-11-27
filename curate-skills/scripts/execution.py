@@ -1,7 +1,12 @@
-"""Execution runs: a target's bundle, built from the approved workflow version after Gate 4.
+"""Execution runs: one deploy of an approved workflow version, with the target's bundle built from it.
 
+  <project>/.curate/workflows/<workflow-id>/runs/<run-id>/state.json       the execution run's state
   <project>/.curate/workflows/<workflow-id>/runs/<run-id>/bundle/          the builder's output
   <project>/.curate/workflows/<workflow-id>/runs/<run-id>/manifest.json    ids.write_manifest
+
+An execution run is opened by a generation run's Gate 4 (or "Start this run?"), and belongs to it,
+or by `--start-at deploy --workflow <id>` / `--from-run`, and stands alone (runstate.py says how
+their states fit together).
 
 A run is "versioned" once emit wrote its draft (phase 6c on); Gate 4 approval publishes the draft as
 a version, and every bundle is built from that version folder, never from the spec. The FaaSr
@@ -155,18 +160,124 @@ def pegasus_built(s: dict, run, name: str, image: str | None) -> dict:
         raise ExecutionError("cannot run on Pegasus: " + " | ".join(e.problems), e.problems) from e
 
 
+SCHEMA_VERSION = 2
+# What an execution run's state copies from the run that opened it (the approved version).
+VERSION_FIELDS = ("workflow_name", "workflow_id", "workflow_version", "version_dir", "version_hash",
+                  "workflow_content_hash")
+
+
+def reserve_execution(project, wid: str) -> tuple[str, Path]:
+    """A new execution run id of version `wid` and its folder (created, empty)."""
+    while True:
+        rid = ids.new_run_id()
+        d = ids.execution_dir(project, wid, rid)
+        try:
+            d.mkdir(parents=True)
+            return rid, d
+        except FileExistsError:
+            continue
+
+
+def record(wid: str, rid: str, d: Path, target: str) -> dict:
+    return {"run_id": rid, "reference": ids.reference(wid, rid), "dir": str(d), "target": target,
+            "bundle_dir": str(d / "bundle")}
+
+
 def new_execution(s: dict, run, target: str) -> dict:
-    """A new execution run of the approved version (nothing written yet)."""
+    """The execution run a deploy uses. A standalone execution run is its own; a generation run
+    opens a new one of its approved version, with a state.json that links it back (runstate.py)."""
+    import runstate
     wid = s.get("workflow_id")
     if not wid:
         raise ExecutionError("no approved version: Gate 4 approval publishes it")
-    rid = ids.new_run_id()
-    d = ids.execution_dir(project_of(s, run), wid, rid)
-    while d.exists():
-        rid = ids.new_run_id()
-        d = ids.execution_dir(project_of(s, run), wid, rid)
-    return {"run_id": rid, "reference": ids.reference(wid, rid), "dir": str(d), "target": target,
-            "bundle_dir": str(d / "bundle")}
+    if runstate.is_execution(s):
+        return record(wid, s["run_id"], Path(run).resolve(), target)
+    rid, d = reserve_execution(project_of(s, run), wid)
+    rec = record(wid, rid, d, target)
+    runstate.write_json_atomic(d / "state.json", {
+        "schema_version": SCHEMA_VERSION, "kind": "execution", "run_id": rid, "reference": rec["reference"],
+        "created": _now(), "project_dir": str(project_of(s, run)),
+        **{k: s.get(k) for k in VERSION_FIELDS},
+        "generation_run": {"run_id": s.get("run_id"), "dir": str(Path(run).resolve())},
+        "deploy_choice": "yes" if target == "faasr" else target,
+        "execution": rec, "deploy": None, "monitor": None, **({"pegasus": None} if target == "pegasus" else {})})
+    return rec
+
+
+def _now() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# ── the approved spec of a version ───────────────────────────────────────────
+
+def spec_sha256(spec: dict) -> str:
+    import hashlib
+    import json
+    return hashlib.sha256(json.dumps(spec, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def approved_from_version(version_dir: Path, wid: str) -> dict | None:
+    """The version's approved.json, checked, or None if the version has none (published before it).
+    approved.json is outside the version hash, so it is checked on every read: it must name this
+    version, record its content hash, hold the spec whose hash it records, and that spec must build
+    exactly this version (the check recover_names makes). Raises ExecutionError otherwise: an edited
+    approved.json never changes what gets built."""
+    a = ids.read_approved(version_dir)
+    if a is None:
+        if (Path(version_dir) / ids.APPROVED).exists():
+            raise ExecutionError(f"{wid}/{ids.APPROVED} cannot be read; it was changed after publishing")
+        return None
+    actual = ids.draft_content_hash(version_dir)
+    problems = []
+    if a.get("workflow_id") != wid:
+        problems.append(f"it names {a.get('workflow_id')!r}, not {wid}")
+    if a.get("content_hash") != actual:
+        problems.append("its content hash is not the version's")
+    if not isinstance(a.get("spec"), dict) or a.get("spec_sha256") != spec_sha256(a.get("spec") or {}):
+        problems.append("its spec is not the one it recorded (spec_sha256)")
+    else:
+        import spec_cwl
+        from curate_models import WorkflowSpec
+        try:
+            built = spec_cwl.build(WorkflowSpec.model_validate(a["spec"]))
+            rebuilt = spec_cwl.content_hash(built["workflow"], built["functions"])
+        except Exception as e:  # noqa: BLE001 — any failure means it is not the approved spec
+            rebuilt = f"(cannot be built: {e})"
+        if rebuilt != actual:
+            problems.append("its spec does not build this version")
+    if problems:
+        raise ExecutionError(f"{wid}/{ids.APPROVED} does not match the version ({'; '.join(problems)}): it was "
+                             "changed after publishing, so it is not used. Restore it, or deploy from the run that "
+                             "approved the version: --start-at deploy --from-run <run_id>")
+    return a
+
+
+def approved_spec(project, wid: str, version_dir: Path, from_run: Path | None = None) -> tuple[dict, str]:
+    """(spec, where it came from) for deploying version `wid` again: the version's approved.json
+    (checked: approved_from_version); for a version published before it, the latest Gate 4 approval
+    of `from_run` if given, else of the generation run in this project that published the version."""
+    a = approved_from_version(version_dir, wid)
+    if a is not None:
+        return a["spec"], f"{wid}/{ids.APPROVED}"
+    import json
+    runs = Path(project) / ".curate" / "runs"
+    cands = [from_run] if from_run else []
+    cands += [d for d in sorted(runs.iterdir()) if d.is_dir()] if runs.is_dir() else []
+    for d in cands:
+        try:
+            st = json.loads((d / "state.json").read_text())
+        except (OSError, ValueError):
+            continue
+        if st.get("workflow_id") != wid or (d != from_run and st.get("version_reused")):
+            continue
+        snaps = sorted((d / "history").glob("*-gate4-approve.json"))
+        for snap in reversed(snaps):
+            data = json.loads(snap.read_text())
+            if data.get("workflow_id") == wid and data.get("spec"):
+                return data["spec"], f"run {st.get('run_id')}, history/{snap.name}"
+    raise ExecutionError(f"{wid} has no approved.json (it was published before versions carried one) and no "
+                         f"run in {runs} approved it; start from the run that did: --start-at deploy --from-run <run_id>")
 
 
 def build_faasr(s: dict, run) -> dict:

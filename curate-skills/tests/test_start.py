@@ -12,7 +12,10 @@ FIX = Path(__file__).parent / "fixtures" / "e2-stages"
 
 
 def state(run):
-    return json.loads((Path(run) / "state.json").read_text())
+    """The run's state as the scripts see it (runstate.load: a generation run's state with its
+    current execution run's records in it)."""
+    import runstate
+    return runstate.load(run)
 
 
 def tree_hash(folder: Path) -> str:

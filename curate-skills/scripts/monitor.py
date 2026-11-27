@@ -22,7 +22,7 @@ GRACE_SECONDS after the action's last run before they count as not written.
 
 Results: success / success_unconfirmed (Gate 5 asks the user to accept it) / failure / pending
 (timeout after `monitor_minutes`). `poll` returns after `--chunk-seconds` with `lines` (one per
-change, per action) for the stage to print; the full report goes to deploy/monitor-report.md.
+change, per action) for the stage to print; the full report goes to the execution run's monitor-report.md.
 After a failure or timeout, polling again re-checks the same invocation and replaces the verdict.
 It never writes to GitHub or S3. It records state.json only for a run at stage `monitor`; for any
 other run it is report-only and writes nothing.
@@ -519,7 +519,7 @@ def _context(run: str, opener, s3_factory) -> tuple[dict, dict, dict]:
     dep = s.get("deploy") or {}
     if not dep.get("invocation_id") or not dep.get("dispatched_at"):
         raise InputError("this run has no deployed invocation (deploy.py invoke has not run)")
-    wf_path = Path(run) / "deploy" / "workflow.json"
+    wf_path = D.files_dir(run, s) / "deploy" / "workflow.json"
     if not wf_path.is_file():
         raise InputError(f"{wf_path} not found (the deploy copy written by the upload step)")
     wf = json.loads(wf_path.read_text())
@@ -544,7 +544,7 @@ def poll(run: str, chunk: int | None = None, report_only: bool = False, minutes=
     result is `pending` the stage calls again, until a verdict or the `minutes` budget is spent.
 
     `lines` holds one line per change, per action, since the previous call (and the verdict at the
-    end); the full details go to deploy/monitor-report.md and state.json."""
+    end); the full details go to the execution run's monitor-report.md and state.json."""
     run_p = Path(run)
     s, _ = D.load_run(run)
     record = _recording(s, report_only)
@@ -605,7 +605,8 @@ def poll(run: str, chunk: int | None = None, report_only: bool = False, minutes=
     mode = "recording" if record else "report only"
     summary = status_block(snap, result, settings["minutes"])
     report = summary_md({**snap, "result": result}, dep, mode, used / 60, interim)
-    resume = f"/curate-skills:curate --resume {s['run_id']}"
+    import runstate
+    resume = f"/curate-skills:curate --resume {runstate.handle(s)}"
     out = {"ok": result not in ("failure", "timeout"), "result": result, "lines": lines, "mode": mode,
            "polls": polls, "minutes_used": round(used / 60, 2), "settings": settings,
            "actions_ok": snap["actions_ok"], "outputs_ok": snap["outputs_ok"], "unconfirmed": snap["unconfirmed"],
@@ -613,17 +614,20 @@ def poll(run: str, chunk: int | None = None, report_only: bool = False, minutes=
            **({"rechecked": recheck} if recheck else {}),
            **({"settings_changed": settings_changed} if settings_changed else {})}
     if result in ("timeout", "failure"):
-        out.update(resume_command=resume, recheck_command=f"/curate-skills:curate-monitor --run {s['run_id']}")
+        out.update(resume_command=resume, recheck_command=f"/curate-skills:curate-monitor --run {runstate.handle(s)}")
     if not record:
         out["report"] = report
         return out
 
-    logs_dir = run_p / "deploy" / "monitor"
+    # the execution run's logs/ and monitor-report.md (<run>/deploy/ for a run made before execution
+    # runs had their own state)
+    legacy = runstate.is_legacy(run_p, s)
+    logs_dir = run_p / "deploy" / "monitor" if legacy else D.files_dir(run_p, s) / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     for f in snap["faasr"]:  # FaaSr's own S3 logs, redacted; job logs are never saved
         if f["log"]:
             (logs_dir / (f["label"].replace("(", ".").replace(")", "") + ".txt")).write_text(f["log"])
-    report_path = run_p / "deploy" / "monitor-report.md"  # beside the logs folder, which holds FaaSr's logs only
+    report_path = (run_p / "deploy" if legacy else D.files_dir(run_p, s)) / "monitor-report.md"
     report_path.write_text(report + "\n")
     out["details"] = str(report_path)
 
@@ -690,7 +694,7 @@ def download_outputs(run: str, to: str, s3_factory=None) -> dict:
     s, _ = D.load_run(run)
     if not (s.get("deploy") or {}).get("invocation_id"):
         raise InputError("this run has no deployed invocation")
-    wf = json.loads((run_p / "deploy" / "workflow.json").read_text())
+    wf = json.loads((D.files_dir(run_p, s) / "deploy" / "workflow.json").read_text())
     s3 = (s3_factory or s3_reader)(wf)
     files, skipped = [], []
     for o in run_outputs(run_p, s, wf):
@@ -730,7 +734,8 @@ def status(run: str) -> dict:
 
 def _is_pegasus(run: str) -> bool:
     try:
-        return json.loads((Path(run) / "state.json").read_text()).get("deploy_choice") == "pegasus"
+        import runstate
+        return runstate.load(run).get("deploy_choice") == "pegasus"
     except (OSError, ValueError):
         return False  # the FaaSr path reports a missing or unreadable run as before
 
@@ -773,6 +778,9 @@ def main(argv=None, opener=None, s3_factory=None, clock=time.monotonic, sleep=ti
     q.add_argument("--run", required=True)
     q.add_argument("--confirmed", action="store_true")
     args = p.parse_args(argv)
+    if getattr(args, "run", None):  # an id, <workflow-id>/<run-id> or a folder
+        import runstate
+        args.run = str(runstate.resolve_run(args.run))
     if args.cmd in ("poll", "download-outputs") and _is_pegasus(args.run):
         return _pegasus_main(args, clock, sleep)
     envfile.load()  # ~/.config/curate/.env fills deploy variables the environment leaves unset

@@ -66,8 +66,8 @@ The last entry of `lines` is the verdict (`✓ workflow succeeded` / `✗ workfl
 | `failure` | the run is stopped. Tell the user, in one line each: `recheck_command` re-checks the same invocation (nothing is redeployed) and can replace the verdict; the details are in the `details` file. |
 | `timeout` | the run is stopped. Tell the user `recheck_command` (add `--minutes N` for a longer watch): it continues watching the same invocation with a fresh budget. |
 
-Only if the user asks why or for details: read the `details` file (`deploy/monitor-report.md`
-in the run; `pegasus/monitor-report.md` for a Pegasus run) and answer from it. Job-log text is never shown or saved; excerpts there are
+Only if the user asks why or for details: read the `details` file the poll returned
+(`monitor-report.md` in the execution run) and answer from it. Job-log text is never shown or saved; excerpts there are
 redacted by `monitor.py`.
 
 ## 3. Done

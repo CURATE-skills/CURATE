@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+import runstate
+
 import catalog
 import deploy as D
 import envfile
@@ -17,11 +19,11 @@ from test_start import source_run, state  # noqa: F401  (fixture)
 def at_gate4(run):
     s = state(run)
     s["stage"] = "gate4"
-    (run / "state.json").write_text(json.dumps(s))
+    runstate.save(run, s)
 
 
 def save(run, s):
-    (run / "state.json").write_text(json.dumps(s))
+    runstate.save(run, s)
 
 
 # ── the options name the target and the image ──

@@ -410,10 +410,12 @@ def test_dropping_a_duplicate_only_in_the_catalog_copies_that_version(tmp_path, 
     vdir = Path(s2["version_dir"])
     assert s2["workflow_id"] == "mapreduce-word-count-v1" and s2["version_reused"]
     assert vdir == other / "project" / ".curate" / "workflows" / "mapreduce-word-count-v1"
-    assert sorted(p.name for p in vdir.iterdir()) == ["functions", "inputs.yml", "workflow.yml"]
+    # the version as published, with the approved.json it carries (when the catalog kept its folder)
+    assert sorted(p.name for p in vdir.iterdir()) == \
+        (["approved.json"] if stored_folder else []) + ["functions", "inputs.yml", "workflow.yml"]
     assert not (vdir / "functions" / "map.py").stat().st_mode & 0o222
     assert ids.draft_content_hash(vdir) == s1["workflow_content_hash"]
-    assert s2["version_hash"] == ids.tree_hash(vdir, skip=("runs",))
+    assert s2["version_hash"] == ids.version_hash(vdir)
 
 
 def test_a_tampered_catalog_copy_is_not_used(tmp_path, capsys):

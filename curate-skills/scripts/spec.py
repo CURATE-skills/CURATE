@@ -74,7 +74,8 @@ from curate_models import (
 )
 from emit import external_inputs
 from plain_contract import is_plain
-from runstate import node_basis, obj_hash, run_lock, spec_hash, write_json_atomic
+import runstate
+from runstate import node_basis, obj_hash, spec_hash
 
 SCHEMA_VERSION = 2
 DEFAULT_MGA_RETRIES = 3
@@ -126,7 +127,7 @@ def load_state(run: str | Path) -> dict:
     path = Path(run) / "state.json"
     if not path.exists():
         raise InputError(f"{path} not found — is --run a run directory?")
-    state = json.loads(path.read_text())
+    state = runstate.load(run)  # a generation run's current execution records included
     if state.get("schema_version", 1) < SCHEMA_VERSION:
         raise InputError(f"{path} was made by curate-skills v1 (schema_version "
                          f"{state.get('schema_version', 1)}); continue it with the v1 plugin "
@@ -135,7 +136,7 @@ def load_state(run: str | Path) -> dict:
 
 
 def save_state(run: str | Path, state: dict) -> None:
-    write_json_atomic(Path(run) / "state.json", state)
+    runstate.save(run, state)
 
 
 def spec_of(data: Optional[dict]) -> Optional[WorkflowSpec]:
@@ -338,23 +339,38 @@ def cmd_runs(args) -> dict:
             s = json.loads(sp.read_text())
         except json.JSONDecodeError:
             continue
-        runs.append({"run": str(sp.parent), "run_id": s.get("run_id"), "stage": s.get("stage"),
+        runs.append({"run": str(sp.parent), "run_id": s.get("run_id"), "kind": "generation", "stage": s.get("stage"),
                      "iteration": s.get("iteration"),
                      "workflow": (s.get("spec") or (s.get("skeleton_draft") or {}).get("spec") or {}).get("name"),
                      "request": (s.get("user_request") or "")[:80]})
+    import ids
+    for d in ids.execution_dirs(root.parent.parent):
+        try:
+            s = json.loads((d / "state.json").read_text())
+        except (OSError, ValueError):
+            continue
+        gen = (s.get("generation_run") or {}).get("run_id")
+        runs.append({"run": str(runstate.resolve_run(d)), "run_id": s.get("run_id"), "kind": "execution",
+                     "reference": s.get("reference"), "workflow_id": s.get("workflow_id"),
+                     "target": (s.get("execution") or {}).get("target"), "generation_run": gen,
+                     "stage": s.get("stage") if not gen else f"(through run {gen})",
+                     "result": (s.get("monitor") or {}).get("result")})
     return {"ok": True, "runs": runs}
 
 
 def cmd_status(args) -> dict:
     s = load_state(args.run)
     spec = spec_of(s.get("spec"))
-    return {"ok": True, "run_id": s["run_id"], "stage": s["stage"], "iteration": s["iteration"],
-            "max_iterations": s["max_iterations"], "catalog_dir": s["catalog_dir"],
-            "mga_max_retries": s["mga_max_retries"], "stubtest_mode": s["stubtest_mode"],
+    return {"ok": True, "run_id": s["run_id"], "kind": "execution" if runstate.is_execution(s) else "generation",
+            "reference": s.get("reference") or (s.get("execution") or {}).get("reference"),
+            "stage": s["stage"], "iteration": s.get("iteration"),
+            "max_iterations": s.get("max_iterations"), "catalog_dir": s.get("catalog_dir"),
+            "mga_max_retries": s.get("mga_max_retries"), "stubtest_mode": s.get("stubtest_mode"),
             "workflow": spec.name if spec else None,
             "nodes": [n.name for n in spec.nodes] if spec else [],
             "mga": {k: v.get("status") for k, v in (s.get("mga") or {}).items()},
             "draft_dir": s.get("draft_dir"), "workflow_id": s.get("workflow_id"), "validation": s.get("validation"),
+            "deploy_choice": s.get("deploy_choice"),
             "auto_emit_retries": auto_emit_retries(s), "next_skill": next_skill(s),
             "stopped_from": s.get("stopped_from"),
             **(resume_commands(s) if s["stage"] == "stopped" else {})}
@@ -1111,6 +1127,8 @@ def cmd_approve(args) -> dict:
     run = Path(args.run)
     s = load_state(run)
     g = args.gate
+    if runstate.is_execution(s):
+        raise InputError(f"{runstate.handle(s)} is an execution run: it has no Gates 1-4 to approve")
     if getattr(args, "deploy", None) and g != 4:
         raise InputError("--deploy only applies to Gate 4")
     if g == 1:
@@ -1246,11 +1264,19 @@ def publish_version(s: dict, run: Path, on_duplicate: Optional[str]) -> dict:
                     raise InputError(f"{e}; keep both (--on-duplicate keep)") from e
         return {"workflow_name": name, "workflow_id": wid, "workflow_version": ids.parse_workflow_id(wid)[1],
                 "draft_hash": approved, "version_dir": str(vdir), "version_reused": True,
-                "version_hash": ids.tree_hash(vdir, skip=("runs",)), "workflow_content_hash": plan["content_hash"]}
-    pub = ids.publish(draft, name, _project(s, run), plan["version"], approved)
+                "version_hash": ids.version_hash(vdir), "workflow_content_hash": plan["content_hash"]}
+    pub = ids.publish(draft, name, _project(s, run), plan["version"], approved, approved_record(s, name))
     return {"workflow_name": name, "workflow_id": pub["workflow_id"], "workflow_version": pub["version"],
             "draft_hash": approved, "version_dir": pub["dir"], "version_hash": pub["version_hash"],
             "version_reused": None, "workflow_content_hash": pub["content_hash"]}
+
+
+def approved_record(s: dict, name: str) -> dict:
+    """What publish puts in the version's approved.json: the spec Gate 4 approved (with it a later
+    deploy builds the version for FaaSr, and recovers names), and the run that approved it."""
+    import execution as X
+    return {"schema": 1, "workflow_name": name, "approved_at": _now(),
+            "generation_run": s.get("run_id"), "spec": s["spec"], "spec_sha256": X.spec_sha256(s["spec"])}
 
 
 def _lineage_name(lineage: Optional[dict], s: dict) -> Optional[str]:
@@ -1667,7 +1693,6 @@ START_COPY = {
     "resolve": ("enriched_spec", "enriched_basis", "spec_basis", "candidates"),
     "generate": ("enriched_spec", "spec_basis"),
     "emit": ("enriched_spec", "spec_basis", "mga"),
-    "deploy": ("enriched_spec", "spec_basis", "mga", "validation", "draft_dir", "draft_spec_hash") + VERSION_OUTPUTS,
     "finalize": ("enriched_spec", "spec_basis", "mga", "validation", "draft_dir", "draft_spec_hash") + VERSION_OUTPUTS,
 }
 INIT_FLAGS = ("user_model", "context_file", "catalog_dir", "config_catalog_dir", "mga_retries",
@@ -1741,7 +1766,7 @@ def _start_from_run(args, at: str) -> dict:
     copied = {f: snap.get(f) for f in START_COPY[at] if snap.get(f) not in (None, {}, [])}
     if snap.get("workflow_id") or st.get("workflow_id"):  # the approved version
         _check_copied_version(st, snap, copied)
-    elif at in ("deploy", "finalize"):
+    elif at == "finalize":
         import execution as X
         raise InputError(X.pre_version(st))
     code_from = None
@@ -1772,21 +1797,155 @@ def _start_from_run(args, at: str) -> dict:
     if st.get("workflow_name"):  # a run started from another is a version of the same workflow
         s["workflow_name"] = st["workflow_name"]
         s["workflow_lineage"] = {"from_run": st.get("run_id"), "workflow_id": st.get("workflow_id")}
-    if at == "deploy":
-        # Pending until the user answers Yes to "Start this run?" (spec.py confirm-start).
-        s["deploy_choice"] = None
     s["stage"] = PIPELINE[STAGE_NAMES.index(at)][1][0]
     s["begun"] = None
     _record(s, gate, "copied", f"from run {st['run_id']}")
     s["history"][-1].update(from_run=st["run_id"], snapshot=snap_path.name,
                             sha256=hashlib.sha256(snap_path.read_bytes()).hexdigest())
-    if at == "deploy":
-        s["history"][-1].update(source_deploy_choice=snap.get("deploy_choice"), deploy="pending")
     if code_from:
         s["history"][-1].update(code_snapshot=code_from.name, existing_code=args.existing_code,
                                 code_sha256=hashlib.sha256(code_from.read_bytes()).hexdigest())
     save_state(run, s)
     return {**out, **preview, "stage": s["stage"], "next_skill": next_skill(s)}
+
+
+def _find_execution(ref: str, project: Path) -> Optional[Path]:
+    """An execution run named by its folder, <workflow-id>/<run-id> or (if no generation run has that
+    id) its run id; None if `ref` names none. Execution folders from before execution runs had their
+    own state (a manifest.json, no state.json) count too."""
+    import ids
+
+    def is_ex(d: Path) -> bool:
+        if (d / "state.json").is_file():
+            return runstate.is_execution(runstate.read_state(d))
+        return (d / "manifest.json").is_file() and d.parent.name == "runs"
+    p = Path(ref).expanduser()
+    if p.is_dir() and ((p / "state.json").is_file() or (p / "manifest.json").is_file()):
+        return p.resolve() if is_ex(p) else None
+    if ref.count("/") == 1:
+        d = ids.execution_dir(project, *ref.strip("/").split("/"))
+        return d if d.is_dir() and is_ex(d) else None
+    if (project / ".curate" / "runs" / ref / "state.json").is_file():
+        return None
+    root = ids.workflows_root(project)
+    found = [d for d in sorted(root.glob(f"*/runs/{ref}")) if is_ex(d)] if root.is_dir() else []
+    return found[0] if len(found) == 1 else None
+
+
+def _deploy_source(args, project: Path) -> tuple[str, Optional[dict], Optional[Path]]:
+    """(workflow ID, source state, source run folder) for --start-at deploy: --workflow names the
+    version; --from-run any run that has one (the generation run that approved it, a run copied from
+    it, or an execution run of it)."""
+    import ids
+    if getattr(args, "workflow", None):
+        try:
+            ids.parse_workflow_id(args.workflow)
+        except ids.IdError as e:
+            raise InputError(str(e)) from e
+        return args.workflow, None, None
+    ex = _find_execution(str(args.from_run), project)
+    if ex is not None:
+        st = runstate.read_state(ex) if (ex / "state.json").is_file() else \
+            {"workflow_id": ex.parent.parent.name, "run_id": ex.name, "reference": f"{ex.parent.parent.name}/{ex.name}"}
+        return st["workflow_id"], st, ex
+    p = _find_run(args.from_run, project)
+    st = runstate.read_state(p)
+    if st.get("schema_version", 1) < SCHEMA_VERSION:
+        raise InputError(f"run {st.get('run_id')} was made by curate-skills v1; start from it with the "
+                         "v1 plugin (the curate-v1 worktree)")
+    if st.get("workflow_id"):
+        return st["workflow_id"], st, p
+    history = st.get("history") or []
+    approvals = [i for i, h in enumerate(history) if h.get("gate") == 4 and h.get("decision") == "approve"]
+    if approvals and not _superseded_by(history, approvals[-1], 4):
+        snaps = sorted((p / "history").glob("*-gate4-approve.json"))
+        snap = json.loads(snaps[-1].read_text()) if snaps else {}
+        if snap.get("workflow_id"):
+            return snap["workflow_id"], {**st, **{k: snap.get(k) for k in ("workflow_id", "version_hash", "spec")}}, p
+    if st.get("bundle_dir") and (not approvals or not _superseded_by(history, approvals[-1], 4)):
+        import execution as X
+        raise InputError(X.pre_version(st))
+    if not approvals:
+        raise InputError(f"run {st['run_id']} has no approved workflow version (it never approved Gate 4; the run "
+                         f"is at stage {st['stage']}); approve Gate 4 in that run first, or start at an earlier stage")
+    sup = _superseded_by(history, approvals[-1], 4)
+    raise InputError(f"run {st['run_id']}'s last Gate 4 approval was superseded by a later "
+                     f"{(sup or {}).get('decision')} and Gate 4 was not approved again; finish that in run "
+                     f"{st['run_id']}, or start at an earlier stage")
+
+
+def _start_deploy(args) -> dict:
+    """--start-at deploy: a new execution run of an approved version, standing alone (no generation
+    run): .curate/workflows/<workflow-id>/runs/<run-id>/. It builds with the spec Gate 4 approved
+    (the version's approved.json, or for an older version the run that approved it), goes through
+    "Start this run?", deploy and monitor, and ends at Gate 5 (nothing is saved: the version was
+    published and saved by the run that approved it)."""
+    import execution as X
+    import ids
+    project = Path(args.project_dir or ".").resolve()
+    wid, src, src_dir = _deploy_source(args, project)
+    vdir = ids.version_dir(project, wid)
+    if not (vdir / "workflow.yml").is_file():
+        raise InputError(f"version {wid} is not in this project ({vdir})")
+    vhash = ids.version_hash(vdir)
+    if src and src.get("version_hash") and src["version_hash"] != vhash:
+        raise InputError(f"the approved version {wid} changed after it was published; it cannot be used")
+    # the spec: the version's approved.json; for a version published before it, the source run's
+    # (an execution run of a generation run: that run's), else the run in this project that approved it
+    try:
+        a = X.approved_from_version(vdir, wid)  # checked against the version; refused if edited
+    except X.ExecutionError as e:
+        raise InputError(str(e)) from e
+    cand = src
+    gen_dir = ((src or {}).get("generation_run") or {}).get("dir")
+    if src and not src.get("spec") and gen_dir and (Path(gen_dir) / "state.json").is_file():
+        cand = runstate.read_state(gen_dir)
+    if a is not None:
+        spec_d, where = a["spec"], f"{wid}/{ids.APPROVED}"
+    elif cand and cand.get("spec") and cand.get("workflow_id") == wid:
+        spec_d, where = cand["spec"], f"run {cand.get('reference') or cand.get('run_id')}"
+    else:
+        try:
+            spec_d, where = X.approved_spec(project, wid, vdir)
+        except X.ExecutionError as e:
+            raise InputError(str(e)) from e
+    spec = spec_of(spec_d)
+    name, version = ids.parse_workflow_id(wid)
+    from_run = (src or {}).get("run_id")
+    preview = {
+        "source": {"kind": "workflow", "workflow_id": wid, "run_id": from_run,
+                   "path": str(vdir)} if not src else
+                  {"kind": "run", "run_id": src.get("reference") or from_run, "run_dir": str(src_dir),
+                   "source_stage_now": src.get("stage") or "—"},
+        "uses": f"version {wid} (`{vdir}`), the spec from {where}",
+        "workflow": spec.name,
+        "functions": [{"name": n.name, "source": n.source, "has_code": bool(n.code), "stub_test": None}
+                      for n in spec.nodes],
+        "copies": [f"the approved version {wid}"],
+        "redoes": ["deploy", "monitor", "Gate 5 (nothing is saved: the version is already published)"],
+        "settings": {},
+    }
+    if args.dry_run:
+        return preview
+    rid, d = X.reserve_execution(project, wid)
+    ref = ids.reference(wid, rid)
+    first = {"gate": 4, "decision": "copied", "structural": None, "ts": _now(),
+             "text": f"version {wid}" + (f", from run {src.get('reference') or from_run}" if src else ""),
+             "from_run": from_run, "workflow_id": wid, "spec_from": where, "deploy": "pending",
+             "source_deploy_choice": (src or {}).get("deploy_choice")}
+    state = {
+        "schema_version": SCHEMA_VERSION, "kind": "execution", "run_id": rid, "reference": ref,
+        "created": _now(), "project_dir": str(project), "run_dir": str(d),
+        "workflow_name": name, "workflow_id": wid, "workflow_version": version, "version_dir": str(vdir),
+        "version_hash": vhash, "workflow_content_hash": ids.draft_content_hash(vdir),
+        "spec": spec_d, "spec_from": where, "generation_run": None, "from_run": from_run,
+        "stage": "deploy", "stopped_from": None, "begun": None, "iteration": 0,
+        "max_iterations": DEFAULT_MAX_ITERATIONS, "history": [first],
+        "deploy_choice": None, "execution": None, "deploy": None, "pegasus": None, "monitor": None,
+    }
+    save_state(d, state)
+    return {"ok": True, "run": str(d), "run_id": rid, "reference": ref, **preview, "stage": "deploy",
+            "next_skill": next_skill(state)}
 
 
 def _check_copied_version(st: dict, snap: dict, copied: dict) -> None:
@@ -1798,7 +1957,7 @@ def _check_copied_version(st: dict, snap: dict, copied: dict) -> None:
     vhash = snap.get("version_hash") or st.get("version_hash")
     if not (vdir / "workflow.yml").is_file():
         raise InputError(f"the approved version {wid} is missing ({vdir}); start from a run whose version is there")
-    if ids.tree_hash(vdir, skip=("runs",)) != vhash:
+    if ids.version_hash(vdir) != vhash:
         raise InputError(f"the approved version {wid} changed after it was published; it cannot be used")
     for k in VERSION_OUTPUTS:
         if snap.get(k) is not None or st.get(k) is not None:
@@ -1895,10 +2054,14 @@ def cmd_start(args) -> dict:
     """/curate --start-at: a NEW run from one typed source; the source is never changed."""
     at = args.at
     sources = [n for n, v in (("--from-run", args.from_run), ("--from-bundle", args.from_bundle),
-                              ("--from-file", args.from_file), ("--sketch-file", args.sketch_file)) if v]
+                              ("--from-file", args.from_file), ("--sketch-file", args.sketch_file),
+                              ("--workflow", getattr(args, "workflow", None))) if v]
     if len(sources) != 1:
         raise InputError("give exactly one source: --from-run <run_id>, --from-bundle <folder>, "
-                         f"--from-file <file> or --sketch-file <file> (got {sources or 'none'})")
+                         f"--from-file <file>, --sketch-file <file> or (deploy) --workflow <workflow-id> "
+                         f"(got {sources or 'none'})")
+    if getattr(args, "workflow", None) and at != "deploy":
+        raise InputError("--workflow starts a deploy of that version: use it with --start-at deploy")
     if args.existing_code and at != "generate":
         raise InputError("--existing-code only applies when starting at generate")
     if args.sketch_file:
@@ -1910,9 +2073,11 @@ def cmd_start(args) -> dict:
     elif at == "monitor":
         raise InputError("monitoring is not a start point: it watches a run that was deployed — "
                          "/curate-skills:curate-monitor --run <run_id> (or deploy again with --start-at deploy)")
-    elif at == "deploy" and not args.from_run:
-        raise InputError("deploying starts from a run whose Gate 4 was approved: --start-at deploy "
-                         "--from-run <run_id> (a bundle or file has no Gate 4 approval)")
+    elif at == "deploy" and not (args.from_run or getattr(args, "workflow", None)):
+        raise InputError("deploying starts from an approved version: --start-at deploy --workflow <workflow-id>, "
+                         "or --from-run <run_id> (a bundle or file has no Gate 4 approval)")
+    elif at == "deploy":
+        out = _start_deploy(args)
     elif args.from_bundle:
         if at not in ("generate", "emit"):
             raise InputError(f"a bundle can start generate or emit, not {at}: it has no gate history "
@@ -2025,7 +2190,7 @@ def next_skill(s: dict) -> Optional[str]:
 
 
 def _run_cmd(s: dict, name: str) -> str:
-    return f"/{skill_for(name)} --run {s['run_id']}"
+    return f"/{skill_for(name)} --run {runstate.handle(s)}"
 
 
 def _needs_generation(n: FunctionSpec) -> bool:
@@ -2097,8 +2262,12 @@ def require_problems(s: dict, name: str, env=None) -> list[str]:
             out.append("Gate 4 was approved without deploying; to deploy this bundle, start a new run "
                        f"from it: /{PLUGIN}:curate --start-at deploy --from-run {s['run_id']}")
         v = s.get("validation") or {}
+        if runstate.is_execution(s):  # a standalone execution run: its version, unchanged
+            out += _version_problems(s)
         if s.get("workflow_id"):  # versioned: the approved version and the bundle built from it
-            if not v.get("ok") or v.get("spec_hash") != spec_hash(s["spec"]):
+            if runstate.is_execution(s):
+                pass
+            elif not v.get("ok") or v.get("spec_hash") != spec_hash(s["spec"]):
                 out.append(f"no validated workflow draft for the current spec — run {_run_cmd(s, 'emit')}")
             ex = s.get("execution") or {}
             if s.get("deploy_choice") == "yes":
@@ -2136,12 +2305,26 @@ def require_problems(s: dict, name: str, env=None) -> list[str]:
                            f"{mon.get('result') or 'none'}) — run {_run_cmd(s, 'monitor')}")
         v = s.get("validation") or {}
         what = "workflow draft" if s.get("workflow_id") or s.get("draft_dir") else "bundle"
+        if runstate.is_execution(s):
+            if not s.get("monitor"):
+                out.append(f"this execution run was not monitored — run {_run_cmd(s, 'monitor')}")
+            return out
         if not v.get("ok"):
             out.append(f"no validated {what} — run {_run_cmd(s, 'emit')}")
         elif v.get("spec_hash") != spec_hash(s["spec"]):
             out.append(f"the {what} is older than the spec — run {_run_cmd(s, 'emit')} again")
         return out
     raise InputError(f"unknown stage {name!r}")
+
+
+def _version_problems(s: dict) -> list[str]:
+    import ids
+    vdir = Path(s.get("version_dir") or "")
+    if not (vdir / "workflow.yml").is_file():
+        return [f"the version {s.get('workflow_id')} is missing ({vdir})"]
+    if ids.version_hash(vdir) != s.get("version_hash"):
+        return [f"the version {s.get('workflow_id')} changed after it was published; it cannot be deployed"]
+    return []
 
 
 def cmd_require(args) -> dict:
@@ -2155,7 +2338,7 @@ def cmd_next(args) -> dict:
     s = load_state(args.run)
     skill = next_skill(s)
     out = {"ok": True, "stage": s["stage"], "next_skill": skill,
-           "command": f"/{skill} --run {s['run_id']}" if skill else None}
+           "command": f"/{skill} --run {runstate.handle(s)}" if skill else None}
     if s["stage"] == "stopped":
         out.update(resume_commands(s))
     return out
@@ -2180,9 +2363,14 @@ def cmd_begin(args) -> dict:
     if cur is None:
         raise InputError(f"run is at stage {s['stage']!r}, which no stage skill owns")
     first_value = PIPELINE[target][1][0]
+    if runstate.is_execution(s) and target < STAGE_NAMES.index("deploy"):
+        return {"ok": False, "mode": "refused", "stage": s["stage"],
+                "error": f"{runstate.handle(s)} is an execution run of {s.get('workflow_id')}: it only deploys, "
+                         f"monitors and reports (Gate 5). To change the workflow, start from the run that approved "
+                         f"it: /{PLUGIN}:curate --start-at {name} --from-run <run_id>"}
 
     if cur < target:
-        here = f"/{next_skill(s) or skill_for(STAGE_NAMES[cur])} --run {s['run_id']}"
+        here = f"/{next_skill(s) or skill_for(STAGE_NAMES[cur])} --run {runstate.handle(s)}"
         if s["stage"].startswith("gate"):
             n = s["stage"][4:]
             how = f"it is waiting at Gate {n}. Approve Gate {n} first: {here}"
@@ -2318,10 +2506,10 @@ def resume_commands(s: dict) -> dict:
     """How to pick a stopped run up again."""
     stopped_from = s.get("stopped_from") or ""
     i = stage_index(stopped_from)
-    out = {"resume_command": f"/curate-skills:curate --resume {s['run_id']}",
+    out = {"resume_command": f"/curate-skills:curate --resume {runstate.handle(s)}",
            "stopped_from": stopped_from}
     if i is not None and i < len(PIPELINE):
-        out["resume_stage_command"] = f"/{PLUGIN}:{PIPELINE[i][2]} --run {s['run_id']}"
+        out["resume_stage_command"] = f"/{PLUGIN}:{PIPELINE[i][2]} --run {runstate.handle(s)}"
     return out
 
 
@@ -2466,6 +2654,8 @@ def show_gate(s: dict, gate: int, detailed: bool = False) -> str:
                 bundle_files(s.get("version_dir") or s.get("draft_dir")) or ["- none yet"])
         return "\n".join(out)
     if gate == 5:
+        if runstate.is_execution(s):
+            return execution_summary_md(s)
         return "\n".join([summary_md(s), "", *save_preview(s)])
     raise InputError("--gate must be 1-5")
 
@@ -2763,6 +2953,30 @@ def summary_md(s: dict) -> str:
     return "\n".join(out)
 
 
+def execution_summary_md(s: dict) -> str:
+    """Gate 5 of a standalone execution run: what ran and how it went. Nothing is saved: the version
+    was published (and saved to the catalog) by the run that approved it."""
+    ex = s.get("execution") or {}
+    target = {"faasr": "FaaSr (GitHub Actions)", "pegasus": "Pegasus"}.get(ex.get("target"), ex.get("target") or "—")
+    out = [f"## Execution run — `{runstate.handle(s)}`", "",
+           f"- version: `{s.get('workflow_id')}` (`{s.get('version_dir')}`), built with the spec from "
+           f"{s.get('spec_from') or '—'}",
+           f"- target: {target}" + (f"; bundle `{ex.get('bundle_dir')}`" if ex.get("bundle_dir") else "")]
+    dep = s.get("deploy") or {}
+    if dep.get("deploy_name"):
+        out.append(f"- deployment: `{dep['deploy_name']}`, invocation `{dep.get('invocation_id') or '—'}`")
+    peg = s.get("pegasus") or {}
+    if peg.get("name"):
+        out.append(f"- Pegasus workflow: `{peg['name']}` on {peg.get('host') or 'this machine'}")
+    mon = s.get("monitor") or {}
+    out += ["", mon.get("summary") or f"Monitor result: {mon.get('result') or 'none'}"]
+    if mon.get("result") == "success_unconfirmed":
+        out.append("- Unconfirmed match " + ("**accepted** by the user" if mon.get("accepted")
+                                             else "**not accepted yet** (Gate 5 asks first)"))
+    out += ["", "Nothing is saved to the catalog: this version was published by the run that approved it."]
+    return "\n".join(out)
+
+
 def cmd_summary(args) -> dict:
     return {"ok": True, "markdown": summary_md(load_state(args.run))}
 
@@ -2804,6 +3018,9 @@ def cmd_show(args) -> dict:
         # Gate 4's review file is the detailed version (every file each target would write).
         full = show_gate(s, 4, detailed=True) + "\n\n" + marker if args.gate == 4 else md
         review.write_text(full + ("\n\n" + full_code(s) if args.gate == 3 else "") + "\n")
+    if args.gate == 5 and runstate.is_execution(s):  # a report: nothing to decide, nothing is saved
+        return {"ok": True, "markdown": md, "marker": marker, "execution_run": True, "question": None,
+                "header": "Gate 5", "options": [], "review_file": str(review), "review_line": f"Full review: {review}"}
     q = GATE_QUESTION[args.gate] + ("" if args.gate == 5 else ' (Type in "Other" to request changes.)')
     if args.gate == 1 and not getattr(args, "full", False):
         q = gate1_question(s)  # the outline is in the question text too (not a preview)
@@ -2888,6 +3105,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("start")
     sp.add_argument("--at", required=True, choices=STAGE_NAMES)
     sp.add_argument("--from-run")
+    sp.add_argument("--workflow", help="--at deploy: a new execution run of this version (<name>-v<N>)")
     sp.add_argument("--from-bundle")
     sp.add_argument("--from-file")
     sp.add_argument("--sketch-file")
@@ -2921,10 +3139,13 @@ COMMANDS = {
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if getattr(args, "run", None):  # an id, <workflow-id>/<run-id> or a folder
+        args.run = str(runstate.resolve_run(args.run, getattr(args, "project_dir", None)))
     try:
         # One lock per run around the whole command: every read-modify-write of
         # state.json happens inside it.
-        with run_lock(getattr(args, "run", None) or "/nonexistent"):
+        # A generation run's current execution run is locked too (runstate.locked).
+        with runstate.locked(getattr(args, "run", None) or "/nonexistent"):
             result = COMMANDS[args.cmd](args)
     except (InputError, OSError, ValidationError) as e:
         print(json.dumps({"ok": False, "error": str(e), **getattr(e, "details", {})}, indent=2))

@@ -44,7 +44,8 @@ from pathlib import Path
 
 import plain_contract as PC
 from curate_models import FunctionSpec, WorkflowSpec, clean_dependencies
-from runstate import node_basis, run_lock
+import runstate
+from runstate import node_basis
 from spec import InputError, load_state, save_state, spec_of, dump, topo_order
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -748,7 +749,7 @@ def main(argv=None) -> int:
                 "snapshot": cmd_snapshot, "verify-writes": cmd_verify_writes,
                 "harvest": cmd_harvest, "record": cmd_record}
     try:
-        with run_lock(getattr(args, "run", None) or "/nonexistent"):
+        with runstate.locked(getattr(args, "run", None) or "/nonexistent"):
             result = commands[args.cmd](args)
     except (InputError, OSError, json.JSONDecodeError) as e:
         print(json.dumps({"ok": False, "error": str(e)}))

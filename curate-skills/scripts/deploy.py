@@ -11,7 +11,7 @@
 S3 keys) the S3 bucket, and reports what deploying would write. Nothing is written anywhere.
 The four steps — publish, upload, register, invoke (CURATE's order) — each write only with
 --confirmed, which the stage file passes after the user said yes to that step; each re-runs the
-preflight first and records every path it writes in <run>/deploy/deploy-log.jsonl. Every path deploying would write must carry the suffix and must not exist yet
+preflight first and records every path it writes in the execution run's deploy-log.jsonl. Every path deploying would write must carry the suffix and must not exist yet
 (--overwrite-own-deploy also allows paths this run's own deploy log recorded, to retry a partial
 deploy). The deploy copy may differ from the approved bundle only in ALLOWED_DIFF fields and
 placeholder fields; the summary shows the difference field by field.
@@ -42,7 +42,6 @@ import argparse
 import base64
 import contextlib
 import copy
-import fcntl
 import hashlib
 import io
 import json
@@ -68,7 +67,21 @@ SUFFIX_RX = re.compile(r"^[-_A-Za-z0-9]+$")
 RUN_TS_RX = re.compile(r"^\d{4}(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})")  # run ids: YYYYMMDD-HHMMSS-<4 hex> (older: -<name>)
 MAX_PATH_PART = 255  # bytes per file name in a git tree / most file systems
 COMMIT_TAG = "(curate-skills)"  # in every commit message curate-deploy makes
-DEPLOY_LOG = Path("deploy") / "deploy-log.jsonl"  # in the run; one JSON line per path a deploy step wrote
+DEPLOY_LOG = Path("deploy-log.jsonl")  # in the execution run; one JSON line per path a deploy step wrote
+LEGACY_DEPLOY_LOG = Path("deploy") / "deploy-log.jsonl"  # runs made before execution runs had their own state
+
+
+def files_dir(run, s: dict | None = None) -> Path:
+    """The execution run's folder (runstate.files_dir): the deploy log, deploy/workflow.json (the
+    deploy copy) and deploy/preflight-diff.md go there."""
+    import runstate
+    return runstate.files_dir(run, s)
+
+
+def deploy_log_path(run, s: dict | None = None) -> Path:
+    import runstate
+    s = runstate.load(run) if s is None else s
+    return Path(run) / LEGACY_DEPLOY_LOG if runstate.is_legacy(run, s) else files_dir(run, s) / DEPLOY_LOG
 # The only fields in which the deploy copy may differ from the approved bundle (besides fields that
 # held an emit placeholder). Anything else is refused: the deploy must run what Gate 4 approved.
 ALLOWED_DIFF = [("WorkflowName", "deploy name"),
@@ -150,17 +163,19 @@ def tree_hash(folder: Path) -> str:
 
 def load_state_only(run: str) -> dict:
     """The run's state with load_run's checks, for commands that need no bundle (monitor status)."""
+    import runstate
     path = Path(run) / "state.json"
     if not path.is_file():
         raise InputError(f"{path} not found — is --run a run directory?")
-    return json.loads(path.read_text())
+    return runstate.load(run)
 
 
 def load_run(run: str) -> tuple[dict, Path]:
+    import runstate
     path = Path(run) / "state.json"
     if not path.is_file():
         raise InputError(f"{path} not found — is --run a run directory?")
-    s = json.loads(path.read_text())
+    s = runstate.load(run)
     if s.get("schema_version", 1) < 2:
         raise InputError("this run was made by curate-skills v1, which does not deploy")
     if not s.get("workflow_id"):  # only the bundle built from an approved version is deployed
@@ -349,7 +364,7 @@ def read_deploy_log(run: str) -> tuple[list[dict], list[str]]:
     """This run's own deploy log: lines curate-deploy appended for each path a step wrote.
     Repo lines: {run_id, deploy_name, step, repo, branch, path}; S3 lines (written at invoke for
     the prefixes the run writes): {run_id, deploy_name, step, bucket, prefix}."""
-    path = Path(run) / DEPLOY_LOG
+    path = deploy_log_path(run)
     entries, bad = [], []
     if path.is_file():
         for i, line in enumerate(path.read_text().splitlines(), 1):
@@ -506,27 +521,50 @@ def s3_check(wf: dict, s3_targets: list[dict], curate_prefixes: list[str], facto
 # ── the deploy name ──────────────────────────────────────────────────────────
 
 def _read_state(run_dir: Path) -> dict | None:
+    import runstate
     try:
-        return json.loads((run_dir / "state.json").read_text())
+        return runstate.load(run_dir)
     except (OSError, ValueError):
         return None
 
 
+def _project_of(run: str | Path) -> Path:
+    s = _read_state(Path(run)) or {}
+    if s.get("project_dir"):
+        return Path(s["project_dir"])
+    p = Path(run).resolve()
+    return p.parents[4] if p.parent.name == "runs" and p.parents[2].name == "workflows" else p.parents[2]
+
+
 def project_runs(run: str | Path) -> list[tuple[Path, dict]]:
-    """Every run in the same .curate/runs folder (this one included), with its state."""
+    """Every run of the project (this one included), with its state: each generation run (with its
+    current execution's records), then each execution run that is not some generation run's current
+    one (a standalone run, or one a later Gate 4 replaced)."""
+    import ids
+    import runstate
+    project = _project_of(run)
     out = []
-    for d in sorted(Path(run).resolve().parent.iterdir()):
+    runs = project / ".curate" / "runs"
+    for d in sorted(runs.iterdir()) if runs.is_dir() else []:
         st = _read_state(d) if d.is_dir() else None
         if st:
             out.append((d, st))
+    for d in ids.execution_dirs(project):
+        if runstate.resolve_run(d) == d.resolve() and (st := _read_state(d)):
+            out.append((d, st))
     return out
+
+
+def _find(project: Path, ref: str) -> Path:
+    import runstate
+    return runstate.resolve_run(ref, project)
 
 
 def lineage(run: str | Path, s: dict) -> list[tuple[str, dict | None]]:
     """This run, then the run its Gate 4 approval was copied from (--start-at deploy --from-run X),
     and so on: the last entry is the run that approved Gate 4. A source not in this project ends
     the chain (its state is None)."""
-    parent = Path(run).resolve().parent
+    project = _project_of(run)
     chain, seen, cur = [(s.get("run_id"), s)], {s.get("run_id")}, s
     while cur:
         first = (cur.get("history") or [{}])[0]
@@ -534,7 +572,7 @@ def lineage(run: str | Path, s: dict) -> list[tuple[str, dict | None]]:
         if not src or src in seen:
             break
         seen.add(src)
-        cur = _read_state(parent / src)
+        cur = _read_state(_find(project, src))
         chain.append((src, cur))
     return chain
 
@@ -576,7 +614,7 @@ def resolve_suffix(run: str, override: str | None = None, gh: GitHub | None = No
         s, bundle = load_run(run)
         workflow_name = json.loads((bundle / "workflow.json").read_text())["WorkflowName"]
     else:  # Gate 4's preview of a versioned run: no bundle is written yet
-        s = json.loads((Path(run) / "state.json").read_text())
+        s = _read_state(Path(run)) or {}
     rec = s.get("deploy") or {}
     if rec.get("suffix"):
         if override and override != rec["suffix"]:
@@ -650,7 +688,7 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
     vdir = Path(s.get("version_dir") or "")
     if not vdir.is_dir():
         problems.append(f"the approved version {s['workflow_id']} is missing ({vdir})")
-    elif ids.tree_hash(vdir, skip=("runs",)) != s.get("version_hash"):
+    elif ids.version_hash(vdir) != s.get("version_hash"):
         problems.append(f"the approved version {s['workflow_id']} changed after it was published")
     filled_wf, filled, unset = fill_placeholders(wf)
     if unset:
@@ -727,7 +765,7 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
            "s3_targets": s3_targets, "secrets": {"required": req_secrets}, "curate_files": [],
            "github_checked": False, "deploy_diff": diff_rows, "reuse_from": (reuse_from or {}).get("run_id"),
            "derived_changes": derived_changes(wf, copy_wf), "overwrite_own": overwrite_own,
-           "deploy_log": {"path": str(DEPLOY_LOG), "repo_paths": sorted(own_files),
+           "deploy_log": {"path": str(deploy_log_path(run)), "repo_paths": sorted(own_files),
                           "s3_prefixes": sorted(f"s3://{b}/{x}" for b, x in own_s3)}}
 
     if unset:
@@ -831,7 +869,7 @@ def preflight(run: str, suffix: str, gh: GitHub | None = None, token_source: str
         [f"s3://{t['bucket']}/{t['prefix']}" for t in s3_targets if t.get("overwrite")]
     out.update(ok=not problems, problems=problems, warnings=warnings)
     try:  # the full comparison, for anyone who wants it; never shown in the summary
-        diff_path = Path(run) / "deploy" / "preflight-diff.md"
+        diff_path = files_dir(run) / "deploy" / "preflight-diff.md"
         text = diff_md(out)
         if not leakcheck.find_leaks(text):
             diff_path.parent.mkdir(parents=True, exist_ok=True)
@@ -949,7 +987,7 @@ def _gate4_target(run: str) -> dict:
     """The deploy copy, its targets and settings, as Gate 4 shows them. Local only."""
     envfile.load()
     import execution as X
-    s = json.loads((Path(run) / "state.json").read_text())
+    s = _read_state(Path(run)) or {}
     if not (s.get("execution") or {}).get("bundle_hash"):
         wf = X.faasr_built(s, run)["workflow"]  # Gate 4's preview: built in memory from the draft
         name = resolve_suffix(run, os.environ.get("CURATE_DEPLOY_NAME_SUFFIX") or None, None, wf["WorkflowName"])
@@ -1018,29 +1056,15 @@ class StepError(Exception):
     pass
 
 
-@contextlib.contextmanager
-def _state_lock(run: Path):
-    """The same lock spec.py holds (<run>/state.lock) around every state.json change."""
-    with open(run / "state.lock", "a") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+def _no_leak(text: str) -> None:
+    if leakcheck.find_leaks(text):
+        raise StepError("refusing to write state.json: it would contain a secret value")
 
 
 def _update_state(run: Path, change) -> dict:
-    with _state_lock(run):
-        path = run / "state.json"
-        s = json.loads(path.read_text())
-        change(s)
-        text = json.dumps(s, indent=2) + "\n"
-        if leakcheck.find_leaks(text):
-            raise StepError("refusing to write state.json: it would contain a secret value")
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(text)
-        tmp.replace(path)
-        return s
+    """Change the run's state (runstate.update: an execution's records go to its execution run)."""
+    import runstate
+    return runstate.update(run, change, _no_leak)
 
 
 def _now_iso() -> str:
@@ -1048,12 +1072,13 @@ def _now_iso() -> str:
 
 
 def _log_written(run: Path, entry: dict) -> None:
-    """Append one line to <run>/deploy/deploy-log.jsonl (what --overwrite-own-deploy trusts)."""
-    (run / DEPLOY_LOG).parent.mkdir(parents=True, exist_ok=True)
+    """Append one line to the execution run's deploy-log.jsonl (what --overwrite-own-deploy trusts)."""
+    path = deploy_log_path(run)
+    path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps({"ts": _now_iso(), **entry})
     if leakcheck.find_leaks(line):
         raise StepError("refusing to write the deploy log: the entry would contain a secret value")
-    with open(run / DEPLOY_LOG, "a") as fh:
+    with open(path, "a") as fh:
         fh.write(line + "\n")
 
 
@@ -1234,12 +1259,12 @@ def deploy_step(run: str, step: str, suffix: str, gh: GitHub | None, token: str 
         elif step == "upload":
             path = f"workflows/{new}.json"
             text = _checked(json.dumps(copy_wf, indent=2), path, extra)
-            (run_p / "deploy").mkdir(exist_ok=True)
-            (run_p / "deploy" / "workflow.json").write_text(text + "\n")
+            (files_dir(run_p) / "deploy").mkdir(exist_ok=True)
+            (files_dir(run_p) / "deploy" / "workflow.json").write_text(text + "\n")
             put_file(gh, user, repo, path, text, f"Add/update workflow payload {new} (curate-skills)", branch)
             _log_written(run_p, {**log_base, "repo": f"{user}/{repo}", "branch": branch, "path": path,
                                  "sha": blob_sha(text)})
-            detail = {"written": [path], "local_copy": str(run_p / "deploy" / "workflow.json")}
+            detail = {"written": [path], "local_copy": str(files_dir(run_p) / "deploy" / "workflow.json")}
         elif step == "register":
             log = RUNNERS["register"](copy_wf, token, extra)
             try:  # what CURATE's generator wrote, for teardown's "changed since deploy" check
@@ -1322,11 +1347,10 @@ def reuse_source(run: str, s: dict) -> dict:
     src_id = (s.get("deploy") or {}).get("reused_from") or first.get("from_run")
     if not (first.get("decision") == "copied" and first.get("gate") == 4 and src_id):
         raise StepError("invoke only needs a run started with --start-at deploy --from-run <the run that deployed>")
-    src_dir = Path(run).resolve().parent / src_id
-    try:
-        src = json.loads((src_dir / "state.json").read_text())
-    except (OSError, ValueError):
-        raise StepError(f"the source run {src_id} is not in this project ({src_dir})") from None
+    src_dir = _find(_project_of(run), src_id)
+    src = _read_state(src_dir)
+    if src is None:
+        raise StepError(f"the source run {src_id} is not in this project ({src_dir})")
     dep = src.get("deploy") or {}
     missing = [x for x in STEPS if not (dep.get("steps") or {}).get(x, {}).get("ok")]
     if missing:
@@ -1423,8 +1447,8 @@ def reuse(run: str, suffix: str, gh: GitHub | None, token: str | None, token_sou
                 "error": f"invoke only starts the workflow in {pf['repo']} — ask the user first; only after they "
                          "say yes, run it again with --confirmed"}
     text = json.dumps(copy_wf, indent=2)
-    (run_p / "deploy").mkdir(exist_ok=True)
-    (run_p / "deploy" / "workflow.json").write_text(_checked(text, "the deploy copy", {"gh_token": token}) + "\n")
+    (files_dir(run_p) / "deploy").mkdir(exist_ok=True)
+    (files_dir(run_p) / "deploy" / "workflow.json").write_text(_checked(text, "the deploy copy", {"gh_token": token}) + "\n")
     ts = _now_iso()
     _update_state(run_p, lambda st: st.update(deploy={
         "deploy_name": new, "suffix": suffix, "repo": pf["repo"], "branch": branch, "bundle_hash": pf["bundle_hash"],
@@ -1451,7 +1475,7 @@ def deploy_status(run: str) -> dict:
             "progress": progress_line(done), "reuse_possible": reuse_possible,
             "failed": failed, "next_step": next((x for x in STEPS if x not in done), None),
             "deploy_name": rec.get("deploy_name"), "invocation_id": rec.get("invocation_id"),
-            "deploy_log": str(Path(run) / DEPLOY_LOG) if (Path(run) / DEPLOY_LOG).is_file() else None}
+            "deploy_log": str(deploy_log_path(run)) if deploy_log_path(run).is_file() else None}
 
 
 # ── list and teardown ────────────────────────────────────────────────────────
@@ -1514,7 +1538,7 @@ def list_deployments(project: str | Path) -> dict:
 def _expected_repo_contents(run_p: Path, s: dict, bundle: Path) -> dict[str, str]:
     """For deploy logs without shas (written before teardown existed): what this run deployed,
     rebuilt from its own files. Empty when that can't be trusted (bundle changed, no deploy copy)."""
-    copy_path = run_p / "deploy" / "workflow.json"
+    copy_path = files_dir(run_p) / "deploy" / "workflow.json"
     if not copy_path.is_file() or tree_hash(bundle) != (s.get("deploy") or {}).get("bundle_hash"):
         return {}
     copy_wf = json.loads(copy_path.read_text())
@@ -1537,7 +1561,7 @@ OUTPUT_CHOICES = {"keep": "keep the outputs: delete only the deploy files and th
 
 def _run_workflow(run_p: Path, bundle: Path) -> dict:
     """The deploy copy this run uploaded, else the approved bundle with its placeholders filled."""
-    copy_path = run_p / "deploy" / "workflow.json"
+    copy_path = files_dir(run_p) / "deploy" / "workflow.json"
     return json.loads(copy_path.read_text()) if copy_path.is_file() else \
         fill_placeholders(json.loads((bundle / "workflow.json").read_text()))[0]
 
@@ -1578,7 +1602,7 @@ def teardown_plan(run: str, gh: GitHub | None, s3_factory=boto3_s3) -> dict:
     entries, bad = read_deploy_log(run)
     mine = [e for e in entries if e.get("run_id") == s.get("run_id") and e.get("deploy_name") == dep.get("deploy_name")
             and e.get("step") != "teardown"]
-    if not (run_p / DEPLOY_LOG).is_file() or not mine:
+    if not deploy_log_path(run_p).is_file() or not mine:
         return {**base, "ok": False, "error": f"no deploy log for this run ({DEPLOY_LOG}): nothing is known to be "
                 "this run's, so nothing is deleted"}
     problems = list(bad)
@@ -1836,6 +1860,9 @@ def main(argv=None, opener=None, s3_factory=boto3_s3) -> int:
     q.add_argument("--to", help="with --outputs download: an empty folder outside the run "
                                 "(default <project>/teardown-outputs/<deploy name>)")
     args = p.parse_args(argv)
+    if getattr(args, "run", None):  # an id, <workflow-id>/<run-id> or a folder
+        import runstate
+        args.run = str(runstate.resolve_run(args.run))
     envfile.load()  # ~/.config/curate/.env fills deploy variables the environment leaves unset
     if args.cmd in ("status", "list"):
         try:

@@ -16,7 +16,7 @@ def versioned_bundle(project: Path, files: dict[str, str], wid: str = "weather-v
     vdir.mkdir(parents=True, exist_ok=True)
     if not (vdir / "workflow.yml").exists():
         (vdir / "workflow.yml").write_text("cwlVersion: v1.2\nclass: Workflow\n")
-    vhash = ids.tree_hash(vdir, skip=("runs",))
+    vhash = ids.version_hash(vdir)
     ex = ids.execution_dir(project, wid, rid)
     bundle = ex / "bundle"
     for rel, text in files.items():

@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+import runstate
+
 import envfile
 import images
 import pegasus_deploy as PD
@@ -92,7 +94,7 @@ def test_file_image_on_an_ssh_host_is_checked_there():
 def at_gate4(run):
     s = state(run)
     s["stage"] = "gate4"
-    (run / "state.json").write_text(json.dumps(s))
+    runstate.save(run, s)
 
 
 def test_pegasus_image_command_is_read_only_and_shows_the_summary(source_run, capsys):  # noqa: F811
@@ -115,7 +117,7 @@ def test_pegasus_image_summary_shows_package_warnings(source_run, capsys):  # no
     s["validation"]["spec_hash"] = S.spec_hash(s["spec"])
     from conftest import redraft
     redraft(source_run, s)  # emit again after the spec changed
-    (source_run / "state.json").write_text(json.dumps(s))
+    runstate.save(source_run, s)
     out = ok(S, ["pegasus-image", "--run", str(source_run), "--image", "docker:///me/tools:2"], capsys)
     name = s["spec"]["nodes"][1]["name"]
     assert f"- note: step {name} imports numpy: these must already be in the image docker:///me/tools:2" in out["summary"]

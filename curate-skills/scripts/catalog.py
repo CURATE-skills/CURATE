@@ -208,7 +208,7 @@ def load_run(run: Optional[str], spec_file: Optional[str]) -> tuple[WorkflowSpec
     if spec_file:
         data, state = json.loads(Path(spec_file).read_text()), {}
     elif run:
-        state = json.loads((Path(run) / "state.json").read_text())
+        state = _run_state(run)
         data = state.get("spec")
         if not data:
             raise InputError(f"{run}/state.json has no 'spec' yet")
@@ -412,6 +412,12 @@ def deployed_run_problem(state: dict) -> Optional[str]:
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
+def _run_state(run) -> dict:
+    """The run's state; a generation run's with its current execution's records (runstate.load)."""
+    import runstate
+    return runstate.load(run)
+
+
 def main(argv=None) -> int:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--catalog-dir")
@@ -449,6 +455,9 @@ def main(argv=None) -> int:
     sp.add_argument("--out", required=True)
     sp.add_argument("--ids", nargs="*")
     args = p.parse_args(argv)
+    if getattr(args, "run", None):  # an id, <workflow-id>/<run-id> or a folder
+        import runstate
+        args.run = str(runstate.resolve_run(args.run))
 
     try:
         root, source = resolve_catalog_dir(args.catalog_dir, args.run, args.config_catalog_dir)
@@ -479,7 +488,7 @@ def run_command(args, root: Path) -> dict:
     if cmd == "search-nodes":
         if not args.run:
             raise InputError("search-nodes needs --run DIR")
-        state = json.loads((Path(args.run) / "state.json").read_text())
+        state = _run_state(args.run)
         data = state.get("spec") or (state.get("skeleton_draft") or {}).get("spec")
         if not data:
             raise InputError("run has no spec or skeleton yet")
@@ -498,8 +507,11 @@ def run_command(args, root: Path) -> dict:
         e.usage_count += 1
         (cat.save_workflow if args.workflow else cat.save_function)(e)
         return {"ok": True, "id": e.id, "usage_count": e.usage_count}
+    if cmd in ("save-functions", "save-workflow") and args.run and _run_state(args.run).get("kind") == "execution":
+        raise InputError("this is an execution run: it deployed a version that the run which approved it published "
+                         "(and saved); nothing is saved from it")
     if cmd in ("save-functions", "save-workflow") and args.run and not args.dry_run:
-        problem = deployed_run_problem(json.loads((Path(args.run) / "state.json").read_text()))
+        problem = deployed_run_problem(_run_state(args.run))
         if problem:
             raise InputError(problem)
     if cmd == "save-functions":

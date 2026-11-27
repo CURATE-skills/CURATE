@@ -55,7 +55,7 @@ def test_the_references_are_the_two_kinds():
 @pytest.mark.parametrize("which", WORKFLOWS)
 def test_the_fixture_is_the_published_version(which):
     d, _, ident = ref(which)
-    assert ids.tree_hash(d / "version", skip=("runs",)) == ident["version_hash"]
+    assert ids.version_hash(d / "version") == ident["version_hash"]
     assert ids.draft_content_hash(d / "version") == ident["content_hash"]
     doc = yaml.safe_load((d / "version" / "workflow.yml").read_text())
     assert (doc["s:identifier"], doc["s:version"], doc["curate:content_hash"]) == \

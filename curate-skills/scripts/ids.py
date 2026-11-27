@@ -7,7 +7,9 @@ brief, "Workflow and run IDs"; docs/CWL_IR.md, "Identity and versions" and "Layo
 
   <project>/.curate/runs/<run-id>/draft/                   emit's draft (a generation session)
   <project>/.curate/workflows/<workflow-id>/               a published version (never edited)
-  <project>/.curate/workflows/<workflow-id>/runs/<run-id>/ one execution: bundle/, manifest.json
+  <project>/.curate/workflows/<workflow-id>/approved.json  what Gate 4 approved with it (the spec)
+  <project>/.curate/workflows/<workflow-id>/runs/<run-id>/ one execution run: state.json, bundle/,
+                                                           manifest.json, its logs and outputs
 
 A draft becomes a version only when Gate 4 approves it: plan_publish() works out the next
 version number and any existing version with the same content hash (nothing is written, so
@@ -87,7 +89,19 @@ def draft_dir(run_dir) -> Path:
     return Path(run_dir) / "draft"
 
 
+def execution_dirs(project, rid: str | None = None) -> list[Path]:
+    """Every execution run folder of the project (with its state.json), or those named `rid`."""
+    root = workflows_root(project)
+    pattern = f"*/runs/{rid or '*'}/state.json"
+    return sorted(p.parent for p in root.glob(pattern)) if root.is_dir() else []
+
+
 # ── hashes ───────────────────────────────────────────────────────────────────
+
+# Top-level names of a version folder that are not part of its hash: its execution runs, and the Gate 4
+# record publish adds next to the workflow (approved.json; versions published before it have none).
+APPROVED = "approved.json"
+VERSION_SKIP = ("runs", APPROVED)
 
 OS_METADATA = re.compile(r"(^|/)(\.DS_Store|Thumbs\.db|desktop\.ini|__pycache__(/.*)?|\._[^/]*)$")
 
@@ -103,6 +117,19 @@ def tree_hash(folder, skip=()) -> str:
         if p.is_file() and not OS_METADATA.search(rel) and rel.split("/", 1)[0] not in skip:
             h.update(rel.encode() + b"\0" + p.read_bytes())
     return h.hexdigest()
+
+
+def version_hash(folder) -> str:
+    """A version folder's hash: everything except its execution runs and approved.json."""
+    return tree_hash(folder, skip=VERSION_SKIP)
+
+
+def read_approved(folder) -> dict | None:
+    """The version's approved.json (the spec Gate 4 approved it with), or None (published before it)."""
+    try:
+        return json.loads((Path(folder) / APPROVED).read_text())
+    except (OSError, ValueError):
+        return None
 
 
 def draft_content_hash(draft) -> str:
@@ -215,9 +242,11 @@ def plan_publish(draft, name: str, project, catalog=None) -> dict:
             "draft_hash": tree_hash(draft), "duplicates": dups}
 
 
-def publish(draft, name: str, project, version: int, approved_hash: str) -> dict:
+def publish(draft, name: str, project, version: int, approved_hash: str, approved: dict | None = None) -> dict:
     """Copy an approved draft to .curate/workflows/<name>-v<version>/ atomically and add its identity.
-    Refuses a draft whose tree hash is not the approved one, and an existing version folder."""
+    Refuses a draft whose tree hash is not the approved one, and an existing version folder.
+    `approved` (what Gate 4 approved: the spec, its run) goes in approved.json, outside the version
+    hash, so a version carries what a later deploy needs to build it, wherever it is moved."""
     import yaml
     draft = Path(draft)
     got = tree_hash(draft)
@@ -243,6 +272,9 @@ def publish(draft, name: str, project, version: int, approved_hash: str) -> dict
     ordered.update({k: v for k, v in doc.items() if k not in ordered})
     (tmp / "workflow.yml").write_text(yaml.safe_dump(ordered, sort_keys=False, default_flow_style=False,
                                                      allow_unicode=True))
+    if approved is not None:
+        (tmp / APPROVED).write_text(json.dumps({**approved, "workflow_id": wid, "content_hash": ch},
+                                               indent=2, sort_keys=True) + "\n")
     try:
         os.rename(tmp, dest)  # atomic on one file system; fails if dest appeared meanwhile
     except OSError:
@@ -250,7 +282,7 @@ def publish(draft, name: str, project, version: int, approved_hash: str) -> dict
         raise IdError(f"{wid} appeared while publishing; nothing was overwritten")
     _read_only(dest)
     return {"workflow_id": wid, "version": version, "dir": str(dest), "content_hash": ch,
-            "draft_hash": approved_hash, "version_hash": tree_hash(dest, skip=("runs",))}
+            "draft_hash": approved_hash, "version_hash": version_hash(dest)}
 
 
 def copy_version(src, project, wid: str, expected_content_hash: str) -> dict:
@@ -274,7 +306,7 @@ def copy_version(src, project, wid: str, expected_content_hash: str) -> dict:
         shutil.rmtree(tmp, ignore_errors=True)
         raise IdError(f"{wid} appeared while copying; nothing was overwritten")
     _read_only(dest)
-    return {"dir": str(dest), "version_hash": tree_hash(dest, skip=("runs",)), "content_hash": got}
+    return {"dir": str(dest), "version_hash": version_hash(dest), "content_hash": got}
 
 
 def _read_only(folder: Path) -> None:
@@ -284,7 +316,7 @@ def _read_only(folder: Path) -> None:
 
 
 def check_version(project, wid: str, approved_version_hash: str) -> None:
-    got = tree_hash(version_dir(project, wid), skip=("runs",))
+    got = version_hash(version_dir(project, wid))
     if got != approved_version_hash:
         raise IdError(f"{wid} changed since it was published ({got[:12]} != {approved_version_hash[:12]})")
 

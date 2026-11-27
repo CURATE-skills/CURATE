@@ -71,8 +71,8 @@ Never pass `--confirmed` without the user's yes to that step in their latest ans
 
 ## 3. When a step fails
 
-Show the `error` exactly; the run stays at `deploy`. What the step wrote is in
-`<run>/pegasus/deploy-log.jsonl`. Ask with AskUserQuestion — **Retry, removing what this step wrote**
+Show the `error` exactly; the run stays at `deploy`. What the step wrote is in the
+execution run's `deploy-log.jsonl`. Ask with AskUserQuestion — **Retry, removing what this step wrote**
 / **Stop here** — and only after the first, repeat the step (from 2.1) with `--overwrite-own` added
 to both calls. It removes only what that step itself logged; anything else stays refused.
 

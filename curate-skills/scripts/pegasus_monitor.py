@@ -17,7 +17,6 @@ It never submits, removes or changes the workflow. Standard library only.
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import re
@@ -53,23 +52,14 @@ def q(x) -> str:
 
 
 def _load(run: Path) -> dict:
-    return json.loads((run / "state.json").read_text())
+    import runstate
+    return runstate.load(run)
 
 
 def _update(run: Path, change) -> dict:
-    """The same lock spec.py and deploy.py hold (<run>/state.lock) around every state.json change."""
-    with open(run / "state.lock", "a") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
-        try:
-            path = run / "state.json"
-            s = json.loads(path.read_text())
-            change(s)
-            tmp = path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(s, indent=2) + "\n")
-            tmp.replace(path)
-            return s
-        finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+    """Change the run's state (runstate.update: an execution's records go to its execution run)."""
+    import runstate
+    return runstate.update(run, change)
 
 
 def _setting(flag, env_var, config, default, cast):
