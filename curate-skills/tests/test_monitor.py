@@ -583,8 +583,8 @@ def test_recheck_after_a_failure_polls_the_same_invocation_and_can_replace_the_v
     world.runs["plot"].remove(next(r for r in world.runs["plot"] if r["id"] == late))
     code, out = poll(capsys, run, world)  # the old false FAILURE: the late run not listed yet
     assert out["result"] == "failure" and state(run)["stage"] == "stopped"
-    # the run, by its reference (curate-monitor takes a run)
-    assert out["recheck_command"] == f"/curate-skills:curate-monitor --run {state(run)['execution']['reference']}"
+    # a session from before runs kept their own state: by its session id (its records are its own)
+    assert out["recheck_command"] == f"/curate-skills:curate-monitor --run {state(run)['run_id']}"
     # curate-monitor --run r1: begin resumes monitor; poll re-checks the same invocation
     S.main(["begin", "--session", str(run), "--stage", "monitor"])
     assert json.loads(capsys.readouterr().out)["mode"] == "resume"

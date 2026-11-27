@@ -171,7 +171,8 @@ def load_state_only(run: str) -> dict:
     import runstate
     path = Path(run) / "state.json"
     if not path.is_file():
-        raise InputError(f"{path} not found — is --run a run directory?")
+        raise InputError(f"{path} not found: {run} is not a run, and no session links it as its run "
+                         "(spec.py runs lists this project's sessions and runs)")
     return runstate.load(run)
 
 
@@ -179,7 +180,8 @@ def load_run(run: str) -> tuple[dict, Path]:
     import runstate
     path = Path(run) / "state.json"
     if not path.is_file():
-        raise InputError(f"{path} not found — is --run a run directory?")
+        raise InputError(f"{path} not found: {run} is not a run, and no session links it as its run "
+                         "(spec.py runs lists this project's sessions and runs)")
     s = runstate.load(run)
     if s.get("schema_version", 1) < 2:
         raise InputError("this run was made by curate-skills v1, which does not deploy")
@@ -1759,10 +1761,43 @@ def _list_keys(client, bucket: str, prefix: str) -> list[str]:
         token = r.get("NextContinuationToken")
 
 
+def _has_faasr_deploy(s: dict) -> bool:
+    return any(((s.get("deploy") or {}).get("steps") or {}).get(x, {}).get("ok") for x in STEPS)
+
+
+def no_deployment_problem(run: str) -> str | None:
+    """Why `run` has nothing for teardown --run, naming the runs or sessions that do hold this
+    version's FaaSr deployment; None when it has one."""
+    import runstate
+    if not (Path(run) / "state.json").is_file():
+        return (f"{run} is not a run: it has no state.json, and no session links it as its run "
+                "(spec.py runs lists this project's sessions and runs)")
+    s = runstate.load(run)
+    if _has_faasr_deploy(s):
+        return None
+    me = runstate.handle(s) if runstate.is_execution(s) else (runstate.current_run(s) or s["run_id"])
+    pegasus = s.get("deploy_choice") == "pegasus" or (s.get("execution") or {}).get("target") == "pegasus"
+    why = "it ran on Pegasus" if pegasus else "no FaaSr deploy step of it ran"
+    held = []
+    for d, st in project_runs(run):
+        if d.resolve() == Path(run).resolve() or not _has_faasr_deploy(st) or (st.get("deploy") or {}).get("teardown"):
+            continue
+        ref = runstate.handle(st) if runstate.is_execution(st) else (runstate.current_run(st) or st["run_id"])
+        kind = "run" if runstate.is_execution(st) or runstate.current_run(st) else "session"
+        held.append((st.get("workflow_id") == s.get("workflow_id"), f"{(st.get('deploy') or {}).get('deploy_name')} "
+                     f"(the {kind} {ref}'s: teardown --run {ref})"))
+    same = [h for same_v, h in held if same_v] or [h for _, h in held]
+    return (f"{me} has no FaaSr deployment ({why}); nothing of it is on GitHub or S3. "
+            + (f"This project's FaaSr deployment(s) not torn down: {'; '.join(same)}" if same else
+               "This project has no other FaaSr deployment that is not torn down (deploy.py list shows them all)"))
+
+
 def teardown_plan(run: str, gh: GitHub | None, s3_factory=boto3_s3) -> dict:
     """Read-only: exactly what teardown would delete — the repo files and the S3 objects under the
     prefixes this run's deploy log records — or why it refuses."""
     run_p = Path(run)
+    if (problem := no_deployment_problem(run)):
+        return {"ok": False, "run": str(run_p), "error": problem}
     s, bundle = load_run(run)
     dep = s.get("deploy") or {}
     base = {"run": str(run_p.resolve()), "run_id": s.get("run_id"), "deploy_name": dep.get("deploy_name")}

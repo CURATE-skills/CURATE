@@ -588,3 +588,93 @@ def test_every_main_is_checked_against_the_versions_code(approved_session):  # n
         f"{main} is not byte-identical to the version's " + next(
             str(st.function["code"]) for sid, st in __import__("execution").load_workflow(vdir, vs).steps.items()
             if main.endswith(f"{sid}_main.py"))]
+
+
+# ── a session from before runs kept their own state, linking a run folder without state.json ──
+
+def legacy_shape(project):
+    """As on a real project made before execution runs had their own state: the session holds the
+    FaaSr records (deployed, invoked once, not torn down), and its execution folder (workflows/<wid>/
+    runs/<rid>/) has only bundle/ and manifest.json."""
+    r = torn(project)
+    ex = ids.execution_dir(project, V, RID)
+    assert sorted(x.name for x in ex.iterdir()) == ["bundle", "manifest.json"]
+    return r, ex
+
+
+@pytest.mark.parametrize("how", ["session id", "wid/rid", "run folder", "run id"])
+def test_a_pre_change_session_is_torn_down_by_any_name_of_it(project, plain, capsys, monkeypatch, how):
+    r, ex = legacy_shape(project)
+    monkeypatch.chdir(project)
+    ref = {"session id": A, "wid/rid": f"{V}/{RID}", "run folder": str(ex), "run id": RID}[how]
+    fake, s3 = world()
+    code = D.main(["teardown", "--run", ref], opener=fake, s3_factory=s3)
+    cap = capsys.readouterr()
+    plan = json.loads(cap.out)
+    assert code == 1 and plan.get("needs_confirmation"), plan
+    assert sorted(f["path"] for f in plan["repo_files"]) == sorted(FILES)
+    assert A in cap.err and ("from before runs kept their own state" in cap.err or "using its session" in cap.err)
+    code = D.main(["teardown", "--run", ref, "--confirmed", "--plan", plan["plan_id"], "--outputs", "delete"],
+                  opener=fake, s3_factory=s3)
+    out = json.loads(capsys.readouterr().out)
+    assert code == 0 and out["ok"], out
+    assert json.loads((r / "state.json").read_text())["deploy"]["teardown"]["repo_files"] == 5
+    assert not (ex / "state.json").exists()  # the run folder is left as it was
+
+
+def test_status_and_monitor_given_the_pre_change_session_use_the_session(project, plain, capsys, monkeypatch):
+    import monitor as MON
+    legacy_shape(project)
+    monkeypatch.chdir(project)
+    for mod in (D, MON):
+        outs = []
+        for ref in (A, f"{V}/{RID}"):
+            mod.main(["status", "--run", ref])
+            cap = capsys.readouterr()
+            outs.append(json.loads(cap.out))
+            assert A in cap.err  # the note names the session used
+        assert outs[0] == outs[1] and outs[0]["ok"], outs
+    assert outs[0] != {} and D.deploy_status(str(project / ".curate" / "runs" / A))["deploy_name"] == NAME
+
+
+def _runs(project):
+    import argparse
+    import spec as S
+    return S.cmd_runs(argparse.Namespace(project_dir=str(project)))
+
+
+def test_runs_lists_a_pre_change_deployment_by_its_session_and_marks_torn_down_runs(project, plain, capsys):
+    legacy_shape(project)
+    # a run with its own state, deployed and torn down (monitor said success before that)
+    done = ids.execution_dir(project, V, "20261126-214030-cb91")
+    done.mkdir(parents=True)
+    (done / "state.json").write_text(json.dumps({
+        "schema_version": 2, "kind": "execution", "run_id": "20261126-214030-cb91", "reference": f"{V}/20261126-214030-cb91",
+        "workflow_id": V, "stage": "done", "session": None, "execution": {"target": "faasr"},
+        "monitor": {"result": "success"},
+        "deploy": {**deployed(V, ""), "teardown": {"ts": "2026-11-26T22:00:00+00:00"}}}))
+    out = _runs(project)
+    ses = next(x for x in out["sessions"] if x["session_id"] == A)
+    assert ses["run"] is None  # its run folder has no state of its own: the session is named
+    assert ses["deploy"] == {"name": NAME, "invoked": True, "torn_down": None, "teardown_run": A}
+    gone = next(x for x in out["runs"] if x["run_id"] == "20261126-214030-cb91")
+    assert gone["deploy"]["torn_down"] == "2026-11-26T22:00:00+00:00" and gone["deploy"]["teardown_run"] is None
+
+
+def test_a_run_with_no_faasr_deployment_says_so_and_names_whose_it_is(project, plain, capsys, monkeypatch):
+    legacy_shape(project)
+    peg_rid = "20261125-090000-peg1"
+    make_run(project, "20261125-085900-pegs", rid=peg_rid, stage="done", deploy_choice="pegasus",
+             pegasus={"steps": {"submit": {"ok": True}}})
+    monkeypatch.chdir(project)
+    code, out = cli(capsys, "teardown", "--run", f"{V}/{peg_rid}")
+    assert code == 1 and "has no FaaSr deployment (it ran on Pegasus)" in out["error"], out
+    assert f"{NAME} (the session {A}'s: teardown --run {A})" in out["error"]
+    assert "state.json" not in out["error"]
+
+
+def test_a_folder_that_is_not_a_run_says_so(project, plain, capsys, tmp_path):
+    stray = tmp_path / "stray"
+    stray.mkdir()
+    code, out = cli(capsys, "teardown", "--run", str(stray))
+    assert code == 1 and "is not a run" in out["error"] and "no session links it" in out["error"]

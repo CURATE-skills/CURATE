@@ -195,6 +195,33 @@ def _owner(ex_dir: Path) -> Path:
     return ex_dir
 
 
+def legacy_owner(project: str | Path, ex_dir: str | Path) -> Path | None:
+    """A run folder with no state.json of its own (made before runs kept their own state) is used
+    through the session that links it: that session holds the run's records (deploy, pegasus,
+    monitor). The session, or None (the folder has its own state, or no session links it)."""
+    import ids
+    ex_dir = Path(ex_dir).expanduser()
+    if (ex_dir / "state.json").is_file() or not ex_dir.is_dir():
+        return None
+    ex_dir = ex_dir.resolve()
+    for d in ids.session_dirs(Path(project)):
+        try:
+            st = read_state(d)
+        except (OSError, ValueError):
+            continue
+        dd = (st.get("execution") or {}).get("dir")
+        if not is_execution(st) and dd and Path(dd).expanduser().resolve() == ex_dir:
+            return d
+    return None
+
+
+def current_run(s: dict) -> str | None:
+    """The <workflow-id>/<run-id> a session's run commands use: its current run, when that run keeps
+    its own state. None for a run, and for a session made before (its records are its own: commands
+    name it by its session id)."""
+    return (s.get("execution") or {}).get("reference") if linked_execution(s) is not None else None
+
+
 class AmbiguousRef(ValueError):
     """A bare id names more than one thing (a session and a run, or runs of two versions)."""
 
@@ -213,18 +240,26 @@ def resolve_run(ref: str | Path, project: str | Path | None = None, prefer: str 
     if (p / "state.json").is_file():
         p = p.resolve()
         return _owner(p) if is_execution(read_state(p)) else p
+    if p.is_dir() and (proj := ids.project_of_path(p)) and (o := legacy_owner(proj, p)) is not None:
+        return o.resolve()  # a run folder from before runs kept their own state: its session
     project = Path(project or ".").resolve()
     ref = str(ref).strip().strip("/")
     if ref.count("/") == 1:
         cand = ids.execution_dir(project, *ref.split("/"))
-        return _owner(cand.resolve()) if (cand / "state.json").is_file() else p
+        if (cand / "state.json").is_file():
+            return _owner(cand.resolve())
+        o = legacy_owner(project, cand)
+        return o.resolve() if o is not None else p
     if "/" in ref or not ref:
         return p
     session = ids.session_dir(project, ref)
     if session is not None and prefer == "session":
         return session.resolve()
     runs = [d for d in ids.execution_dirs(project, ref) if (d / "state.json").is_file()]
-    names = [f"{d.parent.parent.name}/{d.name}" for d in runs]
+    runs += [o for root in ids.workflow_roots(project) for d in sorted(root.glob(f"*/runs/{ref}"))
+             if (o := legacy_owner(project, d)) is not None]  # a run folder used through its session
+    names = [f"{d.parent.parent.name}/{d.name}" if is_execution(read_state(d)) else
+             (read_state(d).get("execution") or {}).get("reference") or d.name for d in runs]
     if session is not None and runs:
         raise AmbiguousRef(f"{ref} names both a session and a run ({', '.join(names)}); say which: "
                            f"--session {ref} for the session, or --run {names[0]} for the run")
@@ -233,7 +268,9 @@ def resolve_run(ref: str | Path, project: str | Path | None = None, prefer: str 
                            f"say which with --run <workflow-id>/<run-id>")
     if session is not None:
         return session.resolve()
-    return _owner(runs[0].resolve()) if runs else p
+    if not runs:
+        return p
+    return _owner(runs[0].resolve()) if is_execution(read_state(runs[0])) else runs[0].resolve()
 
 
 def resolve_args(args, attr: str, project: str | Path | None = None, note: bool = False) -> str | None:
@@ -248,7 +285,7 @@ def resolve_args(args, attr: str, project: str | Path | None = None, note: bool 
     except AmbiguousRef as e:
         print(json.dumps({"ok": False, "error": str(e)}))
         return str(e)
-    if note and (msg := session_note(ref, project)):
+    if note and (msg := session_note(ref, project, resolved)):
         import sys
         print(msg, file=sys.stderr)
     setattr(args, attr, str(resolved))
@@ -292,9 +329,10 @@ def add_session_flag(parser, required: bool = False, group=None, run_help: str |
 RUN_HELP = "the run: <workflow-id>/<run-id>, its run id or its folder (a session id: that session's current run)"
 
 
-def session_note(ref: str | Path, project: str | Path | None = None) -> str | None:
+def session_note(ref: str | Path, project: str | Path | None = None, resolved: str | Path | None = None) -> str | None:
     """For deploy.py, pegasus_deploy.py and monitor.py, which take a run: if `ref` names a session
-    rather than a run, one line saying which run it stands for (None if `ref` names a run)."""
+    rather than a run, one line saying which run it stands for; if it names a run folder from before
+    runs kept their own state, one line naming the session used for it. None if `ref` names a run."""
     import ids
     p = Path(str(ref)).expanduser()
     if (p / "state.json").is_file():
@@ -302,11 +340,21 @@ def session_note(ref: str | Path, project: str | Path | None = None) -> str | No
     else:
         d = ids.session_dir(Path(project or ".").resolve(), str(ref)) if "/" not in str(ref) else None
         if d is None:
+            r = Path(resolved) if resolved else None
+            if (r is not None and (r / "state.json").is_file() and not is_execution(rs := read_state(r))
+                    and linked_execution(rs) is None):  # not a session's current run: one used through it
+                return (f"note: {ref} has no state of its own (made before runs kept theirs); using its "
+                        f"session {rs['run_id']}, which holds its records")
             return None
         s = read_state(d)
     if is_execution(s):
         return None
     ex = (s.get("execution") or {}).get("reference")
+    if not ex and any(s.get(k) for k in EXECUTION_RECORDS):
+        return f"note: {ref} is a session from before runs; its deploy records are its own, so the session is used"
+    if ex and linked_execution(s) is None:
+        return (f"note: {ref} is a session from before runs kept their own state; its run {ex}'s records "
+                f"are the session's, so the session is used")
     return (f"note: {ref} is a session; using its current run {ex}" if ex else
             f"note: {ref} is a session and has no run yet (Gate 4 or \"Start this run?\" opens one)")
 
@@ -317,5 +365,5 @@ def flag(s: dict, skill: str = "") -> str:
     if is_execution(s):
         return f"--run {handle(s)}"
     if skill.rsplit(":", 1)[-1] in ("curate-deploy", "curate-monitor"):  # they take a run (a session: its run)
-        return f"--run {(s.get('execution') or {}).get('reference') or s['run_id']}"
+        return f"--run {current_run(s) or s['run_id']}"
     return f"--session {s['run_id']}"

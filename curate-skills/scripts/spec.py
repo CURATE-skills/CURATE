@@ -347,7 +347,10 @@ def cmd_runs(args) -> dict:
                          "iteration": s.get("iteration"),
                          "workflow": (s.get("spec") or (s.get("skeleton_draft") or {}).get("spec") or {}).get("name"),
                          "request": (s.get("user_request") or "")[:80],
-                         "run": (s.get("execution") or {}).get("reference")})
+                         # its current run, if that run keeps its own state; a session from before holds
+                         # its run's records itself, and run commands name it by its session id
+                         "run": runstate.current_run(s),
+                         "deploy": None if runstate.current_run(s) else _faasr_deploy(s, s.get("run_id"))})
     runs = []
     for d in ids.execution_dirs(project):
         try:
@@ -358,8 +361,22 @@ def cmd_runs(args) -> dict:
         runs.append({"run": str(d), "reference": s.get("reference"), "run_id": s.get("run_id"),
                      "workflow_id": s.get("workflow_id"), "target": (s.get("execution") or {}).get("target"),
                      "session": ses, "stage": s.get("stage") if not ses else f"(through session {ses})",
-                     "result": (s.get("monitor") or {}).get("result")})
+                     "result": (s.get("monitor") or {}).get("result"),
+                     "deploy": _faasr_deploy(s, s.get("reference") or s.get("run_id"))})
     return {"ok": True, "sessions": sessions, "runs": runs}
+
+
+def _faasr_deploy(s: dict, ref: str | None) -> dict | None:
+    """A run's FaaSr deployment, for listings: its name, whether it was invoked, when it was torn down
+    (None if not), and the --run that deploy.py teardown takes for it (None once torn down). None
+    when the run has no FaaSr deploy step done (a Pegasus run, or one that never deployed)."""
+    dep = s.get("deploy") or {}
+    steps = dep.get("steps") or {}
+    if not any((steps.get(x) or {}).get("ok") for x in ("publish", "upload", "register", "invoke")):
+        return None
+    gone = (dep.get("teardown") or {}).get("ts")
+    return {"name": dep.get("deploy_name"), "invoked": bool((steps.get("invoke") or {}).get("ok")),
+            "torn_down": gone, "teardown_run": None if gone else ref}
 
 
 def cmd_status(args) -> dict:

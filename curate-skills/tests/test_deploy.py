@@ -905,7 +905,8 @@ def test_a_failed_step_can_be_retried_only_with_overwrite_own_deploy(deploying, 
     fake = FakeGitHub(writable=True, fail_put={FNS[1]})
     code, out = step(capsys, deploying, "publish", fake, "--confirmed")
     assert code == 1 and out["failed"] and "HTTP 500" in out["error"]
-    assert out["resume_command"] == f"/curate-skills:curate-deploy --run {json.loads((deploying / 'state.json').read_text())['execution']['reference']}"
+    # a session from before runs kept their own state is named by its session id (its records are its own)
+    assert out["resume_command"] == f"/curate-skills:curate-deploy --run {json.loads((deploying / 'state.json').read_text())['run_id']}"
     s = json.loads((deploying / "state.json").read_text())
     assert s["stage"] == "deploy" and s["deploy"]["steps"]["publish"]["ok"] is False
     assert [e["path"] for e in log_lines(deploying)] == [FNS[0]]

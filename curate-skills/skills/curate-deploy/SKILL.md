@@ -26,6 +26,12 @@ Arguments: `$ARGUMENTS`
   version's deployment stays. `--all` deletes the deployment (function files, Actions files, its
   marker), every run's payload and every run's S3 outputs and logs. Local run folders and their
   `outputs/` are never deleted.
+  **Choosing what to tear down** (no target given, or the user asks which): `spec.py runs`. Offer
+  each session or run whose `deploy.teardown_run` is set, as `--run <deploy.teardown_run>` (a run's
+  `<workflow-id>/<run-id>`; a session from before runs kept their own state, whose `run` is empty,
+  by its session id), with `deploy.name`. Show an entry whose `deploy.torn_down` is set as
+  **torn down** (with the date), never as a candidate and never by its `result`. An entry without
+  `deploy` has no FaaSr deployment (a Pegasus run, or one never deployed): do not offer it.
   1. `deploy.py teardown <target>` (deletes nothing). Print its `summary` exactly. If `ok` is
      false without `needs_confirmation`, show the `error` / `problems` exactly and stop (`--all`
      refuses while a run of the version may still be running, and names those runs).
@@ -55,6 +61,8 @@ Arguments: `$ARGUMENTS`
 
 `--run <workflow-id>/<run-id>` (a run id works too; a session id stands for that session's current
 run): `spec.py runs` lists the runs in this project as `runs`; use the matching `run` path as `<run>`.
+A session whose `run` is empty in `sessions` but has `deploy` was made before runs kept their own
+state: its session id is `<run>`.
 Without it, ask for `--run`. To deploy an approved version again, start a new run of it:
 `/curate-skills:curate --start-at deploy --workflow <workflow-id>` (or `--from-run <session_id>`).
 
