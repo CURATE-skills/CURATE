@@ -291,10 +291,10 @@ def secret_shape_problems(env) -> list[str]:
     secret = str(env.get("S3_SecretKey") or env.get("S3_SECRETKEY") or "").strip()
     aws = access[:4] in ("AKIA", "ASIA")
     if access and (aws and len(access) != 20 or not 3 <= len(access) <= 128):
-        out.append("S3_AccessKey is not the length of an access key ID" + (" (AWS: 20 characters)" if aws else "")
+        out.append("S3_AccessKey has an unusual length for an access key ID" + (" (usually 20 characters)" if aws else "")
                    + ": it may be cut short, or run into the next line")
     if secret and (aws and len(secret) != 40 or not 8 <= len(secret) <= 128):
-        out.append("S3_SecretKey is not the length of a secret access key" + (" (AWS: 40 characters)" if aws else "")
+        out.append("S3_SecretKey has an unusual length for a secret access key" + (" (usually 40 characters)" if aws else "")
                    + ": it may be cut short, or run into the next line")
     return out
 

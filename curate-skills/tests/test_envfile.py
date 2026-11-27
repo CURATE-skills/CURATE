@@ -174,10 +174,10 @@ def test_an_equals_sign_inside_a_secret_is_not_glued():
     ({"GH_PAT": "github_pat_" + "a" * 80}, ["GH_PAT has an unusual length for a github_pat_… token (usually 93 "
                                             "characters)"]),
     ({"GH_PAT": "a" * 40}, ["GH_PAT does not start like a GitHub token"]),
-    ({"S3_AccessKey": "AKIA" + "B" * 16 + "FAASR_S3"}, ["S3_AccessKey is not the length of an access key ID (AWS: 20"]),
-    ({"S3_AccessKey": "AKIA" + "B" * 16, "S3_SecretKey": "c" * 39}, ["S3_SecretKey is not the length of a secret "
-                                                                     "access key (AWS: 40"]),
-    ({"S3_SecretKey": "x7q"}, ["S3_SecretKey is not the length of a secret access key: "]),
+    ({"S3_AccessKey": "AKIA" + "B" * 16 + "FAASR_S3"}, ["S3_AccessKey has an unusual length for an access key ID (usually 20"]),
+    ({"S3_AccessKey": "AKIA" + "B" * 16, "S3_SecretKey": "c" * 39}, ["S3_SecretKey has an unusual length for a "
+                                                                     "secret access key (usually 40"]),
+    ({"S3_SecretKey": "x7q"}, ["S3_SecretKey has an unusual length for a secret access key: "]),
 ])
 def test_secret_shapes(env, expected):
     got = doctor.secret_shape_problems(env)
