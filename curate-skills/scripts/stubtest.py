@@ -287,7 +287,7 @@ def run_stubtest(run: Path, node_name: str, mode: str | None = None, timeout: in
     spec = state.get("spec") or {}
     node = next((n for n in spec.get("nodes") or [] if n["name"] == node_name), None)
     if node is None:
-        raise InputError(f"node {node_name!r} is not in the run's spec")
+        raise InputError(f"node {node_name!r} is not in the session's spec")
     strict = mode == "strict"
     node_dir = run / "functions" / node_name
     impl = node_dir / f"{node_name}.py"

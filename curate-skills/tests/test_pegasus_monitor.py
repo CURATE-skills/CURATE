@@ -194,7 +194,7 @@ def test_remote_status_collect_and_fetch(peg_run, monkeypatch, tmp_path):  # noq
     host = Host([ALL], collect=report())
     out = poll(peg_run, host, monkeypatch)
     s = state(peg_run)
-    res = Path(s["execution"]["dir"]) / "result"  # the execution run's folder holds its results
+    res = Path(s["execution"]["dir"]) / "result"  # the run's folder holds its results
     outdir = Path(s["project_dir"]) / "pegasus_output" / f"mapreduce_word_count-{s['run_id']}"
     assert out["result"] == "success" and out["lines"][-1].endswith(f"results in {outdir})")
     assert (outdir / "results" / "word_count_1.json").is_file() and (outdir / "run-report.json").is_file()

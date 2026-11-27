@@ -46,11 +46,11 @@ and `result` values (no unconfirmed match). It reads, here or over ssh, the Pega
 `state.pegasus.run_dir` records (so it works after a logout or reboot): DAGMan's exit status and
 each job's state. It never submits, removes or changes the workflow. When DAGMan has finished, it
 copies the declared outputs into the run's Pegasus work folder (`deliver/`, plus `run-report.json`)
-and, for an ssh host, fetches both into the execution run's `result/`; then into the visible folder
+and, for an ssh host, fetches both into the run's `result/`; then into the visible folder
 `<project>/pegasus_output/<workflow>-<run_id>/` (with `FAILED.txt` when the run failed: partial
 outputs), which the last line names. Success needs DAGMan exit 0 and
 every declared output delivered. A `timeout` means DAGMan is still running the workflow; the
-re-check continues watching it. Its details file is `monitor-report.md` in the execution run's folder.
+re-check continues watching it. Its details file is `monitor-report.md` in the run's folder.
 A Pegasus run started before phase 8 (an `ir.yaml` folder) can no longer be monitored or collected. A FaaSr run's `download-outputs` takes the
 file names from the bundle's `outputs.json`.
 
@@ -67,7 +67,7 @@ The last entry of `lines` is the verdict (`✓ workflow succeeded` / `✗ workfl
 | `timeout` | the run is stopped. Tell the user `recheck_command` (add `--minutes N` for a longer watch): it continues watching the same invocation with a fresh budget. |
 
 Only if the user asks why or for details: read the `details` file the poll returned
-(`monitor-report.md` in the execution run) and answer from it. Job-log text is never shown or saved; excerpts there are
+(`monitor-report.md` in the run) and answer from it. Job-log text is never shown or saved; excerpts there are
 redacted by `monitor.py`.
 
 ## 3. Done

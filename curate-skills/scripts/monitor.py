@@ -22,7 +22,7 @@ GRACE_SECONDS after the action's last run before they count as not written.
 
 Results: success / success_unconfirmed (Gate 5 asks the user to accept it) / failure / pending
 (timeout after `monitor_minutes`). `poll` returns after `--chunk-seconds` with `lines` (one per
-change, per action) for the stage to print; the full report goes to the execution run's monitor-report.md.
+change, per action) for the stage to print; the full report goes to the run's monitor-report.md.
 After a failure or timeout, polling again re-checks the same invocation and replaces the verdict.
 It never writes to GitHub or S3. It records state.json only for a run at stage `monitor`; for any
 other run it is report-only and writes nothing.
@@ -544,7 +544,7 @@ def poll(run: str, chunk: int | None = None, report_only: bool = False, minutes=
     result is `pending` the stage calls again, until a verdict or the `minutes` budget is spent.
 
     `lines` holds one line per change, per action, since the previous call (and the verdict at the
-    end); the full details go to the execution run's monitor-report.md and state.json."""
+    end); the full details go to the run's monitor-report.md and state.json."""
     run_p = Path(run)
     s, _ = D.load_run(run)
     record = _recording(s, report_only)
@@ -619,7 +619,7 @@ def poll(run: str, chunk: int | None = None, report_only: bool = False, minutes=
         out["report"] = report
         return out
 
-    # the execution run's logs/ and monitor-report.md (<run>/deploy/ for a run made before execution
+    # the run's logs/ and monitor-report.md (<run>/deploy/ for a run made before execution
     # runs had their own state)
     legacy = runstate.is_legacy(run_p, s)
     logs_dir = run_p / "deploy" / "monitor" if legacy else D.files_dir(run_p, s) / "logs"

@@ -296,7 +296,7 @@ def version_source(cat: Catalog, wid: str, tmp: Path) -> Optional[Path]:
 
 def save_workflow(cat: Catalog, spec: WorkflowSpec, dry_run: bool = False, workflow_id: Optional[str] = None,
                   content_hash: Optional[str] = None, version_dir=None) -> dict:
-    """Store the version Gate 4 published (`workflow_id`, <name>-v<N>, from the run's state), so the
+    """Store the version Gate 4 published (`workflow_id`, <name>-v<N>, from the session's state), so the
     catalog entry and the version folder always have the same ID and version: the catalog never
     numbers a workflow itself, and a version is never updated in place. The duplicate question was
     answered at Gate 4; a version already in the catalog (the same content) is not stored twice."""
@@ -309,7 +309,7 @@ def save_workflow(cat: Catalog, spec: WorkflowSpec, dry_run: bool = False, workf
         if dry_run:
             return {"ok": True, "dry_run": True, "workflow_id": None, "version": None, "duplicates": [],
                     "note": "no version is published yet (Gate 4 publishes it)"}
-        return {"ok": False, "error": "this run has no published workflow version (Gate 4 approval publishes it; "
+        return {"ok": False, "error": "this session has no published workflow version (Gate 4 approval publishes it; "
                                       "runs approved before versions existed need Gate 4 approved again)"}
     name, version = ids.parse_workflow_id(workflow_id)
     ch = content_hash or _content_hash(spec)
@@ -413,7 +413,7 @@ def deployed_run_problem(state: dict) -> Optional[str]:
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def _run_state(run) -> dict:
-    """The run's state; a generation run's with its current execution's records (runstate.load)."""
+    """The run's state; a session's with its current execution's records (runstate.load)."""
     import runstate
     return runstate.load(run)
 
@@ -446,7 +446,7 @@ def main(argv=None) -> int:
     sp = sub.add_parser("save-workflow", parents=[common])
     sp.add_argument("--spec")
     sp.add_argument("--dry-run", action="store_true")
-    sp.add_argument("--workflow-id", help="the version Gate 4 published (<name>-v<N>); default: the run's")
+    sp.add_argument("--workflow-id", help="the version Gate 4 published (<name>-v<N>); default: the session's")
     sp = sub.add_parser("import", parents=[common])
     sp.add_argument("paths", nargs="+")
     sp.add_argument("--dedupe-code", action="store_true")
@@ -508,7 +508,7 @@ def run_command(args, root: Path) -> dict:
         (cat.save_workflow if args.workflow else cat.save_function)(e)
         return {"ok": True, "id": e.id, "usage_count": e.usage_count}
     if cmd in ("save-functions", "save-workflow") and args.run and _run_state(args.run).get("kind") == "execution":
-        raise InputError("this is an execution run: it deployed a version that the run which approved it published "
+        raise InputError("this is a run (an execution): it deployed a version that the session which approved it published "
                          "(and saved); nothing is saved from it")
     if cmd in ("save-functions", "save-workflow") and args.run and not args.dry_run:
         problem = deployed_run_problem(_run_state(args.run))

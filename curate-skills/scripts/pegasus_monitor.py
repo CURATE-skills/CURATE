@@ -57,7 +57,7 @@ def _load(run: Path) -> dict:
 
 
 def _update(run: Path, change) -> dict:
-    """Change the run's state (runstate.update: an execution's records go to its execution run)."""
+    """Change the run's state (runstate.update: an execution's records go to its run)."""
     import runstate
     return runstate.update(run, change)
 
@@ -75,7 +75,7 @@ def _where(rec: dict) -> dict:
     """Paths on the Pegasus host for the backend's status/collect."""
     if rec.get("host"):
         root = rec["remote_dir"]
-        folder = Path(rec.get("ir_dir") or "bundle").name  # the Pegasus folder (the execution run's bundle/)
+        folder = Path(rec.get("ir_dir") or "bundle").name  # the Pegasus folder (the run's bundle/)
         return {"host": rec["host"], "workflow": f"{root}/{folder}/workflow.yml", "work": rec["work_dir"],
                 "backend": f"{root}/curate_ir/backends/pegasus_backend.py"}
     return {"host": None, "workflow": str(Path(rec["ir_dir"]) / "workflow.yml"), "work": rec["work_dir"],
@@ -93,7 +93,7 @@ def _backend(w: dict, cmd: str, timeout=300) -> dict:
 
 
 def local_dir(run: Path, s: dict) -> Path:
-    """Where this run keeps its Pegasus results and report: the execution run's folder for a
+    """Where this run keeps its Pegasus results and report: the run's folder for a
     versioned run (<workflow-id>/runs/<run-id>/), else <run>/pegasus/."""
     ex = s.get("execution") or {}
     if s.get("workflow_id") and ex.get("target") == "pegasus" and ex.get("dir"):

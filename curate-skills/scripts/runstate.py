@@ -74,24 +74,24 @@ def node_basis(node_dict) -> str:
     return obj_hash({k: v for k, v in node_dict.items() if k not in NODE_BASIS_EXCLUDED})
 
 
-# ── generation runs and execution runs ───────────────────────────────────────
+# ── sessions and runs ───────────────────────────────────────
 #
-# A generation run (<project>/.curate/runs/<run-id>/) is one /curate session. An execution run
+# A session (<project>/.curate/runs/<run-id>/) is one /curate session. A run
 # (<project>/.curate/workflows/<workflow-id>/runs/<run-id>/) is one deploy of a published version,
 # on FaaSr or Pegasus; it has its own state.json ("kind": "execution"). It is opened either by a
-# generation run's Gate 4 (or "Start this run?"), and then belongs to it ("generation_run"), or by
+# session's Gate 4 (or "Start this run?"), and then belongs to it ("session"), or by
 # `--start-at deploy` (--workflow / --from-run), and then stands alone with its own stages.
 #
-# The records of an execution (EXECUTION_RECORDS) live only in the execution run's state.json. A
-# generation run links to its current execution with its own "execution" record (whose "dir" is
-# that folder); load() shows the generation run's state with the execution's records in it, and
-# save() writes them back there. A generation run made before execution runs had their own state
+# The records of an execution (EXECUTION_RECORDS) live only in the run's state.json. A
+# session links to its current execution with its own "execution" record (whose "dir" is
+# that folder); load() shows the session's state with the execution's records in it, and
+# save() writes them back there. A session made before runs had their own state
 # (no state.json in that folder) keeps everything in its own state.json, as before.
 #
-# Locks: every read-modify-write of a generation run holds its state.lock and then, if it has a
-# current execution run, that run's state.lock, for the whole command (locked()); a write of an
-# execution run alone holds only that run's lock. The order is always generation → execution, and
-# nothing takes a generation run's lock while holding an execution run's, so two commands cannot
+# Locks: every read-modify-write of a session holds its state.lock and then, if it has a
+# current run, that run's state.lock, for the whole command (locked()); a write of an
+# run alone holds only that run's lock. The order is always generation → execution, and
+# nothing takes a session's lock while holding a run's, so two commands cannot
 # deadlock, and a command never writes back execution records it read before another command
 # changed them.
 
@@ -107,12 +107,12 @@ def is_execution(s: dict) -> bool:
 
 
 def handle(s: dict) -> str:
-    """How commands name a run: a generation run's id, an execution run's <workflow-id>/<run-id>."""
+    """How commands name a run: a session's id, a run's <workflow-id>/<run-id>."""
     return s.get("reference") or s["run_id"] if is_execution(s) else s["run_id"]
 
 
 def linked_execution(s: dict) -> Path | None:
-    """A generation run's current execution run folder, when that run keeps its own state."""
+    """A session's current run folder, when that run keeps its own state."""
     if is_execution(s):
         return None
     d = (s.get("execution") or {}).get("dir")
@@ -120,7 +120,7 @@ def linked_execution(s: dict) -> Path | None:
 
 
 def load(run: str | Path) -> dict:
-    """The run's state; for a generation run, with its current execution's records in it."""
+    """The run's state; for a session, with its current execution's records in it."""
     s = read_state(run)
     ex_dir = linked_execution(s)
     if ex_dir is not None:
@@ -133,8 +133,8 @@ def load(run: str | Path) -> dict:
 
 
 def save(run: str | Path, s: dict, check=None) -> None:
-    """Write a state load() gave (changed): a generation run's execution records go to its
-    execution run's state.json (under that run's lock), everything else to the run's own. `check`
+    """Write a state load() gave (changed): a session's execution records go to its
+    run's state.json (under that run's lock), everything else to the run's own. `check`
     (text -> None, raising) vets each file's text first (e.g. the leak check)."""
     run = Path(run)
     ex_dir = linked_execution(s)
@@ -160,7 +160,7 @@ def _write_checked(path: Path, data: dict, check) -> None:
 
 @contextlib.contextmanager
 def locked(run: str | Path):
-    """Hold the run's lock and, for a generation run, its current execution run's lock (in that
+    """Hold the run's lock and, for a session, its current run's lock (in that
     order) until the block ends: the locks a load/change/save of the run needs."""
     with run_lock(run):
         try:
@@ -182,11 +182,11 @@ def update(run: str | Path, change, check=None) -> dict:
 
 
 def _owner(ex_dir: Path) -> Path:
-    """An execution run that belongs to a generation run whose current execution it still is is used
-    through that generation run (its stages and gates are that run's); any other stands alone."""
+    """A run that belongs to a session whose current execution it still is is used
+    through that session (its stages and gates are that run's); any other stands alone."""
     try:
         ex = read_state(ex_dir)
-        gen = Path((ex.get("generation_run") or {}).get("dir") or "")
+        gen = Path((ex.get("session") or {}).get("dir") or "")
         if gen.name and (gen / "state.json").is_file():
             if Path((read_state(gen).get("execution") or {}).get("dir") or "").resolve() == ex_dir.resolve():
                 return gen
@@ -196,32 +196,33 @@ def _owner(ex_dir: Path) -> Path:
 
 
 def resolve_run(ref: str | Path, project: str | Path | None = None) -> Path:
-    """The run folder `--run` names: a folder with a state.json, a generation run id (.curate/runs/),
-    <workflow-id>/<run-id> or an execution run id (.curate/workflows/*/runs/). Anything else is
-    returned unchanged (the command then says it is not a run)."""
+    """The folder `--run` names: a folder with a state.json, a session id (.curate/sessions/, or
+    .curate/runs/ from before), <workflow-id>/<run-id> or a run id (workflows/*/runs/, or
+    .curate/workflows/*/runs/ from before). Anything else is returned unchanged (the command then
+    says it is not a run)."""
+    import ids
     p = Path(str(ref)).expanduser()
     if (p / "state.json").is_file():
         p = p.resolve()
         return _owner(p) if is_execution(read_state(p)) else p
-    root = Path(project or ".").resolve() / ".curate"
+    project = Path(project or ".").resolve()
     ref = str(ref).strip().strip("/")
-    if (root / "runs" / ref / "state.json").is_file():
-        return (root / "runs" / ref).resolve()
+    if "/" not in ref and ref and (d := ids.session_dir(project, ref)) is not None:
+        return d.resolve()
     if ref.count("/") == 1:
-        wid, rid = ref.split("/")
-        cand = root / "workflows" / wid / "runs" / rid
+        cand = ids.execution_dir(project, *ref.split("/"))
         if (cand / "state.json").is_file():
             return _owner(cand.resolve())
     elif "/" not in ref and ref:
-        found = sorted(root.glob(f"workflows/*/runs/{ref}/state.json")) if (root / "workflows").is_dir() else []
+        found = ids.execution_dirs(project, ref)
         if len(found) == 1:
-            return _owner(found[0].parent.resolve())
+            return _owner(found[0].resolve())
     return p
 
 
 def files_dir(run: str | Path, s: dict | None = None) -> Path:
     """Where a run's execution files go (deploy log, FaaSr deploy copy, monitor report, logs): its
-    execution run's folder; for a generation run made before execution runs had their own state,
+    run's folder; for a session made before runs had their own state,
     the run's own folder (<run>/deploy/, <run>/pegasus/, as then)."""
     s = load(run) if s is None else s
     if is_execution(s):
@@ -230,7 +231,7 @@ def files_dir(run: str | Path, s: dict | None = None) -> Path:
 
 
 def is_legacy(run: str | Path, s: dict | None = None) -> bool:
-    """A generation run that keeps its execution's files in its own folder (made before execution
+    """A session that keeps its execution's files in its own folder (made before execution
     runs had their own state)."""
     s = load(run) if s is None else s
     return not is_execution(s) and linked_execution(s) is None

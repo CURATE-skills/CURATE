@@ -73,7 +73,7 @@ see tool results; never re-format it). It says the deploy name, then every file 
 GitHub and the S3 folders the run writes, one line each with its state. The comparison of the
 deploy copy with the approved bundle runs silently: only a field outside the allowed changes
 (placeholders, the deploy name, per-deployment paths) shows, as a problem. The full comparison is
-in the execution run's `deploy/preflight-diff.md`; show it only if the user asks.
+in the run's `deploy/preflight-diff.md`; show it only if the user asks.
 If `ok` is false: say the deploy cannot start, list the `problems` exactly, and stop (step 4).
 
 ## 2. The four steps

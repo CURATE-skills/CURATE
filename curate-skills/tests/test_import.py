@@ -84,7 +84,7 @@ def test_resolve_needs_candidates_and_known_catalog_ids(imp, tmp_path):
     bad[0].update(decision="reuse", catalog_id="00000000-0000-0000-0000-000000000000")
     (tmp_path / "bad.json").write_text(json.dumps(bad))
     code, out, _ = imp("resolve", FIX / "skeleton.json", "--candidates", tmp_path / "bad.json")
-    assert code == 2 and "not in this run's catalog" in out["error"] and runs_dir(tmp_path) == before
+    assert code == 2 and "not in this session's catalog" in out["error"] and runs_dir(tmp_path) == before
 
 
 def test_resolve_has_no_review(imp):

@@ -1,9 +1,9 @@
-"""Execution runs (.curate/workflows/<workflow-id>/runs/<run-id>/, step 5): each has its own state.json.
+"""Runs (workflows/<workflow-id>/runs/<run-id>/, step 5): each has its own state.json.
 
-- Gate 4 (or "Start this run?") of a generation run opens one; its deploy, Pegasus and monitor
-  records live there, and the generation run sees them through runstate.load.
+- Gate 4 (or "Start this run?") of a session opens one; its deploy, Pegasus and monitor
+  records live there, and the session sees them through runstate.load.
 - `--start-at deploy --workflow <id>` (or `--from-run` with any run of the version) opens one that
-  stands alone: no new generation run; it deploys, monitors and ends at Gate 5 without saving.
+  stands alone: no new session; it deploys, monitors and ends at Gate 5 without saving.
 - Publishing writes approved.json (the approved spec) into the version, outside its hash; a version
   published before it is built with the spec of the run in this project that approved it.
 """
@@ -56,7 +56,7 @@ def test_publish_writes_approved_json_outside_the_version_hash(source_run):
     s = state(source_run)
     vdir = Path(s["version_dir"])
     a = ids.read_approved(vdir)
-    assert a["spec"] == s["spec"] and a["workflow_id"] == s["workflow_id"] and a["generation_run"] == s["run_id"]
+    assert a["spec"] == s["spec"] and a["workflow_id"] == s["workflow_id"] and a["session"] == s["run_id"]
     assert a["content_hash"] == s["workflow_content_hash"]
     assert not (vdir / "approved.json").stat().st_mode & 0o222  # read-only, like the version
     assert ids.version_hash(vdir) == s["version_hash"] == ids.tree_hash(vdir, skip=("runs", "approved.json"))
@@ -64,7 +64,7 @@ def test_publish_writes_approved_json_outside_the_version_hash(source_run):
     assert s["version_hash"] != ids.tree_hash(vdir, skip=("runs",))
 
 
-# ── a generation run's execution run ──
+# ── a session's run ──
 
 def test_gate4_opens_an_execution_run_that_holds_the_records(source_run, capsys, monkeypatch):
     monkeypatch.chdir(state(source_run)["project_dir"])  # commands run in the project (<workflow-id>/<run-id>)
@@ -74,19 +74,19 @@ def test_gate4_opens_an_execution_run_that_holds_the_records(source_run, capsys,
     ex_dir = Path(gen["execution"]["dir"])
     ex = raw(ex_dir)
     assert ex_dir.parent.parent.name == gen["workflow_id"] and ex_dir.name == gen["execution"]["run_id"]
-    assert ex["kind"] == "execution" and ex["generation_run"] == {"run_id": gen["run_id"], "dir": str(source_run)}
+    assert ex["kind"] == "execution" and ex["session"] == {"session_id": gen["run_id"], "dir": str(source_run)}
     assert ex["reference"] == gen["execution"]["reference"] == f"{gen['workflow_id']}/{ex_dir.name}"
     assert "deploy" not in gen and "monitor" not in gen and ex["deploy"] is None and "pegasus" not in ex
     assert (ex_dir / "bundle" / "workflow.json").is_file() and (ex_dir / "manifest.json").is_file()
-    # the generation run sees them, and writes them there
+    # the session sees them, and writes them there
     runstate.update(source_run, lambda st: st.update(monitor={"result": "pending"}))
     assert raw(ex_dir)["monitor"] == {"result": "pending"} and "monitor" not in raw(source_run)
     assert state(source_run)["monitor"] == {"result": "pending"}
-    # the execution run's reference and id lead to the generation run that uses it
+    # the run's reference and id lead to the session that uses it
     project = Path(gen["project_dir"])
     for ref in (ex["reference"], ex["run_id"], str(ex_dir)):
         assert runstate.resolve_run(ref, project) == source_run.resolve()
-    # FaaSr deploy steps write their log and the deploy copy into the execution run
+    # FaaSr deploy steps write their log and the deploy copy into the run
     import deploy as D
     from test_deploy import FakeGitHub, FakeS3
     faasr_env(monkeypatch)
@@ -113,7 +113,7 @@ def test_a_rewind_detaches_the_execution_run_and_keeps_its_records(source_run, c
 
 
 def test_resuming_a_generation_run_still_works(source_run, capsys):
-    """A stopped generation run resumes where it stopped, before and after Gate 4 opened an execution."""
+    """A stopped session resumes where it stopped, before and after Gate 4 opened an execution."""
     at_gate4(source_run)
     ok(S, ["set-stage", "--run", str(source_run), "--stage", "stopped"], capsys)
     out = ok(S, ["next", "--run", str(source_run)], capsys)
@@ -129,20 +129,20 @@ def test_resuming_a_generation_run_still_works(source_run, capsys):
     assert state(source_run)["execution"]["target"] == "faasr"
 
 
-# ── a standalone execution run: --start-at deploy ──
+# ── a standalone run: --start-at deploy ──
 
 def test_start_at_deploy_with_workflow_opens_a_standalone_execution_run(source_run, capsys, monkeypatch):
     monkeypatch.chdir(state(source_run)["project_dir"])
     src = state(source_run)
     project, wid = Path(src["project_dir"]), src["workflow_id"]
-    gens = sorted((project / ".curate" / "runs").iterdir())
+    gens = sorted((project / ".curate" / "sessions").iterdir())
     code, out = start(capsys, source_run, "deploy", "--workflow", wid)
     assert code == 0, out
     d = Path(out["run"])
     assert d.parent == Path(src["version_dir"]) / "runs" and out["reference"] == f"{wid}/{d.name}"
-    assert sorted((project / ".curate" / "runs").iterdir()) == gens  # no generation run
+    assert sorted((project / ".curate" / "sessions").iterdir()) == gens  # no session
     s = raw(d)
-    assert s["kind"] == "execution" and s["generation_run"] is None and s["stage"] == "deploy"
+    assert s["kind"] == "execution" and s["session"] is None and s["stage"] == "deploy"
     assert s["spec"] == src["spec"] and s["spec_from"] == f"{wid}/approved.json"
     assert out["uses"].endswith(f"the spec from {wid}/approved.json")
     # commands name it <workflow-id>/<run-id>; any of its names finds it
@@ -150,7 +150,7 @@ def test_start_at_deploy_with_workflow_opens_a_standalone_execution_run(source_r
     for ref in (out["reference"], d.name, str(d)):
         assert runstate.resolve_run(ref, project) == d.resolve()
     runs = {r["run_id"]: r for r in ok(S, ["runs", "--project-dir", str(project)], capsys)["runs"]}
-    assert runs[d.name]["kind"] == "execution" and runs[d.name]["reference"] == out["reference"]
+    assert runs[d.name]["reference"] == out["reference"] and runs[d.name]["session"] is None
     # "Start this run?": its own folder gets the bundle; nothing else is opened
     code, res = call(S, ["begin", "--run", out["reference"], "--stage", "deploy"], capsys)
     assert code == 1 and "spec.py confirm-start" in res["error"]
@@ -164,26 +164,26 @@ def test_start_at_deploy_with_workflow_opens_a_standalone_execution_run(source_r
     assert nxt["command"] == f"/curate-skills:curate-deploy --run {out['reference']}"
     # it only deploys: earlier stages and gates are refused
     code, res = call(S, ["begin", "--run", out["reference"], "--stage", "emit", "--rewind", "--confirmed"], capsys)
-    assert code == 1 and "execution run" in res["error"]
+    assert code == 1 and "run" in res["error"]
     code, res = call(S, ["approve", "--run", out["reference"], "--gate", "4"], capsys)
     assert code == 2 and "no Gates 1-4" in res["error"]
 
 
-@pytest.mark.parametrize("how", ["generation run", "execution run id", "workflow-id/run-id", "old copied run",
+@pytest.mark.parametrize("how", ["session", "run id", "workflow-id/run-id", "old copied run",
                                  "old execution folder"])
 def test_from_run_resolves_any_run_of_the_version(source_run, capsys, how):
-    """The run that approved Gate 4, an execution run (new or from before execution runs had their own
+    """The run that approved Gate 4, a run (new or from before runs had their own
     state), and a deploy-only run made the old way all resolve to their version."""
     src = state(source_run)
     project, wid = Path(src["project_dir"]), src["workflow_id"]
-    if how == "generation run":
+    if how == "session":
         ref = src["run_id"]
-    elif how in ("execution run id", "workflow-id/run-id"):
+    elif how in ("run id", "workflow-id/run-id"):
         first = Path(start(capsys, source_run, "deploy", "--workflow", wid)[1]["run"])
-        ref = first.name if how == "execution run id" else f"{wid}/{first.name}"
-    elif how == "old copied run":  # what --start-at deploy --from-run made before: a generation run
-        old = project / ".curate" / "runs" / "20261124-204358-92b6"
-        old.mkdir()
+        ref = first.name if how == "run id" else f"{wid}/{first.name}"
+    elif how == "old copied run":  # what --start-at deploy --from-run made before: a session
+        old = project / ".curate" / "runs" / "20261124-204358-92b6"  # where sessions were then
+        old.mkdir(parents=True)
         (old / "state.json").write_text(json.dumps({
             "schema_version": 2, "run_id": old.name, "stage": "done", "workflow_id": wid,
             "version_hash": src["version_hash"], "spec": src["spec"],
@@ -201,7 +201,7 @@ def test_from_run_resolves_any_run_of_the_version(source_run, capsys, how):
 
 
 def test_a_version_without_approved_json_uses_the_run_that_approved_it(source_run, capsys):
-    """Versions published before approved.json (the two real ones): the generation run in this project
+    """Versions published before approved.json (the two real ones): the session in this project
     whose Gate 4 published the version gives the spec; the version is not changed."""
     src = state(source_run)
     vdir = Path(src["version_dir"])
@@ -209,7 +209,7 @@ def test_a_version_without_approved_json_uses_the_run_that_approved_it(source_ru
     code, out = start(capsys, source_run, "deploy", "--workflow", src["workflow_id"])
     assert code == 0, out
     s = raw(out["run"])
-    assert s["spec"] == src["spec"] and s["spec_from"].startswith(f"run {src['run_id']}, history/")
+    assert s["spec"] == src["spec"] and s["spec_from"].startswith(f"session {src['run_id']}, history/")
     assert s["spec_from"].endswith("-gate4-approve.json") and ids.version_hash(vdir) == src["version_hash"]
     # nowhere to find it: refused, saying what to do
     shutil.rmtree(source_run / "history")
@@ -241,11 +241,11 @@ def test_gate5_of_a_standalone_execution_run_reports_and_saves_nothing(source_ru
     g5 = ok(S, ["show", "--run", ref, "--gate", "5"], capsys)
     assert g5["execution_run"] and g5["options"] == [] and g5["question"] is None
     md = g5["markdown"]
-    assert f"Execution run — `{ref}`" in md and "✓ workflow succeeded" in md and "deployment: `x-1`" in md
+    assert f"Run — `{ref}`" in md and "✓ workflow succeeded" in md and "deployment: `x-1`" in md
     assert "Nothing is saved to the catalog" in md and (d / "review" / "gate5.md").is_file()
     # the catalog refuses to save from it
     code = catalog.main(["save-workflow", "--run", ref, "--dry-run"])
-    assert code != 0 and "execution run" in capsys.readouterr().out
+    assert code != 0 and "run" in capsys.readouterr().out
     ok(S, ["set-stage", "--run", ref, "--stage", "done"], capsys)
     assert ok(S, ["next", "--run", ref], capsys)["next_skill"] is None
 
@@ -254,27 +254,28 @@ def test_gate5_of_a_generation_run_reads_its_execution_run(source_run, capsys):
     at_gate4(source_run)
     ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
     ex_dir = Path(raw(source_run)["execution"]["dir"])
-    runstate.update(ex_dir, lambda st: st.update(monitor={"result": "success", "summary": "✓ from the execution run"},
+    runstate.update(ex_dir, lambda st: st.update(monitor={"result": "success", "summary": "✓ from the run"},
                                                  deploy={"steps": {"invoke": {"ok": True}}, "invocation_id": "i"}))
     runstate.update(source_run, lambda st: st.update(stage="finalize"))
     assert ok(S, ["require", "--run", str(source_run), "--stage", "finalize"], capsys)["problems"] == []
     g5 = ok(S, ["show", "--run", str(source_run), "--gate", "5"], capsys)
     assert not g5.get("execution_run") and g5["options"] == S.GATE_OPTIONS[5]
-    assert "✓ from the execution run" in g5["markdown"] and "### What would be saved" in g5["markdown"]
+    assert "✓ from the run" in g5["markdown"] and "### What would be saved" in g5["markdown"]
     assert catalog.deployed_run_problem(state(source_run)) is None
 
 
 # ── the two real versions, where they are ──
 
 def real_project(tmp_path, which: str) -> tuple[Path, str]:
-    """A project holding the real version as published (no approved.json) and the generation run that
-    approved it (its state and Gate 4 snapshot), as on the machine that ran phase 7."""
+    """A project as on the machine that ran phase 7, in the layout of then: the real version as
+    published (no approved.json) in .curate/workflows/, and the session that approved it (its state
+    and Gate 4 snapshot) in .curate/runs/. Nothing is moved."""
     d = REAL / which
     ident = json.loads((d / "identity.json").read_text())
     spec = json.loads((d / "spec.json").read_text())
     project = tmp_path / "project"
     wid = ident["workflow_id"]
-    shutil.copytree(d / "version", ids.version_dir(project, wid))
+    shutil.copytree(d / "version", ids.legacy_workflows_root(project) / wid)
     gen = project / ".curate" / "runs" / "20261124-214915-3b2f"
     (gen / "history").mkdir(parents=True)
     st = {"schema_version": 2, "run_id": gen.name, "stage": "done", "project_dir": str(project),
@@ -286,22 +287,79 @@ def real_project(tmp_path, which: str) -> tuple[Path, str]:
 
 
 @pytest.mark.parametrize("which", ["weather", "mapreduce"])
-def test_the_real_versions_redeploy_by_workflow_where_they_are(tmp_path, capsys, which):
+def test_the_real_versions_redeploy_by_workflow_from_their_old_location(tmp_path, capsys, which):
     project, wid = real_project(tmp_path, which)
+    old = ids.legacy_workflows_root(project) / wid
+    assert ids.version_dir(project, wid) == old and not (project / "workflows").exists()
     ident = json.loads((REAL / which / "identity.json").read_text())
     code, out = call(S, ["start", "--at", "deploy", "--workflow", wid, "--project-dir", str(project)], capsys)
     assert code == 0, out
-    assert out["uses"].endswith("the spec from run 20261124-214915-3b2f, history/004-gate4-approve.json")
+    assert out["uses"].endswith("the spec from session 20261124-214915-3b2f, history/004-gate4-approve.json")
+    assert Path(out["run"]).parent == old / "runs"  # the version's own runs/, where it is
     ok(S, ["confirm-start", "--run", out["run"]], capsys)
     s = state(out["run"])
     assert files(Path(s["execution"]["bundle_dir"])) == files(REAL / which / "faasr-bundle")
     assert ids.version_hash(ids.version_dir(project, wid)) == ident["version_hash"]
-    # Pegasus: a second execution run of the same version builds the jobs that ran
+    # Pegasus: a second run of the same version builds the jobs that ran
     code, out = call(S, ["start", "--at", "deploy", "--workflow", wid, "--project-dir", str(project)], capsys)
     s = state(out["run"])
     built = X.pegasus_built(s, out["run"], ident["pegasus"]["name"], ident["pegasus"]["image"])
     import yaml
     assert built["jobs"] == yaml.safe_load((REAL / which / "pegasus-ir.yaml").read_text())["nodes"]
+    # the session in .curate/runs/ that approved it, and a run of it, also name the version
+    for ref in ("20261124-214915-3b2f", s["reference"]):
+        code, out = call(S, ["start", "--at", "deploy", "--from-run", ref, "--project-dir", str(project)], capsys)
+        assert code == 0 and raw(out["run"])["workflow_id"] == wid, out
+    listed = ok(S, ["sessions", "--project-dir", str(project)], capsys)
+    assert [x["session_id"] for x in listed["sessions"]] == ["20261124-214915-3b2f"] and len(listed["runs"]) == 4
+
+
+# ── the layout: workflows/ in the project, sessions in .curate/ ──
+
+def test_versions_and_runs_are_in_the_project_and_sessions_in_curate(source_run, capsys):
+    src = state(source_run)
+    project, wid = Path(src["project_dir"]), src["workflow_id"]
+    assert source_run.parent == project / ".curate" / "sessions"
+    assert Path(src["version_dir"]) == project / "workflows" / wid
+    assert (project / "workflows" / ids.WORKFLOWS_MARKER).is_file()
+    assert {p.name for p in (project / ".curate").iterdir()} <= {"sessions", "sketches", "mga.lock.json", "mga_guard.log"}
+    out = start(capsys, source_run, "deploy", "--workflow", wid)[1]
+    assert Path(out["run"]).parent == project / "workflows" / wid / "runs"
+
+
+def test_a_workflows_folder_that_is_not_curates_is_refused(make_run, capsys, monkeypatch, tmp_path):
+    """The project already has its own workflows/ (no marker): Gate 4 publishes nothing and says why;
+    the folder is left as it was."""
+    import emit
+    monkeypatch.setattr(emit, "faasr_py_validate", lambda wf, timeout=300: None)
+    run = make_run()
+    project = Path(state(run)["project_dir"])
+    theirs = project / "workflows"
+    theirs.mkdir()
+    (theirs / "ci.yml").write_text("on: push\n")
+    from test_start import FIX
+    work = run / "work"
+    (work / "sk.json").write_text((FIX / "skeleton.json").read_text())
+    ok(S, ["skeleton", "--run", str(run), "--json", str(work / "sk.json")], capsys)
+    ok(S, ["approve", "--run", str(run), "--gate", "1"], capsys)
+    ok(S, ["apply-candidates", "--run", str(run), "--json", str(FIX / "candidates.json")], capsys)
+    ok(S, ["merge-resolved", "--run", str(run), "--json", str(FIX / "resolved.json")], capsys)
+    ok(S, ["approve", "--run", str(run), "--gate", "2"], capsys)
+    s = state(run)
+    code = {n["name"]: n["code"] for n in json.loads((FIX / "spec-with-code.json").read_text())["nodes"]}
+    for n in s["spec"]["nodes"]:
+        n["code"] = code[n["name"]]
+    s["mga"] = {n["name"]: {"status": "passed", "attempts": 1} for n in s["spec"]["nodes"]}
+    s["stage"] = "gate3"
+    runstate.save(run, s)
+    ok(S, ["approve", "--run", str(run), "--gate", "3"], capsys)
+    emit.main(["bundle", "--run", str(run)])
+    capsys.readouterr()
+    code, out = call(S, ["approve", "--run", str(run), "--gate", "4", "--on-duplicate", "keep"], capsys)
+    assert code == 2 and f"{theirs} exists and is not CURATE's" in out["error"]
+    assert ids.WORKFLOWS_MARKER in out["error"]
+    assert sorted(p.name for p in theirs.iterdir()) == ["ci.yml"] and state(run).get("workflow_id") is None
+    assert state(run)["stage"] == "gate4"
 
 
 # ── approved.json is checked when it is read ──
@@ -341,7 +399,7 @@ def test_an_unreadable_approved_json_is_refused(source_run, capsys):
     assert code == 2 and "cannot be read" in out["error"]
 
 
-# ── locks: a generation run and its execution run written at the same time ──
+# ── locks: a session and its run written at the same time ──
 
 WRITER = """
 import json, sys
@@ -351,18 +409,18 @@ kind, run, n = sys.argv[2], sys.argv[3], int(sys.argv[4])
 for i in range(n):
     if kind == "stage":      # a generation stage: spec.py loads and saves the whole state
         S.main(["set-cap", "--run", run, "--max", str(100 + i)])
-    elif kind == "gen":      # a stage's own change to the generation run
+    elif kind == "gen":      # a stage's own change to the session
         runstate.update(run, lambda s: s.update(iteration=s["iteration"] + 1))
-    elif kind == "monitor":  # monitor.py / pegasus_monitor.py: the monitor record, through the generation run
+    elif kind == "monitor":  # monitor.py / pegasus_monitor.py: the monitor record, through the session
         runstate.update(run, lambda s: s["monitor"].update(polls=s["monitor"]["polls"] + 1))
-    else:                    # a writer of the execution run itself
+    else:                    # a writer of the run itself
         runstate.update(run, lambda s: s["monitor"].update(direct=s["monitor"]["direct"] + 1))
 """
 
 
 def test_concurrent_writes_lose_nothing_and_do_not_deadlock(source_run, capsys):
     """Four processes at once: a spec.py stage saving the whole generation state, a stage changing it,
-    the monitor writing its record through the generation run, and a writer of the execution run
+    the monitor writing its record through the session, and a writer of the run
     directly. Every update survives; all finish (no deadlock)."""
     import subprocess
     import sys
@@ -385,10 +443,10 @@ def test_concurrent_writes_lose_nothing_and_do_not_deadlock(source_run, capsys):
     assert raw(ex_dir)["monitor"] == {"polls": n, "direct": n} and "monitor" not in raw(source_run)
 
 
-# ── resuming generation runs: new layout and made before execution runs had their own state ──
+# ── resuming sessions: new layout and made before runs had their own state ──
 
 def test_resuming_a_generation_run_mid_pipeline(source_run, capsys, monkeypatch):
-    """Stopped at generate (before Gate 4: no execution run yet), it resumes at generate."""
+    """Stopped at generate (before Gate 4: no run yet), it resumes at generate."""
     monkeypatch.setenv("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "1")
     code, out = start(capsys, source_run, "generate", "--from-run", state(source_run)["run_id"],
                       "--existing-code", "keep")
@@ -403,11 +461,11 @@ def test_resuming_a_generation_run_mid_pipeline(source_run, capsys, monkeypatch)
 
 
 def test_resuming_a_run_made_before_execution_runs_had_their_own_state(source_run, capsys):
-    """A generation run whose execution folder has no state.json (made before this change) keeps
+    """A session whose execution folder has no state.json (made before this change) keeps
     every record in its own state.json: resuming reads them there and writes them there."""
     at_gate4(source_run)
     ok(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
-    s = state(source_run)  # turn it into the old layout: the records in the generation run's own file
+    s = state(source_run)  # turn it into the old layout: the records in the session's own file
     ex_dir = Path(s["execution"]["dir"])
     (ex_dir / "state.json").unlink()
     s["pegasus"] = {"steps": {"prepare": {"ok": True}}, "name": "old"}

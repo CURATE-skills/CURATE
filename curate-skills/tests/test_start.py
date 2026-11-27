@@ -12,8 +12,8 @@ FIX = Path(__file__).parent / "fixtures" / "e2-stages"
 
 
 def state(run):
-    """The run's state as the scripts see it (runstate.load: a generation run's state with its
-    current execution run's records in it)."""
+    """The run's state as the scripts see it (runstate.load: a session's state with its
+    current run's records in it)."""
     import runstate
     return runstate.load(run)
 
@@ -131,9 +131,9 @@ def test_refuses_an_approval_superseded_by_a_revision(source_run, capsys):
 def test_refuses_v1_and_unknown_or_partial_ids(source_run, make_run, capsys):
     rid = state(source_run)["run_id"]
     code, out = start(capsys, source_run, "reuse", "--from-run", rid[:8])
-    assert code == 2 and "no run is exactly" in out["error"] and rid in out["error"]
+    assert code == 2 and "no session is exactly" in out["error"] and rid in out["error"]
     code, out = start(capsys, source_run, "reuse", "--from-run", "nope")
-    assert code == 2 and "no run 'nope'" in out["error"]
+    assert code == 2 and "no session 'nope'" in out["error"]
     v1 = make_run()
     s = state(v1)
     s["schema_version"] = 1
@@ -195,18 +195,18 @@ def test_summary_is_ready_to_print(source_run, capsys):
     rid = state(source_run)["run_id"]
     code, out = start(capsys, source_run, "emit", "--from-run", rid, "--dry-run")
     md = out["summary"]
-    assert md.startswith("**Start at emit — a new run**") and f"run `{rid}`" in md
+    assert md.startswith("**Start at emit — a new session**") and f"session `{rid}`" in md
     assert "will not be changed" in md and "gate3-approve.json" in md
     assert "Stub-test results copied: generate_text (passed)" in md and "Redoes: emit → deploy (if chosen at Gate 4) → monitor (if deployed) → finalize" in md
     code, out = start(capsys, source_run, "generate", "--from-bundle", old_bundle(source_run),
                       "--existing-code", "keep", "--dry-run")
-    assert out["summary"].startswith("**Start at generate — a new run**") and "bundle `" in out["summary"]
+    assert out["summary"].startswith("**Start at generate — a new session**") and "bundle `" in out["summary"]
 
 
 def test_real_start_returns_the_summary_with_the_new_run_id(source_run, capsys):
     code, out = start(capsys, source_run, "generate", "--from-run", state(source_run)["run_id"],
                       "--existing-code", "ignore")
-    assert code == 0 and out["summary"].startswith(f"**Start at generate — new run `{out['run_id']}`**")
+    assert code == 0 and out["summary"].startswith(f"**Start at generate — new session `{out['run_id']}`**")
 
 
 def test_real_start_from_bundle_summary_is_complete(source_run, capsys):
@@ -316,12 +316,12 @@ def test_gate4_approve_and_deploy_goes_to_the_deploy_stage(source_run, capsys, m
 
 def test_deploy_requires_the_deploy_choice(source_run, capsys):
     code, out = call(S, ["require", "--run", str(source_run), "--stage", "deploy"], capsys)
-    assert code == 1 and "--start-at deploy --from-run" in out["problems"][0]
+    assert code == 1 and f"--start-at deploy --workflow {state(source_run)['workflow_id']}" in out["problems"][0]
 
 
 def test_approve_and_deploy_builds_the_faasr_bundle_from_the_version(source_run, capsys):
     """Approve & deploy builds the FaaSr bundle after Gate 4, from the published version, into the
-    execution run's folder, with its manifest (emit's bundle is not what gets deployed)."""
+    run's folder, with its manifest (emit's bundle is not what gets deployed)."""
     import ids
     s = state(source_run)
     s.update(stage="gate4")
@@ -341,14 +341,14 @@ def test_approve_and_deploy_refused_before_publishing_when_faasr_cannot_build(so
     s = state(source_run)
     s.update(stage="gate4")
     (source_run / "state.json").write_text(json.dumps(s))
-    versions = sorted(p.name for p in (Path(s["project_dir"]) / ".curate" / "workflows").iterdir())
+    versions = sorted(p.name for p in (Path(s["project_dir"]) / "workflows").iterdir())
 
     def cannot(*a, **kw):
         raise X.ExecutionError("cannot be built for FaaSr: step x scatters over several axes")
     monkeypatch.setattr(X, "faasr_built", cannot)
     code, out = call(S, ["approve", "--run", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "yes"], capsys)
     assert code == 2 and "cannot be built for FaaSr" in out["error"] and "choose another target" in out["error"]
-    assert sorted(p.name for p in (Path(s["project_dir"]) / ".curate" / "workflows").iterdir()) == versions
+    assert sorted(p.name for p in (Path(s["project_dir"]) / "workflows").iterdir()) == versions
 
 
 @pytest.mark.parametrize("at", ["deploy", "finalize"])

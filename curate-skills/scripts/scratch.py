@@ -560,7 +560,7 @@ def cmd_unlock(args) -> dict:
         mine = load_state(Path(args.run))["run_id"]
         if held and held != mine:
             return {"ok": True, "removed": False, "held_by": held,
-                    "note": f"the MGA lock belongs to run {held}; left in place"}
+                    "note": f"the MGA lock belongs to session {held}; left in place"}
     lp.unlink(missing_ok=True)
     return {"ok": True, "removed": existed}
 

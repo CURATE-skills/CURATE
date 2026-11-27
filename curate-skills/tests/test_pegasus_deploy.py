@@ -105,7 +105,7 @@ def run_steps(run, *names, **kw):
 
 
 def ex(run):
-    """The execution run Gate 4 opened for this versioned run: its bundle folder and work folder."""
+    """The run Gate 4 opened for this versioned run: its bundle folder and work folder."""
     e = state(run)["execution"]
     return Path(e["bundle_dir"]), Path(e["dir"]) / "work", e["reference"]
 
@@ -124,7 +124,7 @@ def test_preflight_local(peg_run, fake):
     assert ir.parent.parent.parent.name == state(peg_run)["workflow_id"] and ref.startswith(state(peg_run)["workflow_id"] + "/")
     assert f"- writes `{ir}/` (workflow.yml, functions/ 5 files, inputs/): new" in out["summary"]
     assert "- input files: none" in out["summary"]
-    # read-only: the execution run Gate 4 opened holds only its state
+    # read-only: the run Gate 4 opened holds only its state
     assert not ir.exists() and {p.name for p in ir.parent.iterdir()} <= {"state.json", "state.lock"}
 
 

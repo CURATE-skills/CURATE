@@ -1,6 +1,6 @@
 """A hand-made FaaSr bundle as a versioned run has it (phase 8: deploy only takes bundles built from an
-approved version): <project>/.curate/workflows/<wid>/ holds a minimal version folder, and the bundle
-sits in an execution run of it (runs/<rid>/bundle/) with its manifest (ids.write_manifest)."""
+approved version): <project>/workflows/<wid>/ holds a minimal version folder, and the bundle
+sits in a run of it (runs/<rid>/bundle/) with its manifest (ids.write_manifest)."""
 import json
 from pathlib import Path
 
@@ -12,6 +12,7 @@ RID = "20261124-120000-abcd"
 def versioned_bundle(project: Path, files: dict[str, str], wid: str = "weather-v1", rid: str = RID,
                      target: str = "faasr") -> tuple[dict, Path]:
     """(the state fields of a run whose Gate 4 published `wid` and built this bundle, the bundle folder)."""
+    ids.claim_workflows_root(project)  # as publishing does: workflows/ with its marker
     vdir = ids.version_dir(project, wid)
     vdir.mkdir(parents=True, exist_ok=True)
     if not (vdir / "workflow.yml").exists():

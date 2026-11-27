@@ -42,9 +42,9 @@ Arguments: `$ARGUMENTS`
 
 ## 1. Find the run
 
-`--run <run_id>` (a generation run id, or an execution run's `<workflow-id>/<run-id>`): `spec.py
+`--run <run_id>` (a session id, or a run's `<workflow-id>/<run-id>`): `spec.py
 runs` lists the runs in this project; use the matching `run` path. Without it, ask for `--run`. To
-deploy an approved version again, start a new execution run of it:
+deploy an approved version again, start a new run of it:
 `/curate-skills:curate --start-at deploy --workflow <workflow-id>` (or `--from-run <run_id>`).
 
 ## 2. Begin

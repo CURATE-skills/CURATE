@@ -45,7 +45,7 @@ def test_init_defaults_and_user_model(make_run, tmp_path, capsys):
     model.write_text('"""Anaerobic digestion model."""\nprint(1)\n')
     run = make_run(extra_args=["--user-model", str(model)])
     s = state(run)
-    assert run.parent.name == "runs" and (run / "work").is_dir()
+    assert run.parent.name == "sessions" and run.parent.parent.name == ".curate" and (run / "work").is_dir()
     assert s["stage"] == "skeleton" and s["mga_max_retries"] == 3 and s["stubtest_mode"] == "strict"
     assert s["user_models"] == [{"name": "pyadm1_model", "path": str(model.resolve()),
                                  "description": "Anaerobic digestion model."}]

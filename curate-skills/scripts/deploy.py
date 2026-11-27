@@ -11,7 +11,7 @@
 S3 keys) the S3 bucket, and reports what deploying would write. Nothing is written anywhere.
 The four steps — publish, upload, register, invoke (CURATE's order) — each write only with
 --confirmed, which the stage file passes after the user said yes to that step; each re-runs the
-preflight first and records every path it writes in the execution run's deploy-log.jsonl. Every path deploying would write must carry the suffix and must not exist yet
+preflight first and records every path it writes in the run's deploy-log.jsonl. Every path deploying would write must carry the suffix and must not exist yet
 (--overwrite-own-deploy also allows paths this run's own deploy log recorded, to retry a partial
 deploy). The deploy copy may differ from the approved bundle only in ALLOWED_DIFF fields and
 placeholder fields; the summary shows the difference field by field.
@@ -67,12 +67,12 @@ SUFFIX_RX = re.compile(r"^[-_A-Za-z0-9]+$")
 RUN_TS_RX = re.compile(r"^\d{4}(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})")  # run ids: YYYYMMDD-HHMMSS-<4 hex> (older: -<name>)
 MAX_PATH_PART = 255  # bytes per file name in a git tree / most file systems
 COMMIT_TAG = "(curate-skills)"  # in every commit message curate-deploy makes
-DEPLOY_LOG = Path("deploy-log.jsonl")  # in the execution run; one JSON line per path a deploy step wrote
-LEGACY_DEPLOY_LOG = Path("deploy") / "deploy-log.jsonl"  # runs made before execution runs had their own state
+DEPLOY_LOG = Path("deploy-log.jsonl")  # in the run; one JSON line per path a deploy step wrote
+LEGACY_DEPLOY_LOG = Path("deploy") / "deploy-log.jsonl"  # runs made before runs had their own state
 
 
 def files_dir(run, s: dict | None = None) -> Path:
-    """The execution run's folder (runstate.files_dir): the deploy log, deploy/workflow.json (the
+    """The run's folder (runstate.files_dir): the deploy log, deploy/workflow.json (the
     deploy copy) and deploy/preflight-diff.md go there."""
     import runstate
     return runstate.files_dir(run, s)
@@ -532,22 +532,20 @@ def _project_of(run: str | Path) -> Path:
     s = _read_state(Path(run)) or {}
     if s.get("project_dir"):
         return Path(s["project_dir"])
-    p = Path(run).resolve()
-    return p.parents[4] if p.parent.name == "runs" and p.parents[2].name == "workflows" else p.parents[2]
+    import ids
+    return ids.project_of_path(run) or Path(run).resolve().parents[2]
 
 
 def project_runs(run: str | Path) -> list[tuple[Path, dict]]:
-    """Every run of the project (this one included), with its state: each generation run (with its
-    current execution's records), then each execution run that is not some generation run's current
+    """Every run of the project (this one included), with its state: each session (with its
+    current execution's records), then each run that is not some session's current
     one (a standalone run, or one a later Gate 4 replaced)."""
     import ids
     import runstate
     project = _project_of(run)
     out = []
-    runs = project / ".curate" / "runs"
-    for d in sorted(runs.iterdir()) if runs.is_dir() else []:
-        st = _read_state(d) if d.is_dir() else None
-        if st:
+    for d in ids.session_dirs(project):
+        if (st := _read_state(d)):
             out.append((d, st))
     for d in ids.execution_dirs(project):
         if runstate.resolve_run(d) == d.resolve() and (st := _read_state(d)):
@@ -1062,7 +1060,7 @@ def _no_leak(text: str) -> None:
 
 
 def _update_state(run: Path, change) -> dict:
-    """Change the run's state (runstate.update: an execution's records go to its execution run)."""
+    """Change the run's state (runstate.update: an execution's records go to its run)."""
     import runstate
     return runstate.update(run, change, _no_leak)
 
@@ -1072,7 +1070,7 @@ def _now_iso() -> str:
 
 
 def _log_written(run: Path, entry: dict) -> None:
-    """Append one line to the execution run's deploy-log.jsonl (what --overwrite-own-deploy trusts)."""
+    """Append one line to the run's deploy-log.jsonl (what --overwrite-own-deploy trusts)."""
     path = deploy_log_path(run)
     path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps({"ts": _now_iso(), **entry})
@@ -1493,10 +1491,14 @@ def _when(ts: str | None) -> str:
 def list_deployments(project: str | Path) -> dict:
     """Deployments recorded in this project's runs: name, the run that deployed it, when, the last
     invocation (by it or by runs that reused it), and whether it was torn down. Reads only."""
-    runs_dir = Path(project).expanduser().resolve() / ".curate" / "runs"
+    import ids
+    import runstate
+    project = Path(project).expanduser().resolve()
     rows: dict[tuple, dict] = {}
-    states = [st for d in sorted(runs_dir.iterdir()) if d.is_dir() for st in [_read_state(d)] if st] \
-        if runs_dir.is_dir() else []
+    # every session (with its current run's records) and every run not used through a session
+    states = [st for d in ids.session_dirs(project) for st in [_read_state(d)] if st]
+    states += [st for d in ids.execution_dirs(project) if runstate.resolve_run(d) == d.resolve()
+               for st in [_read_state(d)] if st]
     for st in states:
         dep = st.get("deploy") or {}
         steps = dep.get("steps") or {}
@@ -1531,7 +1533,7 @@ def list_deployments(project: str | Path) -> dict:
         if r["torn_down"]:
             md.append(f"- Torn down: {_when(r['torn_down'])}")
         md.append("")
-    return {"ok": True, "project": str(runs_dir.parent.parent), "deployments": out,
+    return {"ok": True, "project": str(project), "deployments": out,
             "markdown": "\n".join(md).rstrip() if out else "No deployments recorded in this project's runs."}
 
 

@@ -9,7 +9,7 @@ Precondition: `spec.py begin --run <run> --stage deploy` returned `ok` and `spec
 
 Running on Pegasus writes files on this machine (and, with `CURATE_PEGASUS_HOST`, on that host) and
 submits jobs to HTCondor. For a run whose Gate 4 published a version, everything goes to that
-version's execution run, `<project>/.curate/workflows/<workflow-id>/runs/<run-id>/` (prepare builds
+version's run, `<project>/.curate/workflows/<workflow-id>/runs/<run-id>/` (prepare builds
 `bundle/` there from the approved version and writes `manifest.json`), and on the host to
 `~/curate-runs/<workflow-id>/<run-id>/`. The folder holds `workflow.yml`, Pegasus's own workflow
 (no host paths); the host writes its catalogs at launch. Runs approved before versions are refused.
@@ -72,7 +72,7 @@ Never pass `--confirmed` without the user's yes to that step in their latest ans
 ## 3. When a step fails
 
 Show the `error` exactly; the run stays at `deploy`. What the step wrote is in the
-execution run's `deploy-log.jsonl`. Ask with AskUserQuestion — **Retry, removing what this step wrote**
+run's `deploy-log.jsonl`. Ask with AskUserQuestion — **Retry, removing what this step wrote**
 / **Stop here** — and only after the first, repeat the step (from 2.1) with `--overwrite-own` added
 to both calls. It removes only what that step itself logged; anything else stays refused.
 

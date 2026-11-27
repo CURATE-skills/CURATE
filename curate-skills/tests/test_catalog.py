@@ -166,7 +166,7 @@ def test_save_workflow_stores_the_published_version_never_its_own(tmp_path):
 
 
 def _approved_run(tmp_path, name, spec, on_duplicate=None, new_version_of=None, catalog_dir=None):
-    """A generation run at Gate 4 with a draft, approved through spec.publish_version (what Gate 4
+    """A session at Gate 4 with a draft, approved through spec.publish_version (what Gate 4
     approval does); returns the run folder with state.json written."""
     import emit
     import spec as S
@@ -409,7 +409,7 @@ def test_dropping_a_duplicate_only_in_the_catalog_copies_that_version(tmp_path, 
                              catalog_dir=cat_dir)
     vdir = Path(s2["version_dir"])
     assert s2["workflow_id"] == "mapreduce-word-count-v1" and s2["version_reused"]
-    assert vdir == other / "project" / ".curate" / "workflows" / "mapreduce-word-count-v1"
+    assert vdir == other / "project" / "workflows" / "mapreduce-word-count-v1"
     # the version as published, with the approved.json it carries (when the catalog kept its folder)
     assert sorted(p.name for p in vdir.iterdir()) == \
         (["approved.json"] if stored_folder else []) + ["functions", "inputs.yml", "workflow.yml"]
@@ -430,4 +430,4 @@ def test_a_tampered_catalog_copy_is_not_used(tmp_path, capsys):
     with pytest.raises(S.InputError, match="does not match its content hash"):
         _approved_run(tmp_path / "b", "r2", _e2(), on_duplicate="drop", new_version_of="mapreduce-word-count",
                       catalog_dir=cat_dir)
-    assert not (tmp_path / "b" / "project" / ".curate" / "workflows" / "mapreduce-word-count-v1").exists()
+    assert not (tmp_path / "b" / "project" / "workflows" / "mapreduce-word-count-v1").exists()

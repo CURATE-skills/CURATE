@@ -13,7 +13,7 @@
 preflight is read-only. Each step without --confirmed writes nothing and returns
 `needs_confirmation` with a `plan`; the stage asks the user, then repeats it with --confirmed.
 
-  prepare  writes the execution run's bundle/ (workflow.yml: the Pegasus workflow, scripts/cwl_pegasus.py;
+  prepare  writes the run's bundle/ (workflow.yml: the Pegasus workflow, scripts/cwl_pegasus.py;
            functions/; inputs/ with the files from --inputs) and checks it (cwl_pegasus.validate_folder).
   copy     CURATE_PEGASUS_HOST only: creates <host>:~/curate-runs/<run_id>/ and copies ir/ and
            the plugin's curate_ir/ into it.
@@ -24,7 +24,7 @@ preflight is read-only. Each step without --confirmed writes nothing and returns
 
 Nothing is overwritten: a target that exists is refused. A failed step can be repeated with
 --overwrite-own, which first removes only what that step itself wrote (from
-the execution run's deploy-log.jsonl). Settings (CURATE_PEGASUS_HOST / _RUNTIME / _IMAGE) are pinned
+the run's deploy-log.jsonl). Settings (CURATE_PEGASUS_HOST / _RUNTIME / _IMAGE) are pinned
 by prepare; later steps refuse if they changed. Prints JSON {"ok", ...}; exit 0 ok, 1 needs
 attention (or confirmation), 2 bad input.
 """
@@ -50,8 +50,8 @@ import runstate  # noqa: E402
 
 PLUGIN_DIR = SCRIPT_DIR.parent
 IR_TOOLS = PLUGIN_DIR / "curate_ir"
-LOG = Path("deploy-log.jsonl")  # in the execution run
-LEGACY_LOG = Path("pegasus") / "deploy-log.jsonl"  # runs made before execution runs had their own state
+LOG = Path("deploy-log.jsonl")  # in the run
+LEGACY_LOG = Path("pegasus") / "deploy-log.jsonl"  # runs made before runs had their own state
 REMOTE_ROOT = "curate-runs"
 SSH_OPTS = hostcmd.SSH_OPTS
 PEGASUS_PY = 'PYTHONPATH="$(pegasus-config --python)" python3'
@@ -92,12 +92,12 @@ def _no_leak(text: str) -> None:
 
 
 def _update(run: Path, change) -> dict:
-    """Change the run's state (runstate.update: an execution's records go to its execution run)."""
+    """Change the run's state (runstate.update: an execution's records go to its run)."""
     return runstate.update(run, change, _no_leak)
 
 
 def log_path(run: Path) -> Path:
-    """The execution run's deploy-log.jsonl (<run>/pegasus/ for a run made before execution runs
+    """The run's deploy-log.jsonl (<run>/pegasus/ for a run made before runs
     had their own state)."""
     s = runstate.load(run)
     return Path(run) / LEGACY_LOG if runstate.is_legacy(run, s) else runstate.files_dir(run, s) / LOG
@@ -149,9 +149,9 @@ def _layout(run: Path, s: dict, st: dict) -> dict:
     if not (s.get("workflow_id") and ex.get("target") == "pegasus" and ex.get("dir")):
         import execution as X
         raise StepError(X.pre_version(s) if not s.get("workflow_id") else
-                        "this run has no Pegasus execution run (it is opened when Gate 4 or \"Start this run?\" "
+                        "this run has no Pegasus run (it is opened when Gate 4 or \"Start this run?\" "
                         "chooses Pegasus); approve Gate 4 again with --deploy pegasus")
-    # the folder is the execution run's bundle, and the host path its full reference
+    # the folder is the run's bundle, and the host path its full reference
     local, ir_dir, ref = Path(ex["dir"]), Path(ex["bundle_dir"]), ex["reference"]  # ir_dir: the Pegasus folder
     out = {"local": local, "ir_dir": ir_dir, "where": st["host"] or "local", "reference": ref}
     if st["host"]:

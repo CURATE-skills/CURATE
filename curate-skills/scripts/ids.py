@@ -5,11 +5,16 @@ brief, "Workflow and run IDs"; docs/CWL_IR.md, "Identity and versions" and "Layo
   run ID        YYYYMMDD-HHMMSS-<4 hex>    e.g. 20261118-012903-a3f9
   reference     <workflow-id>/<run-id>
 
-  <project>/.curate/runs/<run-id>/draft/                   emit's draft (a generation session)
-  <project>/.curate/workflows/<workflow-id>/               a published version (never edited)
-  <project>/.curate/workflows/<workflow-id>/approved.json  what Gate 4 approved with it (the spec)
-  <project>/.curate/workflows/<workflow-id>/runs/<run-id>/ one execution run: state.json, bundle/,
-                                                           manifest.json, its logs and outputs
+  <project>/.curate/sessions/<session-id>/draft/    emit's draft (a /curate session)
+  <project>/workflows/<workflow-id>/                a published version (never edited)
+  <project>/workflows/<workflow-id>/approved.json   what Gate 4 approved with it (the spec)
+  <project>/workflows/<workflow-id>/runs/<run-id>/  one run (an execution): state.json, bundle/,
+                                                    manifest.json, its logs and outputs/
+  <project>/workflows/.curate-workflows             the marker: this folder is CURATE's
+
+Projects made before this layout keep their versions in <project>/.curate/workflows/ and their
+sessions in <project>/.curate/runs/; both are still read (and a version there gets its new runs
+in its own runs/), nothing is moved.
 
 A draft becomes a version only when Gate 4 approves it: plan_publish() works out the next
 version number and any existing version with the same content hash (nothing is written, so
@@ -73,32 +78,117 @@ def reference(wid: str, rid: str) -> str:
 
 # ── layout ───────────────────────────────────────────────────────────────────
 
+WORKFLOWS_MARKER = ".curate-workflows"
+MARKER_TEXT = ("This folder holds CURATE's published workflow versions and their runs "
+               "(<workflow-id>/runs/<run-id>/). Versions are never edited.\n")
+
+
 def workflows_root(project) -> Path:
+    """<project>/workflows/: where versions are published (marked as CURATE's by WORKFLOWS_MARKER)."""
+    return Path(project) / "workflows"
+
+
+def legacy_workflows_root(project) -> Path:
+    """Where versions were published before the visible layout; still read."""
     return Path(project) / ".curate" / "workflows"
 
 
+def is_curate_root(root: Path) -> bool:
+    return (root / WORKFLOWS_MARKER).is_file()
+
+
+def workflow_roots(project) -> list[Path]:
+    """The folders that hold this project's versions: <project>/workflows/ (only if it is CURATE's),
+    then <project>/.curate/workflows/ (projects made before the visible layout)."""
+    out = []
+    if is_curate_root(workflows_root(project)):
+        out.append(workflows_root(project))
+    if legacy_workflows_root(project).is_dir():
+        out.append(legacy_workflows_root(project))
+    return out
+
+
+def claim_workflows_root(project) -> Path:
+    """<project>/workflows/, created with its marker; refused if it exists and is not CURATE's."""
+    root = workflows_root(project)
+    if root.exists() and not is_curate_root(root):
+        raise IdError(f"{root} exists and is not CURATE's (it has no {WORKFLOWS_MARKER} file), so CURATE does not "
+                      "publish into it. Rename or move that folder, or, if it is CURATE's own folder whose marker "
+                      f"was removed, put back an empty {WORKFLOWS_MARKER} file in it")
+    root.mkdir(parents=True, exist_ok=True)
+    marker = root / WORKFLOWS_MARKER
+    if not marker.is_file():
+        marker.write_text(MARKER_TEXT)
+    return root
+
+
 def version_dir(project, wid: str) -> Path:
+    """The version's folder: where it is (<project>/workflows/, else .curate/workflows/), or where it
+    would be published (<project>/workflows/)."""
+    for root in workflow_roots(project):
+        if (root / wid).is_dir():
+            return root / wid
     return workflows_root(project) / wid
 
 
 def execution_dir(project, wid: str, rid: str) -> Path:
+    """A run of version `wid`: always in that version's own runs/ folder, wherever the version is."""
     return version_dir(project, wid) / "runs" / rid
 
 
-def draft_dir(run_dir) -> Path:
-    return Path(run_dir) / "draft"
+def draft_dir(session_dir) -> Path:
+    return Path(session_dir) / "draft"
 
 
 def execution_dirs(project, rid: str | None = None) -> list[Path]:
-    """Every execution run folder of the project (with its state.json), or those named `rid`."""
-    root = workflows_root(project)
+    """Every run folder of the project (with its state.json), or those named `rid`."""
     pattern = f"*/runs/{rid or '*'}/state.json"
-    return sorted(p.parent for p in root.glob(pattern)) if root.is_dir() else []
+    return sorted(p.parent for root in workflow_roots(project) for p in root.glob(pattern))
+
+
+# ── sessions ─────────────────────────────────────────────────────────────────
+
+def sessions_root(project) -> Path:
+    return Path(project) / ".curate" / "sessions"
+
+
+def legacy_sessions_root(project) -> Path:
+    """Where /curate sessions lived before they were called sessions (.curate/runs/); still read."""
+    return Path(project) / ".curate" / "runs"
+
+
+def session_roots(project) -> list[Path]:
+    return [r for r in (sessions_root(project), legacy_sessions_root(project)) if r.is_dir()]
+
+
+def session_dir(project, sid: str) -> Path | None:
+    """The session folder with id `sid` (new or old location), or None."""
+    for root in session_roots(project):
+        if (root / sid / "state.json").is_file():
+            return root / sid
+    return None
+
+
+def session_dirs(project) -> list[Path]:
+    """Every session folder of the project (with its state.json), new location first."""
+    return [d for root in session_roots(project) for d in sorted(root.iterdir())
+            if d.is_dir() and (d / "state.json").is_file()]
+
+
+def project_of_path(folder) -> Path | None:
+    """The project a session or run folder belongs to, from where it is."""
+    p = Path(folder).resolve()
+    for anc in p.parents:
+        if anc.name == ".curate":
+            return anc.parent
+        if anc.name == "workflows" and is_curate_root(anc):
+            return anc.parent
+    return None
 
 
 # ── hashes ───────────────────────────────────────────────────────────────────
 
-# Top-level names of a version folder that are not part of its hash: its execution runs, and the Gate 4
+# Top-level names of a version folder that are not part of its hash: its runs, and the Gate 4
 # record publish adds next to the workflow (approved.json; versions published before it have none).
 APPROVED = "approved.json"
 VERSION_SKIP = ("runs", APPROVED)
@@ -120,7 +210,7 @@ def tree_hash(folder, skip=()) -> str:
 
 
 def version_hash(folder) -> str:
-    """A version folder's hash: everything except its execution runs and approved.json."""
+    """A version folder's hash: everything except its runs and approved.json."""
     return tree_hash(folder, skip=VERSION_SKIP)
 
 
@@ -203,13 +293,14 @@ def versions(name: str, project=None, catalog=None) -> dict[int, str | None]:
     folders and the catalog's entries (Catalog from catalog.py), plus the numbers the catalog's old
     uuid entries hold (reserved_numbers; no content hash: they are not offered as duplicates)."""
     out: dict[int, str | None] = {}
-    if project is not None and workflows_root(project).is_dir():
+    if project is not None:
         import yaml
-        for d in workflows_root(project).iterdir():
-            m = WORKFLOW_ID.match(d.name)
-            if m and m.group(1) == name and (d / "workflow.yml").is_file():
-                doc = yaml.safe_load((d / "workflow.yml").read_text()) or {}
-                out[int(m.group(2))] = doc.get("curate:content_hash")
+        for root in workflow_roots(project):
+            for d in root.iterdir():
+                m = WORKFLOW_ID.match(d.name)
+                if m and m.group(1) == name and (d / "workflow.yml").is_file():
+                    doc = yaml.safe_load((d / "workflow.yml").read_text()) or {}
+                    out.setdefault(int(m.group(2)), doc.get("curate:content_hash"))
     if catalog is not None:
         for e in catalog.workflows.values():
             if getattr(e, "workflow_id", None):
@@ -257,7 +348,7 @@ def publish(draft, name: str, project, version: int, approved_hash: str, approve
     dest = version_dir(project, wid)
     if dest.exists():
         raise IdError(f"{wid} already exists; a version is never overwritten")
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    claim_workflows_root(project)
     tmp = dest.parent / f".{wid}.tmp-{secrets.token_hex(3)}"
     shutil.copytree(draft, tmp)
     doc = yaml.safe_load((tmp / "workflow.yml").read_text())
@@ -293,7 +384,7 @@ def copy_version(src, project, wid: str, expected_content_hash: str) -> dict:
     dest = version_dir(project, wid)
     if dest.exists():
         raise IdError(f"{wid} already exists in this project; nothing was copied")
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    claim_workflows_root(project)
     tmp = dest.parent / f".{wid}.tmp-{secrets.token_hex(3)}"
     shutil.copytree(src, tmp, ignore=lambda d, names: ["runs"] if Path(d) == src else [])
     got = draft_content_hash(tmp)

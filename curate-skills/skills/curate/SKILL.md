@@ -26,10 +26,10 @@ Arguments: `$ARGUMENTS`
 
 - `--start-at <stage>` with exactly one source starts a **new** run; the source is never changed:
   `--from-run <run_id>` (copies that run's gate-approved results; `--start-at deploy` deploys
-  that run's workflow version: any run of it works, including an execution run `<workflow-id>/<run-id>`),
+  that run's workflow version: any run of it works, including a run `<workflow-id>/<run-id>`),
   `--workflow <workflow-id>` (`--start-at deploy` only: deploys that version, e.g. `corvallis-winter-weather-v1`;
-  a deploy opens an **execution run** `<workflow-id>/<run-id>` under `.curate/workflows/`, not a new
-  generation run: it deploys, monitors and ends at Gate 5 without saving),
+  a deploy opens a **run** `<workflow-id>/<run-id>` under `workflows/<workflow-id>/runs/`, not a new
+  session: it deploys, monitors and ends at Gate 5 without saving),
   `--from-bundle <folder>` (generate or emit), `--from-file <file>` (see `stage-io.md`),
   `--sketch "<text>"` (write it to `.curate/sketches/<short-name>.txt` first) or
   `--sketch-file <file>`.

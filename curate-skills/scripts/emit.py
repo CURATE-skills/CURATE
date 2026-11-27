@@ -392,7 +392,7 @@ def _print(obj: dict, names=()) -> int:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="emit.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
-    b = sub.add_parser("bundle", help="write the run's workflow draft for Gate 4")
+    b = sub.add_parser("bundle", help="write the session's workflow draft for Gate 4")
     b.add_argument("--run", required=True, help="run dir containing state.json")
     b.add_argument("--level", choices=["auto", "faasr_py", "structural"], default="auto")
     e = sub.add_parser("external-inputs")

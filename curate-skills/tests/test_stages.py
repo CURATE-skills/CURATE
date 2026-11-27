@@ -109,7 +109,7 @@ def test_begin_refuses_before_the_stage_is_reached(make_run, capsys):
     code, out = call(S, ["begin", "--run", str(run), "--stage", "generate"], capsys)
     rid = state(run)["run_id"]
     assert code == 1 and out["mode"] == "refused" and out["error"] == (
-        "the run has not reached generate yet: it is waiting at Gate 2. Approve Gate 2 first: "
+        "the session has not reached generate yet: it is waiting at Gate 2. Approve Gate 2 first: "
         f"/curate-skills:curate-resolve --run {rid}")
     assert state(run)["stage"] == "gate2"
     run = make_run(stage="reuse", spec=resolved_spec())
@@ -414,7 +414,7 @@ def test_show_returns_a_short_question_options_and_the_marker(make_run, capsys, 
     assert out["header"] == f"Gate {gate}" and out["question"].endswith('(Type in "Other" to request changes.)')
     assert out["markdown"].startswith(f"## Gate {gate}") and "compact" not in out
     run_id = json.loads((run / "state.json").read_text())["run_id"]
-    assert out["markdown"].endswith(f"— end of Gate {gate} · run {run_id} —") and out["marker"] in out["markdown"]
+    assert out["markdown"].endswith(f"— end of Gate {gate} · session {run_id} —") and out["marker"] in out["markdown"]
     assert out["options"] == {1: ["Approve", "Stop here"], 2: ["Approve", "Stop here"],
                               3: ["Approve", "Show the full code", "Stop here"],
                               4: ["Approve & deploy to FaaSr (cloud)",

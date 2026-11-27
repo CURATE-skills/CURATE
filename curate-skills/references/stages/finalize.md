@@ -9,7 +9,7 @@ Run scripts in the plain form `uv run --quiet <plugin>/scripts/<script>.py …`:
 Precondition: `spec.py begin --run <run> --stage finalize` returned `ok` (it checked that the
 workflow draft was validated and built from the current spec, and Gate 4 published it).
 
-**An execution run** (started with `--start-at deploy`; `spec.py show --gate 5` returns
+**A run** (started with `--start-at deploy`; `spec.py show --gate 5` returns
 `execution_run: true`): print its `markdown` verbatim and its `review_line`, do step 2 if it
 applies, then `spec.py set-stage --run <run> --stage done`. There is no question and nothing is
 saved: the version was published (and saved) by the run that approved it. Steps 1, 3-5 do not apply.
