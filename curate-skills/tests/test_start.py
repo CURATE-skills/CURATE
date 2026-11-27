@@ -387,7 +387,13 @@ def test_confirm_start_records_nothing_for_other_start_points(source_run, capsys
 def test_start_at_deploy_end_to_end_with_fakes(source_run, capsys, monkeypatch):
     """start --at deploy --from-run → confirm → begin → preflight → publish, against fakes."""
     import deploy as D
+    import sys
+    import types
     from test_deploy import FAKE, FakeGitHub, FakeS3
+    for mod in ("github", "faasr_validate"):  # CURATE's Actions-file generator imports PyGithub
+        m = types.ModuleType(mod)
+        m.Github, m.validate_faasr_json = object, (lambda wf: (True, None))
+        monkeypatch.setitem(sys.modules, mod, m)
     for k, v in FAKE.items():
         monkeypatch.setenv(k, v)
     monkeypatch.setenv("FAASR_GH_USERNAME", "alice")
@@ -412,10 +418,8 @@ def test_start_at_deploy_end_to_end_with_fakes(source_run, capsys, monkeypatch):
     res = json.loads(capsys.readouterr().out)
     assert code == 0 and res["ok"], res
     name = pf["deploy_name"]
-    # named after the run that approved Gate 4 (the source), not this deploy-only run
-    m = D.RUN_TS_RX.match(state(source_run)["run_id"])
-    assert name == f"{pf['approved_name']}-{m[1]}{m[2]}-{m[3]}{m[4]}", name
-    assert "Gate 4 approval in run " + state(source_run)["run_id"] in pf["name_source"]
+    # one deployment per version: named after the version the source session published
+    assert name == state(source_run)["workflow_id"] and pf["name_source"] == "the version's workflow id"
     assert all(p.startswith(f"functions/{name}/") for p, _ in fake.puts)
     assert len(fake.puts) == 2 * len(state(source_run)["spec"]["nodes"])  # each step: wrapper + _main
 

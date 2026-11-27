@@ -129,7 +129,7 @@ def test_the_deploy_stage_asks_once_and_never_runs_it():
     assert "in auto mode, deploy will stop after the first step" in text
     assert "manual mode (Shift+Tab) asks before each command instead" in text
     assert "Never edit a settings file yourself." in text
-    assert text.index("permission for later turns") < text.index("## 0. Invoke only")
+    assert text.index("permission for later turns") < text.index("## 0. One deployment per version")
     for f in ("README.md", "scripts/doctor.py", "skills/curate-deploy/SKILL.md", "references/stages/deploy.md"):
         assert "default mode" not in (plugin / f).read_text(), f
 

@@ -717,8 +717,13 @@ def download_outputs(run: str, to: str | None = None, s3_factory=None) -> dict:
     wf = json.loads((D.files_dir(run_p, s) / "deploy" / "workflow.json").read_text())
     s3 = (s3_factory or s3_reader)(wf)
     files, skipped = [], []
+    # one deployment per version: the run's outputs are under <deploy name>/<run id>/ in S3; saved
+    # without that prefix (older runs keep their full keys)
+    strip = (f"{wf['WorkflowName']}/{(s.get('execution') or {}).get('run_id')}/"
+             if (s.get("deploy") or {}).get("scheme") == D.SCHEME else "")
     for o in run_outputs(run_p, s, wf):
-        target = dest / o["key"]
+        rel = o["key"][len(strip):] if strip and o["key"].startswith(strip) else o["key"]
+        target = dest / rel
         h = s3.head(o["key"])
         if h is None:
             skipped.append({"key": o["key"], "reason": "missing"})
@@ -728,7 +733,7 @@ def download_outputs(run: str, to: str | None = None, s3_factory=None) -> dict:
         if leaked:
             skipped.append({"key": o["key"], "reason": f"contains secret values ({', '.join(leaked)}); not saved"})
             continue
-        status = O.place(dest, o["key"], data)
+        status = O.place(dest, rel, data)
         if status == "differs":
             skipped.append({"key": o["key"], "reason": f"{target} differs from S3; not overwritten"})
             continue

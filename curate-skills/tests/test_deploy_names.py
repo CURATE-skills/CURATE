@@ -1,11 +1,15 @@
-"""Per-run deployment names, --list and --teardown (fakes only: nothing reaches GitHub or S3)."""
+"""Deployment names (one per version), --list and --teardown (fakes only: nothing reaches GitHub or S3).
+
+Runs deployed before one deployment per version (date-suffixed per-run names) stay readable and can
+still be torn down: the legacy teardown tests below use such runs."""
 import json
 from pathlib import Path
 
 import pytest
 
 import deploy as D
-from versioned import versioned_bundle
+import ids
+from versioned import RID, versioned_bundle
 from test_deploy import FAKE, FakeGitHub, env, workflow  # noqa: F401  (env is a fixture)
 
 A = "20261105-093012-weather"   # approved Gate 4 at 09:30 on 5 Nov
@@ -17,7 +21,7 @@ OLD = "20261101-172823-weather"  # deployed before per-run names: "-cs"
 
 @pytest.fixture
 def plain(env, monkeypatch):
-    monkeypatch.delenv("CURATE_DEPLOY_NAME_SUFFIX")  # the per-run default, not the override
+    monkeypatch.delenv("CURATE_DEPLOY_NAME_SUFFIX", raising=False)  # no suffix: the name is the workflow id
     return monkeypatch
 
 
@@ -31,9 +35,9 @@ def project(tmp_path):
     return tmp_path
 
 
-def make_run(project, run_id, copied_from=None, deploy=None, stage="deploy", log=None):
-    """A run of weather-v1 whose execution built the shared bundle (tests/versioned.py)."""
-    fields, _ = versioned_bundle(project, BUNDLE)
+def make_run(project, run_id, copied_from=None, deploy=None, stage="deploy", log=None, rid=RID, **extra):
+    """A run of weather-v1 whose execution (run id `rid`) built the bundle (tests/versioned.py)."""
+    fields, _ = versioned_bundle(project, BUNDLE, rid=rid)
     h = fields["execution"]["bundle_hash"]
     r = project / ".curate" / "runs" / run_id
     (r / "deploy").mkdir(parents=True)
@@ -41,7 +45,7 @@ def make_run(project, run_id, copied_from=None, deploy=None, stage="deploy", log
              "snapshot": "005-gate4-approve.json"}] if copied_from \
         else [{"gate": 4, "decision": "approve"}]
     st = {"schema_version": 2, "run_id": run_id, "stage": stage, **fields,
-          "deploy_choice": "yes", "history": hist}
+          "deploy_choice": "yes", "history": hist, **extra}
     if deploy:
         st["deploy"] = {"repo": "alice/faasr-actions", "branch": "main", "bundle_hash": h, **deploy}
     (r / "state.json").write_text(json.dumps(st))
@@ -86,117 +90,63 @@ def cli(capsys, *argv, fake=None, s3=None):
     return code, json.loads(capsys.readouterr().out)
 
 
-# ── naming ──
+# ── naming: one deployment per version ──
 
-def test_default_name_is_the_workflow_and_the_approving_runs_date_time(project, plain, capsys):
+V = "weather-v1"
+
+
+def test_the_name_is_the_versions_workflow_id_for_every_run(project, plain, capsys):
+    a = make_run(project, A)
+    b = make_run(project, B, copied_from=A, rid="20261106-140000-beef")  # deploy-only, its own run id
+    for r, rid in ((a, RID), (b, "20261106-140000-beef")):
+        code, out = cli(capsys, "preflight", "--run", str(r))
+        assert code == 0 and out["ok"], out["problems"]
+        assert out["deploy_name"] == V and out["suffix"] == "" and out["name_source"] == "the version's workflow id"
+        assert out["s3_targets"][0]["prefix"] == f"{V}/{rid}/" and out["payload"] == f"workflows/{V}/{rid}.json"
+        assert f"Deploys as: `{V}` (name from: the version's workflow id), run `{rid}`" in out["summary"]
+
+
+def test_a_suffix_names_another_deployment_of_the_same_version(project, plain, capsys):
     r = make_run(project, A)
+    plain.setenv("CURATE_DEPLOY_NAME_SUFFIX", "-alice")
     code, out = cli(capsys, "preflight", "--run", str(r))
-    assert code == 0 and out["ok"], out["problems"]
-    assert out["deploy_name"] == "weather-1105-0930" and out["suffix"] == "-1105-0930"
-    assert out["name_source"] == f"Gate 4 approval in run {A}"
-    assert [t["prefix"] for t in out["s3_targets"]] == ["weather_data-1105-0930/", "FaaSrLog/weather-1105-0930/"]
-    assert "-cs" not in json.dumps(out) and f"Deploys as: `weather-1105-0930` (name from: Gate 4 approval in run {A})" in out["summary"]
+    assert out["ok"] and out["deploy_name"] == f"{V}-alice"
+    assert out["name_source"] == "the version's workflow id + CURATE_DEPLOY_NAME_SUFFIX / --name-suffix"
 
 
-def test_a_second_run_of_the_same_workflow_gets_its_own_name(project, plain, capsys):
-    make_run(project, A, deploy=deployed("weather-1105-0930", "-1105-0930"), stage="done")
-    later = make_run(project, "20261105-161500-weather")
-    code, out = cli(capsys, "preflight", "--run", str(later))
-    assert out["ok"] and out["deploy_name"] == "weather-1105-1615"
-
-
-@pytest.mark.parametrize("taken_by", ["project", "repo"])
-def test_a_taken_minute_adds_seconds(project, plain, capsys, taken_by):
-    fake = FakeGitHub()
-    if taken_by == "project":
-        make_run(project, A2, deploy=deployed("weather-1105-0930", "-1105-0930"), stage="done")
-    else:  # the name exists in the repo (someone else's deployment)
-        fake.files["workflows/weather-1105-0930.json"] = json.dumps({"WorkflowName": "weather-1105-0930"})
-    r = make_run(project, A)
-    code, out = cli(capsys, "preflight", "--run", str(r), fake=fake)
-    assert out["ok"], out["problems"]
-    assert out["deploy_name"] == "weather-1105-093012" and "weather-1105-0930 is taken" in out["name_source"]
-
-
-def test_both_names_taken_is_refused_and_curate_s_plain_deployment_is_left_alone(project, plain, capsys):
+def test_curates_plain_deployment_is_left_alone(project, plain, capsys):
     curate = {"workflows/weather.json": json.dumps({"WorkflowName": "weather"}),
               ".github/workflows/weather-plot.yml": "name: weather-plot\n"}
-    theirs = {f"workflows/weather-1105-0930{x}.json": json.dumps({"WorkflowName": "x"}) for x in ("", "12")}
     r = make_run(project, A)
-    code, out = cli(capsys, "preflight", "--run", str(r), fake=FakeGitHub(files={**curate, **theirs}))
-    assert code == 1 and not out["ok"]
-    assert any("workflows/weather-1105-093012.json already exists (does not belong" in p for p in out["problems"])
-    assert out["curate_files"] == ["workflows/weather.json", ".github/workflows/weather-plot.yml"]
-    # with only CURATE's plain deployment there, the run deploys under its own name
     code, out = cli(capsys, "preflight", "--run", str(r), fake=FakeGitHub(files=curate))
-    assert out["ok"] and out["deploy_name"] == "weather-1105-0930" and "workflows/weather.json" in out["curate_files"]
-
-
-def test_an_override_naming_another_runs_deployment_is_refused(project, plain, capsys):
-    make_run(project, A2, deploy=deployed("weather-team", "-team"), stage="done")
-    r = make_run(project, A)
-    code, out = cli(capsys, "preflight", "--run", str(r), "--name-suffix=-team")
-    assert not out["ok"] and any(f"is run {A2}'s deployment in this project" in p for p in out["problems"])
-    plain.setenv("CURATE_DEPLOY_NAME_SUFFIX", "-alice")  # the override still works
-    code, out = cli(capsys, "preflight", "--run", str(r))
-    assert out["ok"] and out["deploy_name"] == "weather-alice"
-    assert out["name_source"] == "CURATE_DEPLOY_NAME_SUFFIX / --name-suffix"
-
-
-def test_a_run_id_without_a_date_needs_the_override(project, plain, capsys):
-    r = make_run(project, "my-run")
-    code, out = cli(capsys, "preflight", "--run", str(r))
-    assert code == 2 and "set CURATE_DEPLOY_NAME_SUFFIX" in out["error"]
+    assert out["ok"] and out["curate_files"] == ["workflows/weather.json", ".github/workflows/weather-plot.yml"]
 
 
 def test_the_plain_workflow_name_is_never_a_deploy_name(project, plain):
     r = make_run(project, A)
-    with pytest.raises(D.InputError):
-        D.preflight(str(r), "")
     real = D.deploy_copy
 
-    def same_name(wf, sfx, *a):  # a deploy copy that kept the plain name (defence in depth)
-        copy_wf, targets, s3_targets = real(wf, sfx, *a)
+    def same_name(wf, name, *a):  # a deploy copy that kept the plain name (defence in depth)
+        copy_wf, targets, s3_targets = real(wf, name, *a)
         return {**copy_wf, "WorkflowName": wf["WorkflowName"]}, targets, s3_targets
     import unittest.mock as m
     with m.patch.object(D, "deploy_copy", same_name):
-        pf = D.preflight(str(r), "-x", s3_factory=Bucket())
+        pf = D.preflight(str(r), D.deploy_name(r), s3_factory=Bucket())
     assert any("is the workflow's own name, which CURATE's deployment uses" in p for p in pf["problems"])
 
 
-# ── lineage: deploy-only runs keep the approving run's name ──
-
-def test_a_deploy_only_run_uses_its_source_runs_name(project, plain, capsys):
-    make_run(project, A, deploy=deployed("weather-1105-0930", "-1105-0930"), stage="done")
-    b = make_run(project, B, copied_from=A)
-    c = make_run(project, C, copied_from=B)
-    for r in (b, c):
-        code, out = cli(capsys, "preflight", "--run", str(r))
-        assert out["deploy_name"] == "weather-1105-0930"
-        assert out["name_source"] == f"run {A}'s deployment (this run was started from it)"
-    assert D.lineage(c, json.loads((c / "state.json").read_text()))[-1][0] == A
-
-
-def test_a_deploy_only_run_from_an_undeployed_run_uses_that_runs_date_time(project, plain, capsys):
-    make_run(project, A, stage="done")  # approved Gate 4 without deploying
-    b = make_run(project, B, copied_from=A)
-    code, out = cli(capsys, "preflight", "--run", str(b))
-    assert out["ok"] and out["deploy_name"] == "weather-1105-0930" and out["name_source"] == f"Gate 4 approval in run {A}"
-
-
-def test_old_style_names_keep_working(project, plain, capsys):
-    # the run that deployed with "-cs", and a deploy-only run from it (invoke only)
+def test_old_style_runs_stay_readable(project, plain, capsys):
     old = make_run(project, OLD, deploy=deployed("weather-cs", "-cs"), stage="done")
-    new = make_run(project, B, copied_from=OLD)
-    assert D.resolve_suffix(str(new))["suffix"] == "-cs"
-    assert D.resolve_suffix(str(old)) == {"suffix": "-cs", "source": "pinned: this run's deploy started with it"}
-    with pytest.raises(D.InputError, match="keep it"):
-        D.resolve_suffix(str(old), "-other")
-    code, out = cli(capsys, "status", "--run", str(new))
-    assert out["reuse_possible"] == OLD
+    code, out = cli(capsys, "status", "--run", str(old))
+    assert out["ok"] and out["deploy_name"] == "weather-cs" and out["per_run_name"] and out["next_step"] is None
 
 
 # ── list ──
+
+def version_deployed(rid, deployment="made", **extra):
+    d = deployed(V, "", scheme="version", deployment=deployment, payload=f"workflows/{V}/{rid}.json", **extra)
+    return d
+
 
 def test_list_shows_each_deployment_once_with_its_runs(project, plain, capsys, monkeypatch):
     make_run(project, OLD, deploy=deployed("weather-cs", "-cs"), stage="done")
@@ -207,15 +157,23 @@ def test_list_shows_each_deployment_once_with_its_runs(project, plain, capsys, m
     make_run(project, "20261107-090000-weather", deploy=deployed(
         "weather-1107-0900", "-1107-0900", teardown={"ts": "2026-11-08T00:00:00+00:00"}), stage="done")
     make_run(project, C)  # never deployed: not listed
+    # one deployment per version: made by one run, reused by the next; a run's own teardown leaves it
+    make_run(project, "20261110-090000-aaaa", rid="20261110-090000-aaaa", deploy=version_deployed(
+        "20261110-090000-aaaa", teardown={"ts": "2026-11-11T00:00:00+00:00"}), stage="done")
+    make_run(project, "20261110-100000-bbbb", rid="20261110-100000-bbbb",
+             deploy=version_deployed("20261110-100000-bbbb", "reused"), stage="done")
     monkeypatch.chdir(project)
     code, out = cli(capsys, "list")
     assert code == 0
     rows = {r["name"]: r for r in out["deployments"]}
-    assert set(rows) == {"weather-cs", "weather-1105-0930", "weather-1107-0900"}
+    assert set(rows) == {"weather-cs", "weather-1105-0930", "weather-1107-0900", V}
     a = rows["weather-1105-0930"]
     assert a["run"] == A and a["reused_by"] == [B] and a["invocations"] == 2
     assert a["deployed"] == "2026-11-05T10:00:00+00:00" and a["last_invoked"] == "2026-11-06T14:05:00+00:00"
     assert rows["weather-1107-0900"]["torn_down"] == "2026-11-08T00:00:00+00:00"
+    v = rows[V]
+    assert v["run"] == "20261110-090000-aaaa" and v["reused_by"] == ["20261110-100000-bbbb"]
+    assert v["invocations"] == 2 and v["torn_down"] is None  # the run's teardown did not remove the deployment
     blocks = out["markdown"].split("\n\n")
     assert blocks[1].splitlines() == [
         "**`weather-1105-0930`**", "- Repo: alice/faasr-actions", f"- Run: {A}",
@@ -230,7 +188,7 @@ def test_list_with_no_runs(tmp_path, capsys):
     assert code == 0 and out["deployments"] == [] and "No deployments" in out["markdown"]
 
 
-# ── teardown ──
+# ── teardown of a run deployed under its own per-run name (before one deployment per version) ──
 
 NAME, SFX = "weather-1105-0930", "-1105-0930"
 FILES = {f"functions/{NAME}/download_station.py": "def download_station(): pass\n",
@@ -300,10 +258,6 @@ def test_teardown_deletes_only_the_listed_files_and_objects(project, plain, caps
         == ["teardown"] * 7
     code, again = cli(capsys, "teardown", "--run", str(r), fake=fake, s3=s3)
     assert code == 1 and "already torn down" in again["error"]
-    # a later deploy-only run can no longer reuse it
-    b = make_run(project, B, copied_from=A)
-    code, status = cli(capsys, "status", "--run", str(b))
-    assert status["reuse_possible"] is None
 
 
 def test_teardown_refuses_without_a_deploy_log(project, plain, capsys):
@@ -362,25 +316,27 @@ def test_new_deploy_logs_record_each_files_sha(project, plain, capsys, monkeypat
         code, out = cli(capsys, step, "--run", str(r), "--confirmed", fake=fake, s3=Bucket())
         assert out["ok"], out
     log = [json.loads(x) for x in (r / "deploy" / "deploy-log.jsonl").read_text().splitlines()]
-    assert [e["path"] for e in log] == [f"functions/{NAME}/download_station.py", f"functions/{NAME}/plot_weather.py",
-                                        f"workflows/{NAME}.json"]
+    assert [e["path"] for e in log] == [f"functions/{V}/download_station.py", f"functions/{V}/plot_weather.py",
+                                        f"workflows/{V}/{RID}.json"]
     assert all(e["sha"] == D.blob_sha(fake.files[e["path"]]) for e in log)
 
 
 # ── docs ──
 
-def test_docs_describe_per_run_names_list_and_teardown_and_no_cs_default():
+def test_docs_describe_version_names_list_and_teardown_and_no_cs_default():
     plugin = Path(__file__).resolve().parents[1]
     readme = " ".join((plugin / "README.md").read_text().split())
-    assert "Each deployment is named `<Workflow>-<MMDD-HHMM>` after the run that approved Gate 4" in readme
-    assert "`/curate-skills:curate-deploy --list` shows this project's deployments; `--teardown --run <run_id>` " \
-           "deletes exactly what that run deployed" in readme
+    assert "A workflow version is deployed once, named after its workflow id (`<workflow-id>`)" in readme
+    assert "`/curate-skills:curate-deploy --list` shows this project's deployments; `--teardown --run " \
+           "<workflow-id>/<run-id>` deletes that run's payload, outputs and logs" in readme
+    assert "MMDD" not in readme
     for f in ("README.md", ".env.template", "skills/curate-deploy/SKILL.md", "references/stages/deploy.md",
               "references/stages/monitor.md", "scripts/doctor.py"):
         assert "-cs" not in (plugin / f).read_text(), f
     skill = " ".join((plugin / "skills" / "curate-deploy" / "SKILL.md").read_text().split())
-    assert "`deploy.py teardown --run <run>` (deletes nothing)" in skill
+    assert "`deploy.py teardown <target>` (deletes nothing)" in skill and "--teardown --workflow <workflow-id> --all" in skill
     assert "Ask once with AskUserQuestion" in skill and "--confirmed --plan <plan_id> --outputs keep|delete|download" in skill
+    assert "Never pass `--confirmed` or `--other-projects` otherwise" in skill
     for option in ("**Keep outputs (default)**", "**Delete all**", "**Download outputs, then delete**", "**Cancel**"):
         assert option in skill
     assert "the choice is **Keep outputs**" in skill
@@ -438,3 +394,197 @@ def test_download_that_cannot_save_every_output_deletes_nothing(project, plain, 
     assert code == 1 and "is not empty" in out["error"] and fake.deletes == [] and s3.deleted == []
     code, out = confirmed(capsys, r, fake, s3, "--outputs", "download", "--to", str(r / "x"))
     assert code == 1 and "inside the run folder" in out["error"] and s3.deleted == []
+
+
+# ── one deployment per version: a run's teardown, and --workflow <wid> --all ──
+
+RA, RB = "20261110-090000-aaaa", "20261110-100000-bbbb"
+FNS_V = [f"functions/{V}/download_station.py", f"functions/{V}/plot_weather.py"]
+ACT_V = [f".github/workflows/{V}-download.yml", f".github/workflows/{V}-plot.yml"]
+MARK = f"workflows/{V}/deployment.json"
+TS = "2026-11-10-09-01-00"
+
+
+def payload(rid):
+    return f"workflows/{V}/{rid}.json"
+
+
+def vrun(project, rid, deployment="made", finished=True, **kw):
+    """A run of weather-v1 that deployed (one deployment per version) and was monitored to the end."""
+    log = [{"run_id": rid, "deploy_name": V, "step": "upload", "repo": "alice/faasr-actions", "branch": "main",
+            "path": payload(rid), "sha": D.blob_sha(json.dumps({"WorkflowName": V, "run": rid}))},
+           {"run_id": rid, "deploy_name": V, "step": "invoke", "bucket": "b", "prefix": f"{V}/{rid}/"},
+           {"run_id": rid, "deploy_name": V, "step": "invoke", "bucket": "b", "prefix": f"FaaSrLog/{V}/{TS}/inv-{rid}/"}]
+    if deployment == "made":
+        log = [{"run_id": rid, "deploy_name": V, "step": "publish", "repo": "alice/faasr-actions", "branch": "main",
+                "path": p, "sha": D.blob_sha(f"code of {p}")} for p in FNS_V] + log
+    r = make_run(project, rid, rid=rid, stage="done", log=log,
+                 deploy=version_deployed(rid, deployment, invocation_timestamp=TS),
+                 monitor={"finished": finished, "result": "success" if finished else "pending"}, **kw)
+    copy_wf = D.deploy_copy(workflow(), V, rid, "alice", "faasr-actions", "main")[0]  # what upload kept
+    (r / "deploy" / "workflow.json").write_text(json.dumps(copy_wf))
+    return r
+
+
+def vworld(project, projects=None):
+    vdir = ids.version_dir(project, V)
+    deployment = {p: f"code of {p}" for p in FNS_V + ACT_V}
+    marker = {"curate_deployment": 1, "deploy_name": V, "workflow_id": V, "content_hash": ids.draft_content_hash(vdir),
+              "files": {p: D.blob_sha(c) for p, c in deployment.items()},
+              "projects": projects or [ids.project_id(project)]}
+    files = {**deployment, MARK: json.dumps(marker),
+             payload(RA): json.dumps({"WorkflowName": V, "run": RA}), payload(RB): json.dumps({"WorkflowName": V, "run": RB}),
+             "workflows/weather.json": "CURATE's", "workflows/weather-v2/x.json": json.dumps({"WorkflowName": "weather-v2"})}
+    s3 = Bucket({f"{V}/{RA}/station.csv", f"{V}/{RA}/plot.png", f"{V}/{RB}/station.csv",
+                 f"FaaSrLog/{V}/{TS}/inv-{RA}/download.txt", f"FaaSrLog/{V}/{TS}/inv-{RB}/download.txt",
+                 "weather_data/station.csv", f"{V}-alice/{RA}/x.csv", "weather-v2/r/x.csv"})
+    return FakeGitHub(files=files, writable=True), s3
+
+
+def test_a_runs_teardown_removes_only_its_payload_outputs_and_logs(project, plain, capsys):
+    a, b = vrun(project, RA), vrun(project, RB, "reused")
+    fake, s3 = vworld(project)
+    code, plan = cli(capsys, "teardown", "--run", str(b), fake=fake, s3=s3)
+    assert code == 1 and plan["needs_confirmation"], plan.get("problems")
+    assert [f["path"] for f in plan["repo_files"]] == [payload(RB)]
+    assert sorted(o["key"] for o in plan["s3_objects"]) == [f"FaaSrLog/{V}/{TS}/inv-{RB}/download.txt", f"{V}/{RB}/station.csv"]
+    assert plan["summary"].startswith(f"**Teardown of run `{RB}` of `{V}`**")
+    assert f"Not deleted: the version's deployment `{V}`" in plan["summary"] and "--all removes it" in plan["summary"]
+    code, out = cli(capsys, "teardown", "--run", str(b), "--confirmed", "--plan", plan["plan_id"], "--outputs", "delete",
+                    fake=fake, s3=s3)
+    assert code == 0 and out["ok"], out
+    assert [p for p, _ in fake.deletes] == [payload(RB)]
+    assert all(p in fake.files for p in FNS_V + ACT_V + [MARK, payload(RA)])  # the deployment and run A stay
+    assert sorted(s3.deleted) == [f"FaaSrLog/{V}/{TS}/inv-{RB}/download.txt", f"{V}/{RB}/station.csv"]
+    assert b.is_dir() and (b / "state.json").is_file()  # the local run folder stays
+
+
+def test_a_runs_teardown_can_save_its_outputs_into_its_own_outputs_folder(project, plain, capsys):
+    b = vrun(project, RB, "reused")
+    fake, s3 = vworld(project)
+    s3.content[f"{V}/{RB}/station.csv"] = "date,prcp\n"
+    _, plan = cli(capsys, "teardown", "--run", str(b), fake=fake, s3=s3)
+    code, out = cli(capsys, "teardown", "--run", str(b), "--confirmed", "--plan", plan["plan_id"], "--outputs", "download",
+                    fake=fake, s3=s3)
+    assert code == 0 and out["ok"], out
+    assert (b / "outputs" / "station.csv").read_text() == "date,prcp\n"  # without the <name>/<run id>/ prefix
+    assert out["downloaded"]["to"] == str((b / "outputs").resolve())
+
+
+def test_all_lists_the_deployment_and_every_runs_files_and_deletes_nothing_without_yes(project, plain, capsys,
+                                                                                         monkeypatch):
+    vrun(project, RA), vrun(project, RB, "reused")
+    fake, s3 = vworld(project)
+    monkeypatch.chdir(project)
+    code, plan = cli(capsys, "teardown", "--workflow", V, "--all", fake=fake, s3=s3)
+    assert code == 1 and plan.get("needs_confirmation"), (plan.get("problems"), plan.get("error"))
+    kinds = {f["path"]: f["kind"] for f in plan["repo_files"]}
+    assert kinds == {**{p: "deployment" for p in FNS_V + ACT_V}, payload(RA): "payload", payload(RB): "payload",
+                     MARK: "marker"}
+    assert sorted(o["key"] for o in plan["s3_objects"]) == sorted(
+        [f"{V}/{RA}/station.csv", f"{V}/{RA}/plot.png", f"{V}/{RB}/station.csv",
+         f"FaaSrLog/{V}/{TS}/inv-{RA}/download.txt", f"FaaSrLog/{V}/{TS}/inv-{RB}/download.txt"])
+    assert f"{V}-alice/{RA}/x.csv" not in json.dumps(plan)  # a suffixed deployment is another one
+    assert "their local folders and outputs/ stay" in plan["summary"] and plan["other_projects"] == []
+    assert fake.deletes == [] and s3.deleted == []
+
+
+def test_all_deletes_everything_listed_but_never_the_local_run_folders(project, plain, capsys, monkeypatch):
+    a, b = vrun(project, RA), vrun(project, RB, "reused")
+    (a / "outputs").mkdir()
+    (a / "outputs" / "plot.png").write_text("png")
+    fake, s3 = vworld(project)
+    monkeypatch.chdir(project)
+    _, plan = cli(capsys, "teardown", "--workflow", V, "--all", fake=fake, s3=s3)
+    code, out = cli(capsys, "teardown", "--workflow", V, "--all", "--confirmed", "--plan", plan["plan_id"],
+                    "--outputs", "delete", fake=fake, s3=s3)
+    assert code == 0 and out["ok"], out
+    deleted = [p for p, _ in fake.deletes]
+    assert deleted[:2] == ACT_V and deleted[-1] == MARK  # Actions files first, the marker last
+    assert sorted(deleted) == sorted(FNS_V + ACT_V + [payload(RA), payload(RB), MARK])
+    assert set(fake.files) == {"workflows/weather.json", "workflows/weather-v2/x.json"}
+    assert s3.keys == {"weather_data/station.csv", f"{V}-alice/{RA}/x.csv", "weather-v2/r/x.csv"}
+    assert (a / "outputs" / "plot.png").read_text() == "png" and (b / "state.json").is_file()
+    for r in (a, b):
+        dep = json.loads((r / "state.json").read_text())["deploy"]
+        assert dep["deployment_teardown"]["repo_files"] == 7 and dep["teardown"]
+    code, out = cli(capsys, "list", "--project", str(project))
+    assert {r["name"]: r for r in out["deployments"]}[V]["torn_down"]
+
+
+def test_all_refuses_while_a_run_of_the_version_is_in_flight(project, plain, capsys, monkeypatch):
+    vrun(project, RA)
+    b = vrun(project, RB, "reused", finished=False)
+    fake, s3 = vworld(project)
+    monkeypatch.chdir(project)
+    code, out = cli(capsys, "teardown", "--workflow", V, "--all", "--confirmed", "--plan", "x", fake=fake, s3=s3)
+    msg = next(p for p in out["problems"] if "may still be running" in p)
+    assert f"{V}/{RB}" in msg and f"{V}/{RA}" not in msg and "curate-monitor" in msg
+    assert f"For a run that is stuck or timed out, tear that run down first: " \
+           f"/curate-skills:curate-deploy --teardown --run {V}/{RB}" in msg
+    assert code == 1 and fake.deletes == [] and s3.deleted == []
+    json.loads((b / "state.json").read_text())  # untouched
+
+
+def test_all_warns_and_needs_a_separate_yes_when_other_projects_use_it(project, plain, capsys, monkeypatch):
+    vrun(project, RA), vrun(project, RB, "reused")
+    fake, s3 = vworld(project, projects=[ids.project_id(project), "0123456789abcdef"])
+    monkeypatch.chdir(project)
+    code, plan = cli(capsys, "teardown", "--workflow", V, "--all", fake=fake, s3=s3)
+    assert plan["other_projects"] == ["0123456789abcdef"] and "--other-projects" in plan["error"]
+    assert "**Warning:** the deployment's marker lists 1 other project(s)" in plan["summary"]
+    code, out = cli(capsys, "teardown", "--workflow", V, "--all", "--confirmed", "--plan", plan["plan_id"],
+                    fake=fake, s3=s3)
+    assert code == 1 and out["needs_confirmation"] and "other projects" in out["error"] and fake.deletes == []
+    code, out = cli(capsys, "teardown", "--workflow", V, "--all", "--confirmed", "--plan", plan["plan_id"],
+                    "--other-projects", fake=fake, s3=s3)
+    assert code == 0 and out["ok"] and MARK in [p for p, _ in fake.deletes]
+
+
+@pytest.mark.parametrize("case,needle", [
+    ("other_version", "made from another version"),
+    ("changed", "changed since the deployment was written"),
+    ("no_marker", "nothing is known to be weather-v1's deployment"),
+    ("foreign_payload", "is not a payload of 'weather-v1'"),
+])
+def test_all_refuses_what_it_cannot_prove_is_this_versions(project, plain, capsys, monkeypatch, case, needle):
+    vrun(project, RA)
+    fake, s3 = vworld(project)
+    if case == "other_version":
+        fake.files[MARK] = json.dumps({**json.loads(fake.files[MARK]), "content_hash": "f" * 64})
+    if case == "changed":
+        fake.files[FNS_V[1]] = "edited by hand"
+    if case == "no_marker":
+        del fake.files[MARK]
+    if case == "foreign_payload":
+        fake.files[f"workflows/{V}/stray.json"] = json.dumps({"WorkflowName": "someone-else"})
+    monkeypatch.chdir(project)
+    code, out = cli(capsys, "teardown", "--workflow", V, "--all", "--confirmed", "--plan", "x", fake=fake, s3=s3)
+    assert code == 1 and any(needle in p for p in out["problems"]), out["problems"]
+    assert fake.deletes == [] and s3.deleted == []
+
+
+def test_teardown_takes_a_run_or_a_version_with_all(capsys):
+    code, out = cli(capsys, "teardown")
+    assert code == 2 and "--workflow <workflow-id> --all" in out["error"]
+    code, out = cli(capsys, "teardown", "--workflow", V)
+    assert code == 2
+
+
+# ── update-deployment's main() check, on a real published version ──
+
+from test_flags import deployed as approved_session  # noqa: E402,F401  (fixture: Gate 4 published a version)
+from test_start import source_run, state  # noqa: E402,F401  (fixtures)
+
+
+def test_every_main_is_checked_against_the_versions_code(approved_session):  # noqa: F811
+    s = state(approved_session)
+    project, wid = Path(s["project_dir"]), s["workflow_id"]
+    built, vs, vdir = D._version_build(project, wid)  # from the version's approved.json, in memory
+    assert D.main_problems(built, vdir, vs) == []
+    main = next(k for k in built["files"] if k.endswith("_main.py"))
+    built["files"][main] += "# not the version's code\n"
+    assert D.main_problems(built, vdir, vs) == [
+        f"{main} is not byte-identical to the version's " + next(
+            str(st.function["code"]) for sid, st in __import__("execution").load_workflow(vdir, vs).steps.items()
+            if main.endswith(f"{sid}_main.py"))]

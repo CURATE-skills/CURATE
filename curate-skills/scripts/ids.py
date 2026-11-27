@@ -186,6 +186,22 @@ def project_of_path(folder) -> Path | None:
     return None
 
 
+def project_id(project) -> str:
+    """A random id for this project (.curate/project-id), made on first use. A deployment's marker
+    records which projects use it by this id, never by a folder path (paths stay on this machine)."""
+    p = Path(project) / ".curate" / "project-id"
+    try:
+        v = p.read_text().strip()
+        if v:
+            return v
+    except OSError:
+        pass
+    p.parent.mkdir(parents=True, exist_ok=True)
+    v = secrets.token_hex(8)
+    p.write_text(v + "\n")
+    return v
+
+
 # ── hashes ───────────────────────────────────────────────────────────────────
 
 # Top-level names of a version folder that are not part of its hash: its runs, and the Gate 4

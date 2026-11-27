@@ -517,12 +517,13 @@ def test_monitor_stage_is_read_only_and_states_the_final_rules():
     assert "**Accept the unconfirmed match**" in fin and "accept-unconfirmed --run <run> --confirmed" in fin
 
 
-def test_invoke_only_shows_the_diff_and_asks_first():
+def test_the_deploy_stage_reuses_a_versions_deployment_and_asks_before_re_pushing():
     plugin = Path(__file__).resolve().parents[1]
     text = " ".join((plugin / "references" / "stages" / "deploy.md").read_text().split())
-    assert "`deploy.py reuse --run <run>` **without** `--confirmed`" in text
-    assert "the comparison with the approved bundle runs silently; its full table is in the run's deploy folder" in text
-    assert "Only after **Yes, invoke** in the user's answer just now" in text
+    assert "deploy.py reuse" not in text and "Invoke only" not in text
+    assert "publish and register reuse it and write nothing" in text and "Each step is still asked" in text
+    assert "`deploy.py update-deployment --workflow <workflow-id>` **without** `--confirmed`" in text
+    assert "only after **Yes, re-push**: the same command with `--confirmed`" in text
 
 
 def test_monitor_minutes_setting_is_bound_in_the_skills_not_the_stage_file():

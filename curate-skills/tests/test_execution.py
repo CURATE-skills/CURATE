@@ -27,13 +27,33 @@ def at_gate4_with_draft(run, edit=None):
     return s
 
 
+def test_gate4_names_the_deployment_for_both_outcomes_of_the_duplicate_question(source_run, capsys):  # noqa: F811
+    """An identical version exists: Gate 4 would publish the next id, or, if the user drops the new
+    one as a duplicate, use the existing version, whose deployment then runs. Both ids are shown."""
+    at_gate4_with_draft(source_run)
+    s = state(source_run)
+    import ids
+    draft = Path(s.get("draft_dir") or ids.draft_dir(source_run))
+    name = s.get("workflow_name") or ids.slug(s["spec"]["name"])
+    plan = ids.plan_publish(draft, name, s["project_dir"])
+    ids.publish(draft, name, s["project_dir"], plan["version"], plan["draft_hash"])  # the identical version
+    nxt = ids.workflow_id(name, plan["version"] + 1)
+    md = ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)["markdown"]
+    sec = where_section(md)
+    assert f"deploys as `{nxt}` (as `{plan['workflow_id']}` if you drop it as a duplicate)" in sec
+    import deploy as D
+    first = D.plan_lines(str(source_run))[0]
+    assert first.startswith(f"Deploys as: `{nxt}`") and f"if you drop it at Gate 4 as a duplicate of " \
+        f"{plan['workflow_id']}, as `{plan['workflow_id']}` instead" in first
+
+
 def test_gate4_shows_both_targets_built_from_the_draft(source_run, capsys):  # noqa: F811
     def add_input(s):  # a file the user must provide, so the inputs line has something to count
         s["spec"]["nodes"][0]["inputs"] = [{"name": "seed.txt"}]
     at_gate4_with_draft(source_run, add_input)
     md = ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)["markdown"]
     sec = where_section(md)
-    assert "**FaaSr (cloud)**" in sec and "deploys as `mapreduce-word-count-" in sec
+    assert "**FaaSr (cloud)**" in sec and "deploys as `mapreduce-word-count-v" in sec  # the version Gate 4 publishes
     assert "- input files you must provide in S3: 1 (listed in the full review)" in sec
     assert "**Pegasus** on this machine:" in sec and "11 jobs" in sec
     assert "- input files you must provide: 1 (listed in the full review)" in sec

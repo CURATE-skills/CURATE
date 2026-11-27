@@ -12,7 +12,7 @@ import pytest
 
 import deploy as D
 import leakcheck as L
-from versioned import bundle_of, rebuilt, versioned_bundle
+from versioned import RID, bundle_of, rebuilt, versioned_bundle
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 VENDOR = SCRIPTS / "vendor"
@@ -141,9 +141,15 @@ def env(monkeypatch):
     for k in ("FAASR_ACTION_BRANCH", "CUSTOM_CONTAINER", "CURATE_DEPLOY_NAME_SUFFIX",
               "FAASR_S3_BUCKET", "FAASR_S3_ENDPOINT", "FAASR_S3_REGION"):
         monkeypatch.delenv(k, raising=False)
-    # These runs are named "r1"/"r0" (no date and time): the tests above the naming section use
-    # the override, which still works; the per-run default is tested in its own section.
-    monkeypatch.setenv("CURATE_DEPLOY_NAME_SUFFIX", "-cs")
+    _stub_modules(monkeypatch)  # CURATE's Actions-file generator (the deployment check) imports PyGithub
+
+
+N = "weather-v1"                       # one deployment per version: named after its workflow id
+PAYLOAD = f"workflows/{N}/{RID}.json"  # this run's payload
+OUT = f"{N}/{RID}/"                    # this run's S3 folder
+FNS = [f"functions/{N}/download_station.py", f"functions/{N}/plot_weather.py"]
+ACTIONS = [f".github/workflows/{N}-download.yml", f".github/workflows/{N}-plot.yml"]
+MARKER = f"workflows/{N}/deployment.json"
 
 
 class FakeGitHub:
@@ -193,6 +199,10 @@ class FakeGitHub:
             p = path.split("/contents/", 1)[1]
             if p in self.files:
                 return self._ok({"content": base64.b64encode(self.files[p].encode()).decode(), "sha": D.blob_sha(self.files[p])})
+            kids = sorted(f for f in self.files if f.startswith(p + "/") and "/" not in f[len(p) + 1:])
+            if kids:  # a folder: its files
+                return self._ok([{"name": f.rsplit("/", 1)[1], "path": f, "type": "file",
+                                  "sha": D.blob_sha(self.files[f])} for f in kids])
         if path == "/repos/alice/faasr-actions/commits":
             p = dict(x.split("=", 1) for x in query.split("&"))["path"].replace("%2F", "/")
             if p in self.commits:
@@ -243,36 +253,48 @@ def pre(capsys, run, fake=None, *extra, s3=None):
     return code, json.loads(capsys.readouterr().out)
 
 
-def test_preflight_ready_lists_suffixed_targets_only(run, env, capsys):
+def test_preflight_ready_lists_the_versions_deployment_and_the_runs_payload(run, env, capsys):
     fake = FakeGitHub()
     code, out = pre(capsys, run, fake)
     assert code == 0 and out["ok"], out["problems"]
-    assert out["deploy_name"] == "weather-cs" and out["approved_name"] == "weather"
-    paths = [t["path"] for t in out["targets"]]
-    assert paths == ["functions/weather-cs/download_station.py", "functions/weather-cs/plot_weather.py",
-                     "workflows/weather-cs.json", ".github/workflows/weather-cs-download.yml",
-                     ".github/workflows/weather-cs-plot.yml"]
+    assert out["deploy_name"] == N and out["approved_name"] == "weather" and out["run_id"] == RID
+    assert [t["path"] for t in out["targets"]] == [*FNS, PAYLOAD, *ACTIONS, MARKER]
+    assert {t["path"]: t["scope"] for t in out["targets"]}[PAYLOAD] == "run"
+    assert all(t["scope"] == "deployment" for t in out["targets"] if t["path"] != PAYLOAD)
     assert out["function_git_repo"] == {
-        "download_station": "alice/faasr-actions/main/functions/weather-cs/download_station.py",
-        "plot_weather": "alice/faasr-actions/main/functions/weather-cs/plot_weather.py"}
-    assert all(not t["exists"] for t in out["targets"])
+        "download_station": f"alice/faasr-actions/main/functions/{N}/download_station.py",
+        "plot_weather": f"alice/faasr-actions/main/functions/{N}/plot_weather.py"}
+    assert all(not t["exists"] for t in out["targets"]) and out["deployment"]["state"] == "absent"
     assert out["secrets"]["missing"] == [] and out["token_source"] == "GH_PAT"
     assert "nothing was written" in out["summary"]
     assert all(r.get_method() == "GET" for r in fake.requests)  # read-only
-    assert [t["prefix"] for t in out["s3_targets"]] == ["weather_data-cs/", "FaaSrLog/weather-cs/"]
-    assert not any(t["exists"] for t in out["s3_targets"]) and out["s3"]["checked"]
+    assert [(t["kind"], t["prefix"]) for t in out["s3_targets"]] == [("outputs", OUT), ("logs", None)]
+    assert out["s3_targets"][1]["shown"] == f"FaaSrLog/{N}/<invocation timestamp>/<invocation id>/"
+    assert not out["s3_targets"][0]["exists"] and out["s3"]["checked"]
     assert out["existing_paths"] == []
 
 
-def test_deploy_copy_suffixes_the_s3_folder_and_leaves_the_bundle_alone(run, env, capsys):
+def test_deploy_copy_puts_each_runs_outputs_in_its_own_folder_and_leaves_the_bundle_alone(run, env, capsys):
     wf_path = (bundle_of(run) / "workflow.json")
     before = wf_path.read_text()
-    copy_wf, _, s3_targets = D.deploy_copy(workflow(), "-cs", "alice", "faasr-actions", "main")
-    assert {a["Arguments"]["folder"] for a in copy_wf["ActionList"].values()} == {"weather_data-cs"}
-    assert copy_wf["ActionList"]["plot"]["Arguments"]["input1"] == "station.csv"
-    assert len(s3_targets) == 2
+    one, _, s3_one = D.deploy_copy(workflow(), N, "run-a", "alice", "faasr-actions", "main")
+    two, _, s3_two = D.deploy_copy(workflow(), N, "run-b", "alice", "faasr-actions", "main")
+    assert {a["Arguments"]["folder"] for a in one["ActionList"].values()} == {f"{N}/run-a"}
+    assert {a["Arguments"]["folder"] for a in two["ActionList"].values()} == {f"{N}/run-b"}
+    assert s3_one[0]["prefix"] != s3_two[0]["prefix"]  # two runs never share an S3 folder
+    assert one["WorkflowName"] == two["WorkflowName"] == N and one["FunctionGitRepo"] == two["FunctionGitRepo"]
+    assert one["ActionList"]["plot"]["Arguments"]["input1"] == "station.csv"
     pre(capsys, run, FakeGitHub())
     assert wf_path.read_text() == before
+
+
+def test_two_folders_stay_apart_under_the_runs_folder():
+    wf = workflow()
+    wf["ActionList"]["plot"]["Arguments"]["folder"] = "plots"
+    copy_wf, _, s3 = D.deploy_copy(wf, N, "r", "alice", "faasr-actions", "main")
+    assert copy_wf["ActionList"]["download"]["Arguments"]["folder"] == f"{N}/r/weather_data"
+    assert copy_wf["ActionList"]["plot"]["Arguments"]["folder"] == f"{N}/r/plots"
+    assert [t["prefix"] for t in s3 if t["kind"] == "outputs"] == [f"{N}/r/"]
 
 
 def test_preflight_fills_placeholders_in_the_deploy_copy_only(run, env, capsys, monkeypatch):
@@ -294,13 +316,13 @@ def test_preflight_fills_placeholders_in_the_deploy_copy_only(run, env, capsys, 
         Path(out["diff_file"]).read_text()
 
 
-def test_preflight_refuses_existing_s3_paths_and_reports_curates(run, env, capsys):
-    s3 = FakeS3(objects={"weather_data-cs/station.csv", "FaaSrLog/weather-cs/2026/x.txt",
+def test_preflight_refuses_an_existing_run_folder_and_reports_curates(run, env, capsys):
+    s3 = FakeS3(objects={f"{OUT}station.csv", f"FaaSrLog/{N}/2026/x.txt",  # other runs' logs: not this run's
                          "weather_data/station.csv", "FaaSrLog/weather/2026/x.txt"})
     code, out = pre(capsys, run, FakeGitHub(), s3=s3)
     assert code == 1
-    assert out["existing_paths"] == ["s3://b/weather_data-cs/", "s3://b/FaaSrLog/weather-cs/"]
-    assert sum("already holds objects" in x for x in out["problems"]) == 2
+    assert out["existing_paths"] == [f"s3://b/{OUT}"]
+    assert sum("already holds objects" in x for x in out["problems"]) == 1
     assert out["s3"]["curate_prefixes"] == ["weather_data/", "FaaSrLog/weather/"]
     assert "path(s) above already exist; every path the deploy writes must be new" in out["summary"]
     assert {c[0] for c in s3.calls} == {"head_bucket", "list_objects_v2"}  # read-only
@@ -336,7 +358,8 @@ def test_preflight_never_prints_or_writes_secrets(run, env, capsys):
     assert all(v not in text for v in FAKE.values())
     after = {p: p.read_bytes() for p in run.parent.parent.parent.rglob("*") if p.is_file()}
     diff = run / "deploy" / "preflight-diff.md"  # the one local file: the full comparison
-    assert {k: v for k, v in after.items() if k != diff} == before and out["diff_file"] == str(diff)
+    pid = run.parent.parent / "project-id"       # and this project's id (made on first use)
+    assert {k: v for k, v in after.items() if k not in (diff, pid)} == before and out["diff_file"] == str(diff)
     assert all(v.encode() not in after[diff] for v in FAKE.values())
 
 
@@ -349,27 +372,17 @@ def test_preflight_leaves_curate_files_alone_and_reports_them(run, env, capsys):
     assert "left untouched" in out["summary"]
 
 
-def test_preflight_refuses_targets_that_are_not_ours(run, env, capsys):
-    files = {"workflows/weather-cs.json": json.dumps({"WorkflowName": "something-else"}),
-             "functions/weather-cs/plot_weather.py": "x",
-             ".github/workflows/weather-cs-plot.yml": "name: other\n"}
-    code, out = pre(capsys, run, FakeGitHub(files=files, commits={
-        "functions/weather-cs/plot_weather.py": "Add plot (faasr-agents)"}))
-    assert code == 1 and not out["ok"]
-    refused = [x for x in out["problems"] if "does not belong" in x]
-    assert len(refused) == 3 and "already exists, NOT OURS — refused" in out["summary"]
+def test_files_of_the_deployment_without_its_marker_are_refused(run, env, capsys):
+    files = {FNS[1]: "x", ACTIONS[1]: "name: other\n"}  # a deploy that did not finish (or someone else's)
+    code, out = pre(capsys, run, FakeGitHub(files=files))
+    assert code == 1 and out["deployment"]["state"] == "partial"
+    assert sum("already exists without the deployment's marker" in x for x in out["problems"]) == 2
+    assert "already exists — refused" in out["summary"]
 
 
-def test_preflight_refuses_even_its_own_earlier_deployment(run, env, capsys):
-    files = {"workflows/weather-cs.json": json.dumps({"WorkflowName": "weather-cs"}),
-             "functions/weather-cs/plot_weather.py": "x",
-             ".github/workflows/weather-cs-plot.yml": "name: weather-cs-plot\non: ..."}
-    code, out = pre(capsys, run, FakeGitHub(files=files, commits={
-        "functions/weather-cs/plot_weather.py": "Add/update plot_weather (curate-skills)"}))
-    assert code == 1 and not out["ok"]
-    assert sum(1 for t in out["targets"] if t["exists"] and t["ours"]) == 3
-    assert sorted(out["existing_paths"]) == sorted(files)
-    assert sum("earlier curate-skills deployment" in x for x in out["problems"]) == 3
+def test_a_runs_payload_is_never_rewritten(run, env, capsys):
+    code, out = pre(capsys, run, FakeGitHub(files={PAYLOAD: json.dumps({"WorkflowName": N})}))
+    assert code == 1 and any(f"{PAYLOAD} already exists" in x and "never rewritten" in x for x in out["problems"])
 
 
 @pytest.mark.parametrize("kw,needle", [
@@ -420,12 +433,15 @@ def test_preflight_refuses_unapproved_or_changed_bundles(run, env, capsys):
     assert "superseded" in probs and "the bundle changed after it was built" in probs
 
 
-def test_suffix_must_be_non_empty_and_simple(run, env, capsys):
+def test_a_suffix_is_optional_and_simple(run, env, capsys, monkeypatch):
     for bad in ("a/b", "../x"):
         code, out = pre(capsys, run, FakeGitHub(), f"--name-suffix={bad}")
         assert code == 2 and "suffix" in out["error"]
-    code, out = pre(capsys, run, FakeGitHub(), "--name-suffix=-skills")
-    assert out["deploy_name"] == "weather-skills"
+    code, out = pre(capsys, run, FakeGitHub(), "--name-suffix=-alice")
+    assert out["deploy_name"] == f"{N}-alice" and PAYLOAD.replace(N, f"{N}-alice") in [t["path"] for t in out["targets"]]
+    monkeypatch.setenv("CURATE_DEPLOY_NAME_SUFFIX", "-bob")
+    code, out = pre(capsys, run, FakeGitHub())
+    assert out["deploy_name"] == f"{N}-bob" and "CURATE_DEPLOY_NAME_SUFFIX" in out["name_source"]
 
 
 def test_output_with_a_leaked_token_is_withheld(run, env, capsys, monkeypatch):
@@ -454,15 +470,17 @@ def test_summary_diffs_the_deploy_copy_field_by_field(run, env, capsys, monkeypa
         "placeholder $FAASR_GH_USERNAME, $FAASR_ACTION_REPO; per-deployment function folder"
     assert set(rows) == {"WorkflowName", "ActionList.download.Arguments.folder", "ActionList.plot.Arguments.folder",
                          "FunctionGitRepo.download_station", "FunctionGitRepo.plot_weather", "DataStores.S3.Bucket"}
-    assert rows["WorkflowName"]["approved"] == "weather" and rows["WorkflowName"]["deploy"] == "weather-cs"
+    assert rows["WorkflowName"]["approved"] == "weather" and rows["WorkflowName"]["deploy"] == N
     assert rows["DataStores.S3.Bucket"]["reason"] == "placeholder $FAASR_S3_BUCKET"
-    assert rows["ActionList.plot.Arguments.folder"]["reason"] == "deploy name (S3 folder)"
-    assert {d["what"]: d["deploy"] for d in out["derived_changes"]}["S3 log prefix (FaaSr)"] == "FaaSrLog/weather-cs/"
+    assert rows["ActionList.plot.Arguments.folder"]["reason"] == "the run's own S3 folder (<deploy name>/<run id>)"
+    derived = {d["what"]: d["deploy"] for d in out["derived_changes"]}
+    assert derived["S3 log prefix (FaaSr)"] == f"FaaSrLog/{N}/"
+    assert derived["workflow JSON in the repo (this run's payload)"] == PAYLOAD
     summary, full = out["summary"], Path(out["diff_file"]).read_text()
     assert "Deploy copy vs approved bundle" not in summary and "| Field |" not in summary  # checked silently
     assert f"Full comparison with the approved bundle: `{out['diff_file']}`" in summary
-    assert "| `ActionList.plot.Arguments.folder` | `weather_data` | `weather_data-cs` | deploy name (S3 folder) |" in full
-    assert "| S3 log prefix (FaaSr) (derived from the name) | `FaaSrLog/weather/` | `FaaSrLog/weather-cs/` |" in full
+    assert f"| `ActionList.plot.Arguments.folder` | `weather_data` | `{N}/{RID}` | the run's own S3 folder" in full
+    assert f"| S3 log prefix (FaaSr) (derived from the name) | `FaaSrLog/weather/` | `FaaSrLog/{N}/` |" in full
 
 
 def test_a_diff_outside_the_allowed_fields_is_refused(run, env, capsys, monkeypatch):
@@ -484,33 +502,30 @@ def test_a_diff_outside_the_allowed_fields_is_refused(run, env, capsys, monkeypa
 
 
 def test_the_preflight_lists_what_will_be_written_once_each(run, env, capsys):
-    taken = {"functions/weather-cs/plot_weather.py": "x"}
-    code, out = pre(capsys, run, FakeGitHub(files=taken, commits={}),
-                    s3=FakeS3(objects={"weather_data-cs/old.csv"}))
-    summary = out["summary"]
-    head = summary.split("\n\n")
-    assert head[1] == "Deploys as: `weather-cs` (name from: CURATE_DEPLOY_NAME_SUFFIX / --name-suffix)"
+    code, out = pre(capsys, run, FakeGitHub(files={PAYLOAD: "{}"}), s3=FakeS3(objects={f"{OUT}old.csv"}))
+    head = out["summary"].split("\n\n")
+    assert head[1].splitlines() == [
+        f"Deploys as: `{N}` (name from: the version's workflow id), run `{RID}`",
+        "Deployment (one per version): not in the repo yet — publish and register write it"]
     assert head[2].splitlines() == [
         "GitHub (`alice/faasr-actions`, branch `main`):",
-        "- `functions/weather-cs/download_station.py` — new",
-        "- `functions/weather-cs/plot_weather.py` — already exists, NOT OURS — refused",
-        "- `workflows/weather-cs.json` — new",
-        "- `.github/workflows/weather-cs-download.yml` — new",
-        "- `.github/workflows/weather-cs-plot.yml` — new"]
+        f"- `{FNS[0]}` — new", f"- `{FNS[1]}` — new",
+        f"- `{PAYLOAD}` — already exists — refused (this run's payload)",
+        f"- `{ACTIONS[0]}` — new", f"- `{ACTIONS[1]}` — new", f"- `{MARKER}` — new"]
     assert head[3].splitlines() == ["S3 (`b`), written when the workflow runs:",
-                                    "- outputs folder: `weather_data-cs/` — already exists — refused",
-                                    "- logs folder: `FaaSrLog/weather-cs/` — new"]
-    for path in ("functions/weather-cs/plot_weather.py", "weather_data-cs/"):
-        assert summary.count(path) == 1, path  # once: no "paths that exist" list, no per-path problem line
-    assert summary.count("**Problem:** 2 path(s) above already exist") == 1
+                                    f"- outputs folder: `{OUT}` — already exists — refused",
+                                    f"- logs folder: `FaaSrLog/{N}/<invocation timestamp>/<invocation id>/` "
+                                    "(FaaSr's, one per invocation)"]
+    for path in (PAYLOAD, OUT):
+        assert out["summary"].count(path) == 1, path  # once: no "paths that exist" list, no per-path problem line
+    assert out["summary"].count("**Problem:** 2 path(s) above already exist") == 1
     assert len(out["problems"]) == 2  # the JSON keeps every problem
 
 
 # ── retrying a partial deploy: --overwrite-own-deploy ──
 
-OWN_FILES = {"workflows/weather-cs.json": json.dumps({"WorkflowName": "weather-cs"}),
-             "functions/weather-cs/plot_weather.py": "x"}
-OWN_COMMITS = {"functions/weather-cs/plot_weather.py": "Add/update plot_weather (curate-skills)"}
+OWN_FILES = {PAYLOAD: json.dumps({"WorkflowName": N}), FNS[1]: "x"}
+OWN_COMMITS = {FNS[1]: "Add/update plot_weather (curate-skills)"}
 
 
 def write_log(run, *entries):
@@ -519,7 +534,7 @@ def write_log(run, *entries):
 
 
 def logged(path=None, **kw):
-    base = {"run_id": "r1", "deploy_name": "weather-cs", "step": "publish"}
+    base = {"run_id": "r1", "deploy_name": N, "step": "publish"}
     if path:
         base.update(path=path, repo="alice/faasr-actions", branch="main")
     return {**base, **kw}
@@ -533,34 +548,29 @@ def test_overwrite_own_is_off_by_default(run, env, capsys):
 
 
 def test_overwrite_own_allows_only_logged_paths_of_this_run(run, env, capsys):
-    write_log(run, *(logged(p) for p in OWN_FILES),
-              logged(step="invoke", bucket="b", prefix="weather_data-cs/"))
-    s3 = FakeS3(objects={"weather_data-cs/station.csv", "FaaSrLog/weather-cs/x.txt"})
+    write_log(run, *(logged(p) for p in OWN_FILES), logged(step="invoke", bucket="b", prefix=OUT))
+    s3 = FakeS3(objects={f"{OUT}station.csv"})
     code, out = pre(capsys, run, FakeGitHub(files=OWN_FILES, commits=OWN_COMMITS), "--overwrite-own-deploy", s3=s3)
-    assert sorted(out["overwrite_paths"]) == sorted([*OWN_FILES, "s3://b/weather_data-cs/"])
-    assert out["refused_paths"] == ["s3://b/FaaSrLog/weather-cs/"]  # not in the log → still refused
-    assert code == 1 and "will be overwritten (--overwrite-own-deploy)" in out["summary"]
+    assert sorted(out["overwrite_paths"]) == sorted([*OWN_FILES, f"s3://b/{OUT}"])
+    assert code == 0 and "will be overwritten (--overwrite-own-deploy)" in out["summary"], out["problems"]
 
 
 @pytest.mark.parametrize("entry", [
-    logged("functions/weather-cs/plot_weather.py", run_id="other-run"),       # another run's log line
-    logged("functions/weather-cs/plot_weather.py", deploy_name="weather-x"),  # another deployment
-    logged("functions/weather-cs/plot_weather.py", repo="bob/faasr-actions"), # another repo
+    logged(FNS[1], run_id="other-run"),             # another run's log line
+    logged(FNS[1], deploy_name="weather-x"),        # another deployment
+    logged(FNS[1], repo="bob/faasr-actions"),       # another repo
 ])
 def test_overwrite_own_ignores_log_lines_that_are_not_this_deploy(run, env, capsys, entry):
     write_log(run, entry)
-    code, out = pre(capsys, run, FakeGitHub(files={"functions/weather-cs/plot_weather.py": "x"},
-                                            commits=OWN_COMMITS), "--overwrite-own-deploy")
-    assert code == 1 and out["refused_paths"] == ["functions/weather-cs/plot_weather.py"]
+    code, out = pre(capsys, run, FakeGitHub(files={FNS[1]: "x"}, commits=OWN_COMMITS), "--overwrite-own-deploy")
+    assert code == 1 and out["refused_paths"] == [FNS[1]]
 
 
-def test_overwrite_own_refuses_a_logged_path_someone_else_changed(run, env, capsys):
-    write_log(run, logged("functions/weather-cs/plot_weather.py"), "not json")
-    code, out = pre(capsys, run, FakeGitHub(files={"functions/weather-cs/plot_weather.py": "x"},
-                                            commits={"functions/weather-cs/plot_weather.py": "hand edit"}),
+def test_overwrite_own_refuses_a_payload_someone_else_changed(run, env, capsys):
+    write_log(run, logged(PAYLOAD), "not json")
+    code, out = pre(capsys, run, FakeGitHub(files={PAYLOAD: json.dumps({"WorkflowName": "other"})}),
                     "--overwrite-own-deploy")
-    assert code == 1 and out["refused_paths"] == ["functions/weather-cs/plot_weather.py"]
-    assert any("no longer carries its mark" in p for p in out["problems"])
+    assert code == 1 and out["refused_paths"] == [PAYLOAD]
     assert any("line 2 is not a JSON object" in w for w in out["warnings"])
 
 
@@ -635,6 +645,9 @@ def test_tree_hash_ignores_os_metadata_but_not_content(tmp_path):
 
 # ── the four deploy steps (fakes only: nothing reaches GitHub or S3) ──
 
+RID2 = "20261125-090000-ef01"
+
+
 @pytest.fixture
 def deploying(run):
     """The run after Gate 4 was approved with Approve & deploy."""
@@ -645,19 +658,32 @@ def deploying(run):
 
 
 @pytest.fixture
+def second(run):
+    """A second run (r2, its own run id) of the same version, at deploy, with the same bundle."""
+    fields, _ = versioned_bundle(run.parent.parent.parent, {
+        "workflow.json": json.dumps(workflow(), indent=2), "functions/plot_weather.py": "def plot_weather(): pass\n",
+        "functions/download_station.py": "def download_station(): pass\n"}, rid=RID2)
+    r = run.parent / "r2"
+    r.mkdir()
+    (r / "state.json").write_text(json.dumps({
+        "schema_version": 2, "run_id": "r2", "stage": "deploy", "deploy_choice": "yes", **fields,
+        "history": [{"gate": 4, "decision": "approve"}]}))
+    return r
+
+
+@pytest.fixture
 def runners(monkeypatch):
-    """Stand-ins for CURATE's register and invoke code; they record what they were given."""
+    """Stand-ins for CURATE's register and invoke code; they record what they were given. register
+    writes what CURATE's generator writes, so a later run finds the deployment byte-identical."""
     calls = {}
 
     def register(copy_wf, token, extra):
-        calls["register"] = copy_wf
-        for action in copy_wf["ActionList"]:
-            calls["fake"].files[f".github/workflows/{copy_wf['WorkflowName']}-{action}.yml"] = \
-                f"name: {copy_wf['WorkflowName']}-{action}\n"
+        calls.setdefault("register", []).append(copy_wf)
+        calls["fake"].files.update(D.expected_actions_files(copy_wf))
         return ["INFO: registered"]
 
     def invoke(workflow_path, token, extra):
-        calls["invoke"] = workflow_path
+        calls.setdefault("invoke", []).append(workflow_path)
         return {"invocation_id": "inv-123", "invocation_timestamp": "2026-11-01-12-00-00", "log": []}
     monkeypatch.setattr(D, "RUNNERS", {"register": register, "invoke": invoke})
     return calls
@@ -668,9 +694,20 @@ def step(capsys, run, name, fake, *extra, s3=None):
     return code, json.loads(capsys.readouterr().out)
 
 
+def deploy_all(capsys, run, fake):
+    for name in D.STEPS:
+        code, out = step(capsys, run, name, fake, "--confirmed")
+        assert code == 0 and out["ok"], (name, out.get("problems") or out)
+    return out
+
+
 def log_lines(run):
     p = run / "deploy" / "deploy-log.jsonl"
     return [json.loads(x) for x in p.read_text().splitlines()] if p.exists() else []
+
+
+def marker_of(fake):
+    return json.loads(fake.files[MARKER])
 
 
 def test_a_step_without_confirmed_writes_nothing_and_says_what_it_would_do(deploying, env, capsys):
@@ -678,51 +715,131 @@ def test_a_step_without_confirmed_writes_nothing_and_says_what_it_would_do(deplo
     code, out = step(capsys, deploying, "publish", fake)
     assert code == 1 and out.get("needs_confirmation"), out.get("problems") or out
     assert "ask the user first" in out["error"]
-    assert out["plan"]["paths"] == ["functions/weather-cs/download_station.py", "functions/weather-cs/plot_weather.py"]
+    assert out["plan"]["paths"] == FNS
     assert out["plan"]["repo"] == "alice/faasr-actions" and fake.puts == [] and log_lines(deploying) == []
-    assert "deploy" not in json.loads((deploying / "state.json").read_text()) or \
-        not json.loads((deploying / "state.json").read_text()).get("deploy")
+    assert not json.loads((deploying / "state.json").read_text()).get("deploy")
 
 
 def test_all_four_steps_in_order(deploying, env, capsys, runners):
     fake = FakeGitHub(writable=True)
     runners["fake"] = fake
-    for name in D.STEPS:
-        code, out = step(capsys, deploying, name, fake, "--confirmed")
-        assert code == 0 and out["ok"], (name, out)
-    # publish: the bundle's function files, each with curate-skills' mark
-    assert [p for p, _ in fake.puts] == ["functions/weather-cs/download_station.py",
-                                         "functions/weather-cs/plot_weather.py", "workflows/weather-cs.json"]
+    out = deploy_all(capsys, deploying, fake)
+    # publish: the version's function files; upload: this run's payload; register: the marker
+    assert [p for p, _ in fake.puts] == [*FNS, PAYLOAD, MARKER]
     assert all("(curate-skills)" in b["message"] and b["branch"] == "main" for _, b in fake.puts)
-    assert fake.files["functions/weather-cs/plot_weather.py"] == "def plot_weather(): pass\n"
-    # upload: the deploy copy (renamed, -cs folder), also kept in the run
-    uploaded = json.loads(fake.files["workflows/weather-cs.json"])
-    assert uploaded["WorkflowName"] == "weather-cs"
-    assert {a["Arguments"]["folder"] for a in uploaded["ActionList"].values()} == {"weather_data-cs"}
+    assert fake.files[FNS[1]] == "def plot_weather(): pass\n"
+    uploaded = json.loads(fake.files[PAYLOAD])
+    assert uploaded["WorkflowName"] == N
+    assert {a["Arguments"]["folder"] for a in uploaded["ActionList"].values()} == {f"{N}/{RID}"}
     assert json.loads((deploying / "deploy" / "workflow.json").read_text()) == uploaded
-    assert runners["register"] == uploaded and runners["invoke"] == "workflows/weather-cs.json"
-    # state, log, stage
+    assert runners["register"] == [uploaded] and runners["invoke"] == [PAYLOAD]
+    # the marker: this version, the files it wrote, this project
+    m = marker_of(fake)
     s = json.loads((deploying / "state.json").read_text())
+    assert m["curate_deployment"] == 1 and m["deploy_name"] == N and m["workflow_id"] == "weather-v1"
+    assert m["content_hash"] == D.version_content_hash(s) and m["content_hash"]
+    assert sorted(m["files"]) == sorted([*FNS, *ACTIONS])
+    assert all(m["files"][f] == D.blob_sha(fake.files[f]) for f in m["files"])
+    assert m["projects"] == [(deploying.parent.parent / "project-id").read_text().strip()]
+    # state, log, stage
     assert all(s["deploy"]["steps"][x]["ok"] for x in D.STEPS)
-    assert s["deploy"]["invocation_id"] == "inv-123"
+    assert s["deploy"]["scheme"] == "version" and s["deploy"]["deployment"] == "made"
+    assert s["deploy"]["payload"] == PAYLOAD and s["deploy"]["invocation_id"] == "inv-123"
     assert s["stage"] == "monitor" and out["next_skill"] == "curate-skills:curate-monitor"
     assert s["history"][-1]["decision"] == "deployed"
     import spec as S
     S.main(["next", "--session", str(deploying)])
-    nxt = json.loads(capsys.readouterr().out)
-    assert nxt["next_skill"] == "curate-skills:curate-monitor"
-    logged = [(e["step"], e.get("path") or e.get("prefix")) for e in log_lines(deploying)]
-    assert logged == [("publish", "functions/weather-cs/download_station.py"),
-                      ("publish", "functions/weather-cs/plot_weather.py"),
-                      ("upload", "workflows/weather-cs.json"),
-                      ("register", ".github/workflows/weather-cs-download.yml"),
-                      ("register", ".github/workflows/weather-cs-plot.yml"),
-                      ("invoke", "weather_data-cs/"), ("invoke", "FaaSrLog/weather-cs/")]
-    assert all(e["run_id"] == "r1" and e["deploy_name"] == "weather-cs" for e in log_lines(deploying))
+    assert json.loads(capsys.readouterr().out)["next_skill"] == "curate-skills:curate-monitor"
+    logged_ = [(e["step"], e.get("path") or e.get("prefix")) for e in log_lines(deploying)]
+    assert logged_ == [("publish", FNS[0]), ("publish", FNS[1]), ("upload", PAYLOAD),
+                       ("register", ACTIONS[0]), ("register", ACTIONS[1]), ("register", MARKER),
+                       ("invoke", OUT), ("invoke", f"FaaSrLog/{N}/2026-11-01-12-00-00/inv-123/")]
+    assert all(e["run_id"] == "r1" and e["deploy_name"] == N for e in log_lines(deploying))
     # secrets nowhere
     for f in [deploying / "state.json", deploying / "deploy" / "deploy-log.jsonl", deploying / "deploy" / "workflow.json"]:
         assert all(v not in f.read_text() for v in FAKE.values())
     assert all(v not in json.dumps(b) for _, b in fake.puts for v in FAKE.values())
+
+
+def test_a_second_run_of_the_version_reuses_its_deployment_and_gets_its_own_folders(deploying, second, env, capsys,
+                                                                                     runners):
+    fake = FakeGitHub(writable=True)
+    runners["fake"] = fake
+    deploy_all(capsys, deploying, fake)
+    n = len(fake.puts)
+    code, out = step(capsys, second, "publish", fake)
+    assert code == 1 and out["needs_confirmation"] and out["plan"]["paths"] == [] and out["plan"]["reuses"] == N
+    assert "nothing is written" in out["plan"]["what"]
+    assert "already in the repo for this version, byte-identical — reused" in out["preflight_summary"]
+    out = deploy_all(capsys, second, fake)
+    payload2 = f"workflows/{N}/{RID2}.json"
+    assert [p for p, _ in fake.puts[n:]] == [payload2]  # only its payload: the deployment is reused
+    assert len(runners["register"]) == 1 and runners["invoke"] == [PAYLOAD, payload2]
+    one, two = json.loads(fake.files[PAYLOAD]), json.loads(fake.files[payload2])
+    assert {a["Arguments"]["folder"] for a in two["ActionList"].values()} == {f"{N}/{RID2}"}
+    assert one["FunctionGitRepo"] == two["FunctionGitRepo"] and one["WorkflowName"] == two["WorkflowName"] == N
+    s2 = json.loads((second / "state.json").read_text())
+    assert s2["deploy"]["deployment"] == "reused"
+    assert all(s2["deploy"]["steps"][x].get("reused") == N for x in ("publish", "register"))
+    prefixes = {e.get("prefix") for e in log_lines(second) if e.get("prefix")}
+    assert f"{N}/{RID2}/" in prefixes and OUT not in prefixes  # the two runs' S3 folders differ
+    assert [e["path"] for e in log_lines(second) if e.get("path")] == [payload2]
+
+
+def test_reusing_from_another_project_adds_it_to_the_marker(deploying, second, env, capsys, runners):
+    fake = FakeGitHub(writable=True)
+    runners["fake"] = fake
+    deploy_all(capsys, deploying, fake)
+    m = marker_of(fake)
+    m["projects"] = ["0123456789abcdef"]  # made by another project
+    fake.files[MARKER] = json.dumps(m)
+    code, out = step(capsys, second, "publish", fake)
+    assert out["plan"]["paths"] == [MARKER] and "only this project is added to its marker" in out["plan"]["what"]
+    step(capsys, second, "publish", fake, "--confirmed")
+    pid = (second.parent.parent / "project-id").read_text().strip()
+    assert marker_of(fake)["projects"] == sorted(["0123456789abcdef", pid])
+    assert marker_of(fake)["files"] == m["files"]
+    assert [e for e in log_lines(second) if e.get("path") == MARKER][0]["shared"] is True
+
+
+def test_a_marker_naming_another_version_is_refused_with_the_ways_out(deploying, second, env, capsys, runners):
+    fake = FakeGitHub(writable=True)
+    runners["fake"] = fake
+    deploy_all(capsys, deploying, fake)
+    m = marker_of(fake)
+    m.update(workflow_id="weather-v1", content_hash="f" * 64)  # another project's v1: other content
+    fake.files[MARKER] = json.dumps(m)
+    n = len(fake.puts)
+    code, out = step(capsys, second, "publish", fake, "--confirmed")
+    msg = next(p for p in out["problems"] if "made from another version" in p)
+    assert "--teardown --workflow weather-v1 --all" in msg and "update-deployment --workflow weather-v1" in msg
+    assert "CURATE_DEPLOY_NAME_SUFFIX" in msg
+    assert code == 1 and len(fake.puts) == n and "ANOTHER version — refused" in out["preflight_summary"]
+
+
+def test_a_deployment_of_this_version_whose_files_differ_is_refused_with_update_deployment(
+        deploying, second, env, capsys, runners):
+    fake = FakeGitHub(writable=True)
+    runners["fake"] = fake
+    deploy_all(capsys, deploying, fake)
+    fake.files[FNS[1]] += "# edited in the repo\n"
+    del fake.files[ACTIONS[0]]
+    code, out = step(capsys, second, "publish", fake, "--confirmed")
+    msg = next(p for p in out["problems"] if "its files are not what this version deploys" in p)
+    assert f"{FNS[1]} differs" in msg and f"{ACTIONS[0]} is missing" in msg
+    assert "`deploy.py update-deployment --workflow weather-v1`" in msg and code == 1
+
+
+def test_a_run_that_started_deploying_under_its_own_name_is_not_continued(deploying, env, capsys):
+    s = json.loads((deploying / "state.json").read_text())
+    s["deploy"] = {"deploy_name": "weather-1124-1200", "suffix": "-1124-1200", "steps": {"publish": {"ok": True}}}
+    (deploying / "state.json").write_text(json.dumps(s))
+    code, out = step(capsys, deploying, "upload", FakeGitHub(writable=True), "--confirmed")
+    assert code == 1 and any("its own per-run name" in p and "--start-at deploy --workflow weather-v1" in p
+                             for p in out["problems"])
+    D.main(["status", "--run", str(deploying)])
+    st = json.loads(capsys.readouterr().out)
+    assert st["per_run_name"] and st["next_step"] is None
 
 
 def test_steps_go_in_order_and_a_finished_step_is_skipped(deploying, env, capsys, runners):
@@ -774,7 +891,6 @@ def test_steps_refuse_before_writing(deploying, env, capsys, monkeypatch, case, 
 
 
 def test_a_secret_in_function_code_is_never_pushed(deploying, env, capsys):
-    s = json.loads((deploying / "state.json").read_text())
     bundle = bundle_of(deploying)
     (bundle / "functions" / "plot_weather.py").write_text(f"KEY = '{FAKE['S3_SecretKey']}'\n")
     rebuilt(deploying)  # as if it had been built like this
@@ -786,19 +902,19 @@ def test_a_secret_in_function_code_is_never_pushed(deploying, env, capsys):
 
 
 def test_a_failed_step_can_be_retried_only_with_overwrite_own_deploy(deploying, env, capsys):
-    fake = FakeGitHub(writable=True, fail_put={"functions/weather-cs/plot_weather.py"})
+    fake = FakeGitHub(writable=True, fail_put={FNS[1]})
     code, out = step(capsys, deploying, "publish", fake, "--confirmed")
     assert code == 1 and out["failed"] and "HTTP 500" in out["error"]
     assert out["resume_command"] == f"/curate-skills:curate-deploy --run {json.loads((deploying / 'state.json').read_text())['execution']['reference']}"
     s = json.loads((deploying / "state.json").read_text())
     assert s["stage"] == "deploy" and s["deploy"]["steps"]["publish"]["ok"] is False
-    assert [e["path"] for e in log_lines(deploying)] == ["functions/weather-cs/download_station.py"]
+    assert [e["path"] for e in log_lines(deploying)] == [FNS[0]]
     fake.fail_put = set()
     code, out = step(capsys, deploying, "publish", fake, "--confirmed")  # its own file now exists
     assert code == 1 and out["problems"] and "--overwrite-own-deploy" in " ".join(out["problems"])
     code, out = step(capsys, deploying, "publish", fake, "--confirmed", "--overwrite-own-deploy")
     assert code == 0 and out["ok"], out
-    assert sum(p == "functions/weather-cs/download_station.py" for p, _ in fake.puts) == 2
+    assert sum(p == FNS[0] for p, _ in fake.puts) == 2
 
 
 def test_status_reports_done_and_next(deploying, env, capsys, runners):
@@ -808,6 +924,7 @@ def test_status_reports_done_and_next(deploying, env, capsys, runners):
     D.main(["status", "--run", str(deploying)])
     out = json.loads(capsys.readouterr().out)
     assert out["done"] == ["publish"] and out["next_step"] == "upload" and out["deploy_log"]
+    assert out["deployment"] == "made" and out["payload"] == PAYLOAD and "reuse_possible" not in out
 
 
 def test_publish_never_pushes_os_metadata(deploying, env, capsys, runners):
@@ -825,142 +942,116 @@ def test_publish_never_pushes_os_metadata(deploying, env, capsys, runners):
     for name in ("publish", "upload"):
         code, out = step(capsys, deploying, name, fake, "--confirmed")
         assert code == 0, out  # the hash still matches
-    assert [p for p, _ in fake.puts] == ["functions/weather-cs/download_station.py",
-                                         "functions/weather-cs/plot_weather.py", "workflows/weather-cs.json"]
+    assert [p for p, _ in fake.puts] == [*FNS, PAYLOAD]
 
-
-# ── invoke only: reuse an identical existing deployment ──
 
 def test_curates_yaml_generator_is_deterministic(monkeypatch):
-    """Reuse compares deployed Actions files byte for byte with freshly generated ones; that only
-    works if CURATE's generator gives the same output for the same input."""
+    """The deployment check compares deployed Actions files byte for byte with freshly generated
+    ones; that only works if CURATE's generator gives the same output for the same input."""
     _stub_modules(monkeypatch)
     from vendor.curate_deploy import register_workflow as R
-    wf = D.deploy_copy(workflow(secrets=["NOAA_TOKEN"]), "-cs", "alice", "faasr-actions", "main")[0]
+    wf = D.deploy_copy(workflow(secrets=["NOAA_TOKEN"]), N, RID, "alice", "faasr-actions", "main")[0]
     secrets = R.generate_github_secret_imports(wf) + "\n" + R.generate_user_defined_secret_imports(wf)
-    a = R.generate_serverless_yaml("weather-cs-plot", wf["ActionContainers"]["plot"], secrets)
-    b = R.generate_serverless_yaml("weather-cs-plot", wf["ActionContainers"]["plot"], secrets)
-    assert a == b and a.startswith("name: weather-cs-plot\n")
+    a = R.generate_serverless_yaml(f"{N}-plot", wf["ActionContainers"]["plot"], secrets)
+    b = R.generate_serverless_yaml(f"{N}-plot", wf["ActionContainers"]["plot"], secrets)
+    assert a == b and a.startswith(f"name: {N}-plot\n")
     assert D.expected_actions_files(wf) == D.expected_actions_files(wf)
+    # the run id is only in the payload: every run of a version gets the same Actions files
+    other = D.deploy_copy(workflow(secrets=["NOAA_TOKEN"]), N, RID2, "alice", "faasr-actions", "main")[0]
+    assert D.expected_actions_files(other) == D.expected_actions_files(wf)
 
 
-@pytest.fixture
-def reusable(run, monkeypatch):
-    """r0 deployed weather-cs (all four steps, its deploy log); r1 was started from r0 at deploy and built
-    the same bundle from the same version (so the hash r0 deployed is r1's execution bundle's hash)."""
-    _stub_modules(monkeypatch)
-    s = json.loads((run / "state.json").read_text())
-    bundle = bundle_of(run)
-    h = s["execution"]["bundle_hash"]
-    assert h == D.tree_hash(bundle)
-    src = run.parent / "r0"
-    (src / "deploy").mkdir(parents=True)
-    paths = ["functions/weather-cs/download_station.py", "functions/weather-cs/plot_weather.py",
-             "workflows/weather-cs.json", ".github/workflows/weather-cs-download.yml",
-             ".github/workflows/weather-cs-plot.yml"]
-    (src / "state.json").write_text(json.dumps({
-        "schema_version": 2, "run_id": "r0", "stage": "done",
-        **{k: s[k] for k in ("workflow_id", "version_dir", "version_hash", "execution")}, "deploy_choice": "yes", "history": [{"gate": 4, "decision": "approve"}],
-        "deploy": {"deploy_name": "weather-cs", "repo": "alice/faasr-actions", "branch": "main", "bundle_hash": h,
-                   "invocation_id": "inv-0", "steps": {x: {"ok": True} for x in D.STEPS}}}))
-    log = [{"run_id": "r0", "deploy_name": "weather-cs", "step": "x", "repo": "alice/faasr-actions",
-            "branch": "main", "path": p} for p in paths]
-    log += [{"run_id": "r0", "deploy_name": "weather-cs", "step": "invoke", "bucket": "b", "prefix": x}
-            for x in ("weather_data-cs/", "FaaSrLog/weather-cs/")]
-    (src / "deploy" / "deploy-log.jsonl").write_text("".join(json.dumps(e) + "\n" for e in log))
-    s.update(stage="deploy", deploy_choice="yes", history=[
-        {"gate": 4, "decision": "copied", "from_run": "r0", "snapshot": "005-gate4-approve.json"},
-        {"gate": 4, "decision": "deploy-confirmed"}])
-    (run / "state.json").write_text(json.dumps(s))
-    copy_wf = D.deploy_copy(workflow(), "-cs", "alice", "faasr-actions", "main")[0]
-    files = {p: (bundle / "functions" / p.rsplit("/", 1)[1]).read_text() for p in paths[:2]}
-    files["workflows/weather-cs.json"] = json.dumps(copy_wf, indent=2)
-    files.update(D.expected_actions_files(copy_wf))
-    commits = {p: "Add/update (curate-skills)" for p in paths[:2]}
-    return run, files, commits
-
-
-def test_reuse_without_confirmed_shows_the_diff_and_writes_nothing(reusable, env, capsys, runners):
-    run, files, commits = reusable
-    fake = FakeGitHub(files=files, commits=commits, writable=True)
-    s3 = FakeS3(objects={"weather_data-cs/station.csv", "FaaSrLog/weather-cs/old/x.txt"})
-    code, out = step(capsys, run, "reuse", fake, s3=s3)
-    assert code == 1 and out["needs_confirmation"], out.get("problems")
-    assert sorted(out["plan"]["identical"]) == sorted(files) and out["plan"]["reused_from"] == "r0"
-    assert "nothing is written to GitHub" in out["plan"]["what"]
-    summary = out["preflight_summary"]
-    assert "| Field |" not in summary and "deployed by run r0, reused" in summary
-    assert "the new invocation rewrites them" in summary
-    assert fake.puts == [] and "invoke" not in runners and not (run / "deploy" / "deploy-log.jsonl").exists()
-
-
-def test_reuse_confirmed_invokes_without_writing_to_github(reusable, env, capsys, runners):
-    run, files, commits = reusable
-    fake = FakeGitHub(files=files, commits=commits, writable=True)
-    runners["fake"] = fake
-    code, out = step(capsys, run, "reuse", fake, "--confirmed",
-                     s3=FakeS3(objects={"weather_data-cs/station.csv"}))
-    assert code == 0 and out["ok"] and out["invocation_id"] == "inv-123", out
-    assert fake.puts == [] and runners["invoke"] == "workflows/weather-cs.json"
-    s = json.loads((run / "state.json").read_text())
-    assert s["stage"] == "monitor" and s["deploy"]["reused_from"] == "r0"
-    for x in ("publish", "upload", "register"):
-        assert s["deploy"]["steps"][x]["verified"] == "byte-identical" and s["deploy"]["steps"][x]["reused_from"] == "r0"
-    assert json.loads((run / "deploy" / "workflow.json").read_text()) == json.loads(files["workflows/weather-cs.json"])
-    assert {e["step"] for e in log_lines(run)} == {"invoke"}  # this run wrote nothing else
-
-
-@pytest.mark.parametrize("case,needle", [
-    ("code", "functions/weather-cs/plot_weather.py differs from what this run would deploy"),
-    ("yaml", ".github/workflows/weather-cs-plot.yml differs"),
-    ("gone", "workflows/weather-cs.json was written by this deploy's upload step but is gone"),
-])
-def test_reuse_refuses_a_deployment_that_is_not_identical(reusable, env, capsys, runners, case, needle):
-    run, files, commits = reusable
-    if case == "code":
-        files["functions/weather-cs/plot_weather.py"] += "# edited in the repo\n"
-    if case == "yaml":
-        files[".github/workflows/weather-cs-plot.yml"] = files[".github/workflows/weather-cs-plot.yml"].replace(
-            "ubuntu-latest", "ubuntu-22.04")
-    if case == "gone":
-        del files["workflows/weather-cs.json"]
-    fake = FakeGitHub(files=files, commits=commits, writable=True)
-    code, out = step(capsys, run, "reuse", fake, "--confirmed")
-    assert code == 1 and any(needle in p for p in out["problems"]), out.get("problems")
-    assert fake.puts == [] and "invoke" not in runners
-
-
-def test_reuse_refuses_when_the_yaml_generator_is_not_deterministic(reusable, env, capsys, runners, monkeypatch):
-    run, files, commits = reusable
+def test_a_non_deterministic_generator_refuses_the_check(deploying, env, capsys, runners, monkeypatch):
     from vendor.curate_deploy import register_workflow as R
     calls = iter(range(100))
     monkeypatch.setattr(R, "generate_serverless_yaml", lambda name, image, secrets: f"name: {name}\n# {next(calls)}\n")
-    fake = FakeGitHub(files=files, commits=commits, writable=True)
-    code, out = step(capsys, run, "reuse", fake, "--confirmed")
+    code, out = step(capsys, deploying, "publish", FakeGitHub(writable=True), "--confirmed")
     assert code == 1 and any("gave different output on two calls" in p for p in out["problems"])
-    assert "invoke" not in runners
 
 
-def test_status_offers_reuse_only_when_the_source_finished_deploying(reusable, env, capsys):
-    run, _, _ = reusable
-    D.main(["status", "--run", str(run)])
-    assert json.loads(capsys.readouterr().out)["reuse_possible"] == "r0"
+# ── update-deployment: re-push the version's files (the same version only) ──
+
+@pytest.fixture
+def deployed_version(deploying, env, capsys, runners, monkeypatch):
+    """r1 deployed weather-v1; update-deployment builds the version in memory (here: the bundle's files)."""
+    fake = FakeGitHub(writable=True)
+    runners["fake"] = fake
+    deploy_all(capsys, deploying, fake)
+    s = json.loads((deploying / "state.json").read_text())
+    s["monitor"] = {"finished": True, "result": "success"}  # the run is over: nothing reads the branch now
+    (deploying / "state.json").write_text(json.dumps(s))
+    bundle = bundle_of(deploying)
+    built = {"workflow": workflow(), "files": {f"functions/{b}": (bundle / "functions" / b).read_text()
+                                               for b in ("download_station.py", "plot_weather.py")}}
+    monkeypatch.setattr(D, "_version_build", lambda project, wid: (built, s, Path(s["version_dir"])))
+    monkeypatch.setattr(D, "main_problems", lambda built, vdir, s: [])
+    global _project
+    _project = deploying.parent.parent.parent
+    return deploying, fake
 
 
-def test_reuse_refuses_an_unfinished_source_or_a_run_that_started_deploying(reusable, env, capsys, runners):
-    run, files, commits = reusable
-    src = json.loads((run.parent / "r0" / "state.json").read_text())
-    src["deploy"]["steps"]["invoke"]["ok"] = False
-    (run.parent / "r0" / "state.json").write_text(json.dumps(src))
-    code, out = step(capsys, run, "reuse", FakeGitHub(files=files, commits=commits), "--confirmed")
-    assert code == 1 and "did not finish deploying (missing: invoke)" in out["error"]
-    src["deploy"]["steps"]["invoke"]["ok"] = True
-    (run.parent / "r0" / "state.json").write_text(json.dumps(src))
+_project = None
+
+
+def update(capsys, fake, *extra, project=None):
+    project = project or _project
+    code = D.main(["update-deployment", "--workflow", "weather-v1", "--project", str(project), *extra], opener=fake)
+    return code, json.loads(capsys.readouterr().out)
+
+
+def test_update_deployment_repushes_only_the_files_that_differ(deployed_version, capsys):
+    run, fake = deployed_version
+    fake.files[FNS[1]] = "edited in the repo\n"
+    del fake.files[ACTIONS[0]]
+    n = len(fake.puts)
+    code, out = update(capsys, fake)
+    assert code == 1 and out["needs_confirmation"] and fake.puts[n:] == []
+    assert out["plan"]["paths"] == [ACTIONS[0], FNS[1], MARKER]
+    code, out = update(capsys, fake, "--confirmed")
+    assert code == 0 and out["ok"], out
+    assert [p for p, _ in fake.puts[n:]] == [FNS[1], ACTIONS[0], MARKER]
+    assert fake.files[FNS[1]] == "def plot_weather(): pass\n"
+    assert all(marker_of(fake)["files"][f] == D.blob_sha(fake.files[f]) for f in [*FNS, *ACTIONS])
+    code, out = update(capsys, fake)
+    assert code == 0 and "already matches" in out["message"]
+
+
+def test_update_deployment_refuses_while_a_run_of_the_version_is_in_flight(deployed_version, capsys):
+    run, fake = deployed_version
+    fake.files[FNS[1]] = "edited in the repo\n"
     s = json.loads((run / "state.json").read_text())
-    s["deploy"] = {"steps": {"publish": {"ok": True}}}
+    s["monitor"] = {"finished": False, "result": "timeout"}  # timed out: its Actions may still run
     (run / "state.json").write_text(json.dumps(s))
-    code, out = step(capsys, run, "reuse", FakeGitHub(files=files, commits=commits), "--confirmed")
-    assert code == 1 and "already started its own deploy steps" in out["error"]
+    n = len(fake.puts)
+    code, out = update(capsys, fake, "--confirmed")
+    msg = next(p for p in out["problems"] if "may still be running" in p)
+    ref = s["execution"]["reference"]
+    assert ref in msg and "reads the deployment's files from the branch at every action's start" in msg
+    assert f"tear that run down first: /curate-skills:curate-deploy --teardown --run {ref}" in msg
+    assert code == 1 and fake.puts[n:] == []
+
+
+def test_update_deployment_refuses_another_version_or_no_deployment(deployed_version, capsys):
+    run, fake = deployed_version
+    m = marker_of(fake)
+    fake.files[MARKER] = json.dumps({**m, "content_hash": "f" * 64})
+    n = len(fake.puts)
+    code, out = update(capsys, fake, "--confirmed")
+    assert code == 1 and any("made from another version" in p and "only re-pushes the same version" in p
+                             for p in out["problems"]) and fake.puts[n:] == []
+    del fake.files[MARKER]
+    code, out = update(capsys, fake, "--confirmed")
+    assert code == 1 and any("there is no deployment of weather-v1 to update" in p for p in out["problems"])
+
+
+def test_update_deployment_refuses_when_a_main_differs_from_the_version(deployed_version, capsys, monkeypatch):
+    run, fake = deployed_version
+    fake.files[FNS[1]] = "edited\n"
+    monkeypatch.setattr(D, "main_problems", lambda built, vdir, s: [
+        "functions/plot_weather_main.py is not byte-identical to the version's functions/plot.py"])
+    n = len(fake.puts)
+    code, out = update(capsys, fake, "--confirmed")
+    assert code == 1 and "not byte-identical" in out["problems"][0] and fake.puts[n:] == []
 
 
 # ── a plain step ships two files: its FaaSr wrapper and its unchanged function ──
@@ -986,11 +1077,10 @@ def test_deploy_copy_keeps_both_files_of_a_plain_step(plain_run, env, capsys):
     code, out = pre(capsys, plain_run, FakeGitHub())
     assert code == 0 and out["ok"], out["problems"]
     assert out["function_git_repo"]["plot_weather"] == [
-        "alice/faasr-actions/main/functions/weather-cs/plot_weather.py",
-        "alice/faasr-actions/main/functions/weather-cs/plot_weather_main.py"]
+        f"alice/faasr-actions/main/functions/{N}/plot_weather.py",
+        f"alice/faasr-actions/main/functions/{N}/plot_weather_main.py"]
     assert [t["path"] for t in out["targets"] if t["kind"] == "function"] == [
-        "functions/weather-cs/download_station.py", "functions/weather-cs/plot_weather.py",
-        "functions/weather-cs/plot_weather_main.py"]
+        *FNS, f"functions/{N}/plot_weather_main.py"]
     assert D.function_files(workflow()) == [("download_station", "download_station.py"),
                                             ("plot_weather", "plot_weather.py")]
 
@@ -1003,23 +1093,21 @@ def test_publish_pushes_the_unchanged_function_byte_for_byte(plain_run, env, cap
     runners["fake"] = fake
     code, out = step(capsys, plain_run, "publish", fake, "--confirmed")
     assert code == 0 and out["ok"], out
-    assert [p for p, _ in fake.puts] == ["functions/weather-cs/download_station.py",
-                                         "functions/weather-cs/plot_weather.py",
-                                         "functions/weather-cs/plot_weather_main.py"]
-    assert fake.files["functions/weather-cs/plot_weather_main.py"].encode() == PLAIN_MAIN.encode()
+    assert [p for p, _ in fake.puts] == [*FNS, f"functions/{N}/plot_weather_main.py"]
+    assert fake.files[f"functions/{N}/plot_weather_main.py"].encode() == PLAIN_MAIN.encode()
 
 
-def test_verify_compares_both_files_of_a_plain_step(plain_run, env):
+def test_the_deployment_check_compares_both_files_of_a_plain_step(plain_run, env):
     bundle = bundle_of(plain_run)
-    copy_wf, targets, _ = D.deploy_copy(json.loads((bundle / "workflow.json").read_text()), "-cs",
-                                        "alice", "faasr-actions", "main")
-    files = {f"functions/weather-cs/{b}": (bundle / "functions" / b).read_text() for _, b in D.function_files(copy_wf)}
-    files["workflows/weather-cs.json"] = json.dumps(copy_wf, indent=2)
-    targets = [t for t in targets if t["step"] in ("publish", "upload")]  # the Actions files are tested above
+    copy_wf = D.deploy_copy(json.loads((bundle / "workflow.json").read_text()), N, RID,
+                            "alice", "faasr-actions", "main")[0]
+    functions = D.bundle_functions(bundle, copy_wf)
+    files = D.expected_deployment(functions, copy_wf)
+    files[MARKER] = json.dumps({"curate_deployment": 1, "content_hash": "h"})
     gh = D.GitHub(FAKE["GH_PAT"], opener=FakeGitHub(files=files))
-    same, problems = D.verify_identical(gh, "alice", "faasr-actions", "main", bundle, copy_wf, targets)
-    assert problems == [] and "functions/weather-cs/plot_weather_main.py" in same
-    files["functions/weather-cs/plot_weather_main.py"] += "# edited\n"
+    dep = D.deployment_state(gh, "alice", "faasr-actions", "main", copy_wf, functions, "h")
+    assert dep["state"] == "same" and f"functions/{N}/plot_weather_main.py" in dep["present"]
+    files[f"functions/{N}/plot_weather_main.py"] += "# edited\n"
     gh = D.GitHub(FAKE["GH_PAT"], opener=FakeGitHub(files=files))
-    _, problems = D.verify_identical(gh, "alice", "faasr-actions", "main", bundle, copy_wf, targets)
-    assert problems == ["functions/weather-cs/plot_weather_main.py differs from what this run would deploy"]
+    dep = D.deployment_state(gh, "alice", "faasr-actions", "main", copy_wf, functions, "h")
+    assert dep["state"] == "changed" and dep["differs"] == [f"functions/{N}/plot_weather_main.py"]

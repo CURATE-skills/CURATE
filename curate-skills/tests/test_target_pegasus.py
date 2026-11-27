@@ -163,9 +163,8 @@ def test_faasr_deploy_refuses_a_pegasus_run(source_run, capsys):
     ok(S, ["approve", "--session", str(source_run), "--gate", "4", "--on-duplicate", "keep", "--deploy", "pegasus"], capsys)
     s = state(source_run)
     assert D.gate4_problem(s) == D.PEGASUS_REFUSAL
-    out = D.deploy_step(str(source_run), "publish", "-x", None, None, "none")
+    out = D.deploy_step(str(source_run), "publish", D.deploy_name(source_run), None, None, "none")
     assert out["ok"] is False and out["error"] == D.PEGASUS_REFUSAL
-    assert D.reuse(str(source_run), "-x", None, None, "none")["error"] == D.PEGASUS_REFUSAL
     assert not (source_run / "deploy").exists()
 
 

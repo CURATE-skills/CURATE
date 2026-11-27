@@ -298,21 +298,21 @@ def test_gate4_lists_what_deploy_would_write_without_any_network_call(make_run, 
     import urllib.request
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(AssertionError("network")))
     md = show(run, 4, capsys)["markdown"]
-    run_id = json.loads((run / "state.json").read_text())["run_id"]
-    sfx = f"-{run_id[4:8]}-{run_id[9:13]}"
-    # Gate 4 itself: one short FaaSr line, no file list
-    assert f"**FaaSr (cloud)**: repo `alice/faasr-actions`, branch `main`, deploys as `weather{sfx}`" in md
+    # Gate 4 itself: one short FaaSr line, no file list; the deployment is named after the version
+    # Gate 4 publishes (one deployment per version)
+    assert "**FaaSr (cloud)**: repo `alice/faasr-actions`, branch `main`, deploys as `weather-v1`" in md
     assert "### Deploy would write" not in md and "functions/weather" not in md
     full = (run / "review" / "gate4.md").read_text()  # the full list stays in the review file
     section = full.split("### Deploy would write")[1].split("### Pegasus run would write")[0]
     assert "If you choose **Approve & deploy to FaaSr (cloud)** (nothing is written now" in section
-    assert f"Deploys as: `weather{sfx}` (name from: Gate 4 approval in run {run_id})" in section
-    assert "GitHub (`alice/faasr-actions`, branch `main`):" in section
-    for path in (f"functions/weather{sfx}/download.py", f"workflows/weather{sfx}.json",
-                 f".github/workflows/weather{sfx}-download.yml"):
+    assert "Deploys as: `weather-v1` (name from: the version's workflow id)" in section
+    assert "GitHub (`alice/faasr-actions`, branch `main`), the version's deployment" in section
+    assert "- `workflows/weather-v1/<run-id>.json`" in section and "- outputs folder: `weather-v1/<run-id>/`" in section
+    for path in ("functions/weather-v1/download.py", "workflows/weather-v1/deployment.json",
+                 ".github/workflows/weather-v1-download.yml"):
         assert f"- `{path}`" in section, path
     assert "S3 (`my-bucket`), written when the workflow runs:" in section
-    assert f"- logs folder: `FaaSrLog/weather{sfx}/`" in section and "- outputs folder: `" in section
+    assert "- logs folder: `FaaSrLog/weather-v1/<invocation timestamp>/<invocation id>/`" in section
     assert "- input files you must provide in S3: none" in md
     assert "Input files you must provide in S3 (none = nothing to do):\n- none" in full
     assert "Files to upload before running" not in md

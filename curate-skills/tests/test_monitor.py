@@ -673,3 +673,26 @@ def test_download_and_status_by_wid_rid_use_the_runs_own_folder(deployed, env, c
     assert all((run_dir / "outputs" / k).is_file() for k in keys)
     assert not (Path(s["project_dir"]) / "results").exists() and not (Path(deployed) / "outputs").exists()
     assert M.main(["status", "--run", ref]) == 0 and json.loads(capsys.readouterr().out)["ok"]
+
+
+def test_a_run_of_a_version_deployment_saves_its_outputs_without_the_s3_prefix(deployed, env, capsys):  # noqa: F811
+    """One deployment per version: the run's outputs are under <deploy name>/<run id>/ in S3, and
+    land directly in the run's outputs/."""
+    import deploy as D
+    import runstate
+    s = state(deployed)
+    ref, run_dir, rid = s["execution"]["reference"], Path(s["execution"]["dir"]), s["execution"]["run_id"]
+    bundle_wf = json.loads((Path(s["execution"]["bundle_dir"]) / "workflow.json").read_text())
+    wf = D.deploy_copy(D.fill_placeholders(bundle_wf)[0], s["workflow_id"], rid, "alice", "r", "main")[0]
+    (run_dir / "deploy").mkdir(parents=True, exist_ok=True)
+    (run_dir / "deploy" / "workflow.json").write_text(json.dumps(wf))
+    runstate.update(run_dir, lambda x: x.update(deploy={"scheme": "version", "deploy_name": wf["WorkflowName"],
+                                                         "invocation_id": INV}))
+    keys = [o["key"] for o in M.run_outputs(run_dir, runstate.load(run_dir), wf)]
+    assert keys and all(k.startswith(f"{wf['WorkflowName']}/{rid}/") for k in keys)
+    world = World()
+    world.s3.update({k: ("data", AFTER) for k in keys})
+    code, out = _download(capsys, world, "--run", ref)
+    assert code == 0, out
+    assert all((run_dir / "outputs" / k.split("/", 2)[2]).is_file() for k in keys)
+    assert not (run_dir / "outputs" / wf["WorkflowName"]).exists()

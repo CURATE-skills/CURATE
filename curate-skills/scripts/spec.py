@@ -2793,7 +2793,8 @@ def faasr_lines(s: dict) -> list[str]:
         g = D.gate4_summary(session)
     except Exception as e:  # noqa: BLE001 — informational; the deploy preflight checks everything
         return [f"**FaaSr (cloud)**: (could not work it out: {e})", inputs, advice]
-    out = [f"**FaaSr (cloud)**: repo `{g['user']}/{g['repo']}`, branch `{g['branch']}`, deploys as `{g['name']}`",
+    out = [f"**FaaSr (cloud)**: repo `{g['user']}/{g['repo']}`, branch `{g['branch']}`, deploys as `{g['name']}`"
+           + (f" (as `{g['if_dropped']}` if you drop it as a duplicate)" if g.get("if_dropped") else ""),
            inputs, advice]
     if g["unset"]:
         out.append(f"- not set yet in your deploy settings: {', '.join(g['unset'])}")

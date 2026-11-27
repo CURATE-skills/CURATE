@@ -198,11 +198,18 @@ After a read-only preflight, deploy asks before each of four steps:
 3. **Register:** GitHub Actions files
 4. **Invoke:** start the workflow
 
-Each deployment is named `<Workflow>-<MMDD-HHMM>` after the run that approved Gate 4, so two runs
-of the same sketch never clash; deploy refuses to overwrite any existing deployment.
-`/curate-skills:curate-deploy --list` shows this project's deployments; `--teardown --run <run_id>`
-deletes exactly what that run deployed, after asking once whether to keep its outputs (the
-default), delete them too, or download them first.
+A workflow version is deployed once, named after its workflow id (`<workflow-id>`): its function
+files, Actions files and a marker (`workflows/<workflow-id>/deployment.json`) recording which version
+it is. Each run of that version adds only its own payload (`workflows/<workflow-id>/<run-id>.json`)
+and S3 folder (`<workflow-id>/<run-id>/`), so two runs never share either; a later run reuses the
+deployment when it is byte-identical. A deployment of another version under the same name is
+refused (tear it down, or set `CURATE_DEPLOY_NAME_SUFFIX`); one of this version whose files differ
+is refused until `deploy.py update-deployment --workflow <workflow-id>` re-pushes them.
+`/curate-skills:curate-deploy --list` shows this project's deployments; `--teardown --run
+<workflow-id>/<run-id>` deletes that run's payload, outputs and logs, and `--teardown --workflow
+<workflow-id> --all` the version's whole deployment and every run's files, each after asking once
+whether to keep the outputs (the default), delete them too, or download them first. Local run
+folders are never deleted.
 
 ### 5. Monitor
 Under `/curate`, monitoring starts after invoke and watches the run for up to 10 minutes,
@@ -264,7 +271,7 @@ The monitor then follows it (as for FaaSr; it reads the Pegasus run folder recor
 it also works after a logout or reboot). When the workflow has finished, the results are in
 `pegasus_output/<workflow>-<run_id>/` in the folder you started in (`results/`, `run-report.json`, and
 `FAILED.txt` if it failed: then the outputs are partial), then Gate 5. Nothing is ever overwritten;
-each run has its own name `<workflow>-<MMDD-HHMM>` and folders. A run started with
+each run has its own folders. A run started with
 `--start-at deploy --from-run <run_id>` asks whether to deploy to FaaSr or run on Pegasus (with
 the set image or a different one).
 
@@ -276,7 +283,7 @@ the set image or a different one).
 | Extra subagent attempts after a failed stub test | `--mga-retries N` | `CURATE_MGA_RETRIES` | `3` (`0` = original CURATE) |
 | Stub-test mode | `--stubtest-mode strict\|parity` | `CURATE_STUBTEST_MODE` | `strict` |
 | Monitor time | `--minutes N` (curate-monitor) | `CURATE_MONITOR_MINUTES` | `10` |
-| Deploy name suffix | — | `CURATE_DEPLOY_NAME_SUFFIX` | `-<MMDD-HHMM>` of the run that approved Gate 4 |
+| Deploy name suffix | `--name-suffix` (deploy.py) | `CURATE_DEPLOY_NAME_SUFFIX` | none: the deployment is named `<workflow-id>` |
 
 A flag beats the environment variable, which beats the default. `CURATE_DEPLOY_NAME_SUFFIX` and
 `CURATE_MONITOR_MINUTES` can also go in `~/.config/curate/.env` (the environment overrides it). A run pins the first three when

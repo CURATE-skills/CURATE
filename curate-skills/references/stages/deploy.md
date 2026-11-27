@@ -49,36 +49,31 @@ header `Permission`, options **Yes** / **No**:
 
 Never edit a settings file yourself.
 
-## 0. Invoke only (reuse an identical existing deployment)
+## 0. One deployment per version
 
-`deploy.py status --run <run>`. If `reuse_possible` names a run (this run was started with
-`--start-at deploy --from-run` from a run that deployed the same bundle), the deployment may
-already be in the repo:
-1. `deploy.py reuse --run <run>` **without** `--confirmed`. It writes nothing. It checks that
-   every deployed file is byte-identical to what this run would deploy (function files, the
-   deploy copy of workflow.json, and the Actions files regenerated with CURATE's generator).
-2. Print its `preflight_summary` exactly — what this run uses on GitHub and in S3, one line each
-   (the comparison with the approved bundle runs silently; its full table is in the run's deploy
-   folder) — then tell the user the `plan`: the reused run, the identical files,
-   and that the new invocation rewrites the deployment's earlier outputs in the S3 paths listed.
-   If it returned `problems` instead, show them exactly and stop (step 4); nothing is reused.
-3. Ask with AskUserQuestion — question `Invoke only: start <deploy_name> again (nothing is
-   written to GitHub)?`, header `Invoke`, options **Yes, invoke** and **Stop here**.
-4. Only after **Yes, invoke** in the user's answer just now: `deploy.py reuse --run <run>
-   --confirmed`. It records publish, upload and register as reused (byte-identical) and runs the
-   invoke step. Then continue at 2.5 (the result) below.
-
-Otherwise go on with the preflight.
+A version is deployed once, named after its workflow id (plus `CURATE_DEPLOY_NAME_SUFFIX` if set):
+its function files and Actions files, with a marker `workflows/<name>/deployment.json` saying which
+version it is. Each run adds only its own payload `workflows/<name>/<run-id>.json` and S3 folder
+`<name>/<run-id>/`. When the repo already has this version's deployment, byte-identical, publish and
+register reuse it and write nothing (the preflight says so; their plan says "nothing is written").
+Each step is still asked, as below.
 
 ## 1. Preflight (read-only)
 
 `deploy.py preflight --run <run>`. **Print its `summary` exactly as a message** (the user does not
 see tool results; never re-format it). It says the deploy name, then every file it writes on
-GitHub and the S3 folders the run writes, one line each with its state. The comparison of the
+GitHub (the version's deployment, and this run's payload) and the S3 folders the run writes, one
+line each with its state. The comparison of the
 deploy copy with the approved bundle runs silently: only a field outside the allowed changes
 (placeholders, the deploy name, per-deployment paths) shows, as a problem. The full comparison is
 in the run's `deploy/preflight-diff.md`; show it only if the user asks.
 If `ok` is false: say the deploy cannot start, list the `problems` exactly, and stop (step 4).
+Two of them name their own way out:
+- **the deployment was made from another version**: the problem lists the ways out (teardown from
+  the project that made it, update-deployment if it really is this version, or a suffix). Tell the
+  user; do nothing yourself.
+- **the deployment is this version but its files differ** (edited or missing in the repo): offer to
+  re-push them with section 6. Only after the user's yes there, run the preflight again.
 
 ## 2. The four steps
 
@@ -123,3 +118,14 @@ finished ones are recorded and skipped). Nothing is undone.
 
 Finish as `<plugin>/references/gates.md` "After the gate decision" says; `spec.py next` names
 `curate-monitor`.
+
+## 6. Re-pushing a version's deployment (only when the preflight said its files differ)
+
+Ask with AskUserQuestion — question `The deployment of <workflow-id> in the repo differs from the
+version. Re-push its files?`, header `Update`, options **Re-push the version's files** / **Stop here**.
+Only after the first: `deploy.py update-deployment --workflow <workflow-id>` **without**
+`--confirmed` (it checks every function's `main()` against the version, compares each file, writes
+nothing); show its `plan` (`what`, `paths`) or its `problems` exactly. Then ask once more —
+question `Re-push <n> file(s) to <repo>?`, header `Update`, options **Yes, re-push** / **Stop here** —
+and only after **Yes, re-push**: the same command with `--confirmed`. Print its `message` and go back
+to 1 (preflight). It never touches run payloads or S3, and refuses a deployment of another version.
