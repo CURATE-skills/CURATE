@@ -88,7 +88,7 @@ def _sanitize_workflow_name(name: str) -> str:
 
 
 def external_inputs(spec: WorkflowSpec) -> list[dict]:
-    """Inputs that no node produces — files the user must place in S3 beforehand.
+    """Inputs that no node produces — files the user must provide before a run (in S3 for FaaSr).
 
     Returns one entry per distinct external file:
     {file, node, s3_path, type, description}. The description prefers the input's

@@ -369,7 +369,11 @@ def test_show_and_prompt_context(make_run, capsys, seeded_catalog):
     run, _ = resolved_run(make_run, capsys, seeded_catalog)
     code, out = call(S, ["show", "--session", str(run), "--gate", "2"], capsys)
     md = out["markdown"]
-    assert "[catalog] ← [catalog] split_text" in md and "map_words ×3" in md and "`workflow_data/words.txt`" in md
+    assert "[catalog] ← [catalog] split_text" in md and "map_words ×3" in md and "- `words.txt` — " in md
+    # no target yet: neither S3 nor a folder in the wording (Gate 4 chooses the target)
+    gate2 = md.split("Files you must provide before a run")[1].split("###")[0]
+    assert "(where they go depends on the target chosen at Gate 4):" in gate2
+    assert "S3" not in gate2 and "workflow_data/" not in gate2
     code, ctx = call(S, ["prompt-context", "--session", str(run), "--stage", "mca"], capsys)
     node = next(n for n in ctx["nodes"] if n["name"] == "split_text")
     # one-entry catalog: the inherited BM25 quirk returns no matches (see test_catalog)

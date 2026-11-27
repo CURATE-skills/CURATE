@@ -2678,8 +2678,9 @@ def show_gate(s: dict, gate: int, detailed: bool = False) -> str:
         if spec.data_flow:
             out += ["", "Data flow:"] + [f"- `{d.file}`: {d.from_node} → {d.to_node}" for d in spec.data_flow]
         ext = external_inputs(spec)
-        out += ["", "Files you must provide (S3):"] + (
-            [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
+        # no target yet (Gate 4 chooses it): the file names only, not where a target keeps them
+        out += ["", "Files you must provide before a run (where they go depends on the target chosen at Gate 4):"] + (
+            [f"- `{e['file']}` — {e['description']}" for e in ext] or ["- none"])
         if s.get("repairs"):
             out += ["", "Automatic repairs:"] + [f"- {r}" for r in s["repairs"]]
         problems = check_spec(spec)
@@ -2755,7 +2756,8 @@ def show_gate(s: dict, gate: int, detailed: bool = False) -> str:
                     ext = [{"s3_path": "(cannot be built for FaaSr)", "description": str(e)}]
             else:
                 ext = external_inputs(spec)
-            out += ["", "## Full details", "", "Input files you must provide in S3 (none = nothing to do):"] + (
+            out += ["", "## Full details", "", "Input files you must provide for **FaaSr**, in S3 (none = nothing to do; "
+                    "for Pegasus, see its section below):"] + (
                 [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
             out += ["", "### Deploy would write", "", f"If you choose **{FAASR_OPTION}** (nothing is written now; "
                     "the deploy asks before each step):", ""] + deploy_plan(s)
@@ -3055,8 +3057,14 @@ def summary_md(s: dict) -> str:
                    f"{', '.join(n.dependencies) or '—'} | {', '.join(n.secrets) or '—'} |")
     out += ["", "```", *dag_lines(spec), "```"]
     ext = external_inputs(spec)
-    out += ["", "Input files you must provide in S3 (none = nothing to do):"] + (
-        [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
+    target = ((s.get("execution") or {}).get("target")
+              or {"yes": "faasr", "pegasus": "pegasus"}.get(s.get("deploy_choice") or ""))
+    if target == "faasr":
+        out += ["", "Input files you must provide in S3 (none = nothing to do):"] + (
+            [f"- `{e['s3_path']}` — {e['description']}" for e in ext] or ["- none"])
+    else:  # Pegasus, or not run: where an input goes is the target's
+        out += ["", "Input files you must provide (none = nothing to do):"] + (
+            [f"- `{e['file']}` — {e['description']}" for e in ext] or ["- none"])
     coded = [(nm, a) for nm in topo_order(spec) for a in (mga.get(nm) or {}).get("assumptions") or []]
     if spec.assumptions or spec.presentation_assumptions or coded:  # only what Gates 2 and 3 showed
         out += ["", "Assumptions (shown at Gates 2 and 3):"] + assumption_lines(spec)

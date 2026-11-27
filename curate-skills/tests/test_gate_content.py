@@ -216,6 +216,20 @@ def test_mga_assumptions_are_recorded_and_listed_at_gate3(make_run, capsys):
     assert md.split("\ndownload  ")[1].split("\n\n")[0].endswith("  assumptions made while coding: none")
 
 
+@pytest.mark.parametrize("choice,expected", [
+    ("yes", "Input files you must provide in S3 (none = nothing to do):\n- `wx/station_ids.txt` — "),
+    ("pegasus", "Input files you must provide (none = nothing to do):\n- `station_ids.txt` — "),
+    ("no", "Input files you must provide (none = nothing to do):\n- `station_ids.txt` — "),
+])
+def test_the_summary_names_where_inputs_go_only_for_the_target_that_ran(make_run, capsys, choice, expected):
+    from curate_models import IOSpec
+    spec = weather().model_copy(update={"folder": "wx"})
+    spec.nodes[0].inputs = [IOSpec(name="station_ids.txt", description="one id per line")]
+    md = ok(S, ["summary", "--session", str(make_run(spec=spec, stage="finalize", deploy_choice=choice))],
+            capsys)["markdown"]
+    assert expected in md
+
+
 def test_the_summary_repeats_only_assumptions_already_shown(make_run, capsys):
     spec = weather().model_copy(update={"assumptions": [WINDOW], "presentation_assumptions": [LAYOUT]})
     run = make_run(spec=spec, stage="finalize", validation={"ok": True, "level": "faasr_py"},
@@ -314,7 +328,8 @@ def test_gate4_lists_what_deploy_would_write_without_any_network_call(make_run, 
     assert "S3 (`my-bucket`), written when the workflow runs:" in section
     assert "- logs folder: `FaaSrLog/weather-v1/<invocation timestamp>/<invocation id>/`" in section
     assert "- input files you must provide in S3: none" in md
-    assert "Input files you must provide in S3 (none = nothing to do):\n- none" in full
+    assert ("Input files you must provide for **FaaSr**, in S3 (none = nothing to do; for Pegasus, see its "
+            "section below):\n- none") in full
     assert "Files to upload before running" not in md
 
 
