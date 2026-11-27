@@ -185,3 +185,41 @@ def test_a_catalog_step_reused_as_is_on_a_range_is_warned():
     assert got == [{"severity": "warning", "message": "map_words uses a date range but is reused as is from the "
                     "catalog: it may not raise on an empty range; choose adapt to apply the rule"}]
     # plot is from the catalog too, but uses no range; reduce_counts is adapted: regenerated with the rule
+
+
+# ── code kept from a previous session (--start-at generate --existing-code keep) ──
+
+def _kept(spec, *names):
+    return spec.model_copy(update={"nodes": [n.model_copy(update={"source": "cached", "origin_kind": "import"})
+                                             if n.name in names else n for n in spec.nodes]})
+
+
+def test_a_step_on_a_range_whose_code_is_kept_from_a_session_is_warned():
+    spec = _kept(weather_spec(), "map_words", "plot")  # plot is kept too, but uses no range
+    assert S.kept_code_warnings(spec, "20261101-090000-abcd") == {
+        "map_words": "map_words uses date range 'winter' but its code is kept from session 20261101-090000-abcd "
+                     "(generated before the rule): it may not raise on an empty range; ask for it to be "
+                     "rewritten to apply the rule"}
+    assert [p for p in S.check_spec(spec, "20261101-090000-abcd") if "kept from" in p["message"]][0]["severity"] \
+        == "warning"
+
+
+def test_a_pre_rule_spec_flags_kept_steps_that_look_dated():
+    # copied from a session resolved before ranges were recorded: no ranges, no resolved_on
+    spec = _kept(weather_spec(resolved_on=None, ranges=(), describe="plot the winter panels"), "plot", "map_words")
+    got = S.kept_code_warnings(spec)
+    assert list(got) == ["plot"] and got["plot"].startswith("plot mentions 'winter' and its code is kept from "
+                                                             "an earlier session")
+
+
+def test_gate3_shows_the_warning_under_the_kept_step(make_run, capsys):
+    spec = _kept(weather_spec(), "map_words")
+    for n in spec.nodes:
+        n.code = "def main(inputs, outputs, params):\n    pass\n"
+    run = make_run(spec=spec, stage="gate3", mga={"map_words": {"status": "reused"}},
+                   history=[{"gate": 2, "decision": "copied", "from_run": "20261101-090000-abcd"}])
+    md = ok(S, ["show", "--session", str(run), "--gate", "3"], capsys)["markdown"]
+    block = md.split("\nmap_words  ")[1].split("\n\n")[0]
+    assert "  kept (not regenerated)\n  ! map_words uses date range 'winter' but its code is kept from session " \
+           "20261101-090000-abcd" in block
+    assert "! " not in md.split("\nreduce_counts  ")[1].split("\n\n")[0]

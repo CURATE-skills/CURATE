@@ -1127,8 +1127,37 @@ def check_date_ranges(spec: WorkflowSpec) -> list[dict]:
     return out
 
 
-def check_spec(spec: WorkflowSpec) -> list[dict]:
-    problems: list[dict] = check_date_ranges(spec)
+def kept_from(s: dict) -> str | None:
+    """The session a run was started from (--start-at … --from-run), whose code it may keep."""
+    return next((h.get("from_run") for h in reversed(s.get("history") or [])
+                 if h.get("decision") == "copied" and h.get("from_run")), None)
+
+
+def kept_code_warnings(spec: WorkflowSpec, source: str | None = None) -> dict[str, str]:
+    """{step: warning} for steps whose code is kept from a previous session (--existing-code keep)
+    and uses dated data: that code may predate the rule that an empty date range raises. A step is
+    dated when a range names it, or, for a spec resolved before ranges were recorded, when its
+    description looks dated."""
+    where = f"session {source}" if source else "an earlier session"
+    ranged = {n: r.name for r in spec.date_ranges for n in r.nodes}
+    out = {}
+    for n in spec.nodes:
+        if not (n.source == "cached" and n.origin_kind == "import"):
+            continue
+        if n.name in ranged:
+            out[n.name] = (f"{n.name} uses date range {ranged[n.name]!r} but its code is kept from {where} (generated "
+                           "before the rule): it may not raise on an empty range; ask for it to be rewritten to "
+                           "apply the rule")
+        elif not spec.resolved_on and (m := DATED_RX.search(n.description or "")):
+            out[n.name] = (f"{n.name} mentions {m.group(0)!r} and its code is kept from {where} (generated before "
+                           "the rule): it may not raise on an empty range; ask for it to be rewritten to apply "
+                           "the rule")
+    return out
+
+
+def check_spec(spec: WorkflowSpec, kept_source: str | None = None) -> list[dict]:
+    problems: list[dict] = check_date_ranges(spec) + [
+        {"severity": "warning", "message": w} for w in kept_code_warnings(spec, kept_source).values()]
 
     def add(sev, msg):
         problems.append({"severity": sev, "message": msg})
@@ -2683,7 +2712,7 @@ def show_gate(s: dict, gate: int, detailed: bool = False) -> str:
             [f"- `{e['file']}` — {e['description']}" for e in ext] or ["- none"])
         if s.get("repairs"):
             out += ["", "Automatic repairs:"] + [f"- {r}" for r in s["repairs"]]
-        problems = check_spec(spec)
+        problems = check_spec(spec, kept_from(s))
         if problems:
             out += ["", "Check:"] + [f"- **{p['severity']}**: {p['message']}" for p in problems]
         out += ["", "### Assumptions", "",
@@ -2692,6 +2721,7 @@ def show_gate(s: dict, gate: int, detailed: bool = False) -> str:
         return "\n".join(out)
     if gate == 3:
         mga = s.get("mga") or {}
+        kept_warn = kept_code_warnings(spec, kept_from(s))
         out += [f"## Gate 3 — Code  (iteration {s['iteration']}/{s['max_iterations']}, "
                 f"stub tests: {s['stubtest_mode']})", "", "```text"]
         for n in order:
@@ -2705,6 +2735,8 @@ def show_gate(s: dict, gate: int, detailed: bool = False) -> str:
                     f"  code: {len((n.code or '').splitlines())} lines · {_code_path(s, n.name)}"]
             if m.get("status") in ("reused", "reused_failed"):
                 out.append("  kept (not regenerated)")
+            if n.name in kept_warn:
+                out.append(f"  ! {kept_warn[n.name]}")
             for f in m.get("empty_external_inputs") or []:
                 out.append(f"  ! ran on an EMPTY stand-in for external input {f}; provide a real file")
             if m.get("status") in ("failed", "reused_failed", "external_only") and m.get("last_output_tail"):
