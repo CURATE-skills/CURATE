@@ -145,3 +145,52 @@ def test_doctor_reports_unreadable_lines_without_values(monkeypatch, envf):
     code, out = _doctor(monkeypatch, envf, ["--deploy", "--json"])
     (row,) = [r for r in json.loads(out)["checks"] if r["check"] == "settings file"]
     assert row["status"] == "warn" and "(BAD)" in row["message"] and "val9x" not in out
+
+
+# ── values glued together, implausible secrets: names only ──
+
+def test_a_missing_newline_is_named_without_the_value(monkeypatch, envf):
+    glued_line = f"GH_PAT={GH}FAASR_S3_BUCKET=file-bucket"
+    envf.write_text(FILE.replace(f"GH_PAT={GH}", glued_line).replace("FAASR_S3_BUCKET=file-bucket   # trailing comment\n", ""))
+    vals, problems = envfile.parse(envf.read_text())
+    assert any("(GH_PAT): its value contains `FAASR_S3_BUCKET=` — two lines are glued together" in p for p in problems)
+    code, out = _doctor(monkeypatch, envf, ["--deploy", "--json"])
+    rows = {r["check"]: r for r in json.loads(out)["checks"]}
+    assert rows["settings file"]["status"] == "warn" and "glued together" in rows["settings file"]["message"]
+    assert "lines not read" not in rows["settings file"]["message"]
+    assert GH not in out and "file-bucket" not in out
+
+
+def test_an_equals_sign_inside_a_secret_is_not_glued():
+    assert envfile.parse("S3_SecretKey=abc/def+ghi=\n")[1] == []
+    assert envfile.glued("FAASR_S3_BUCKET", "faasr_s3_bucket", 1) is None
+
+
+@pytest.mark.parametrize("env,expected", [
+    ({"GH_PAT": "ghp_" + "a" * 36, "S3_AccessKey": "AKIA" + "B" * 16, "S3_SecretKey": "c" * 40}, []),
+    ({"GH_PAT": "github_pat_" + "a" * 82}, []),
+    ({"S3_ACCESSKEY": "minioadmin", "S3_SECRETKEY": "minio-secret"}, []),  # MinIO: any sensible length
+    ({"GH_PAT": "ghp_" + "a" * 30}, ["GH_PAT has an unusual length for a ghp_… token (usually 40 characters)"]),
+    ({"GH_PAT": "github_pat_" + "a" * 80}, ["GH_PAT has an unusual length for a github_pat_… token (usually 93 "
+                                            "characters)"]),
+    ({"GH_PAT": "a" * 40}, ["GH_PAT does not start like a GitHub token"]),
+    ({"S3_AccessKey": "AKIA" + "B" * 16 + "FAASR_S3"}, ["S3_AccessKey is not the length of an access key ID (AWS: 20"]),
+    ({"S3_AccessKey": "AKIA" + "B" * 16, "S3_SecretKey": "c" * 39}, ["S3_SecretKey is not the length of a secret "
+                                                                     "access key (AWS: 40"]),
+    ({"S3_SecretKey": "x7q"}, ["S3_SecretKey is not the length of a secret access key: "]),
+])
+def test_secret_shapes(env, expected):
+    got = doctor.secret_shape_problems(env)
+    assert len(got) == len(expected) and all(g.startswith(e) for g, e in zip(got, expected)), got
+    for g in got:  # never a value, nor its length
+        assert not any(v in g for v in env.values())
+        assert not any(f"{len(v)} characters" in g for v in env.values() if len(v) not in (20, 40, 93))
+
+
+def test_doctor_warns_about_an_implausible_secret_without_showing_it(monkeypatch, envf):
+    cut = GH[:30]
+    envf.write_text(FILE.replace(f"GH_PAT={GH}", f"GH_PAT={cut}"))
+    code, out = _doctor(monkeypatch, envf, ["--deploy", "--json"])
+    (row,) = [r for r in json.loads(out)["checks"] if r["check"] == "secret shapes"]
+    assert row["status"] == "warn" and "GH_PAT has an unusual length" in row["message"] and "(values not shown)" in row["message"]
+    assert cut not in out and SK not in out

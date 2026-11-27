@@ -546,7 +546,7 @@ def test_online_implies_deploy_and_json(all_ok, capsys, monkeypatch):
     out = capsys.readouterr().out
     res = json.loads(out)
     assert res["ok"] is True and [c["check"] for c in res["checks"] if c["group"] == "deploy"] == \
-        ["settings file", "variables", "GitHub token", "auto mode", "repo", "s3"]
+        ["settings file", "variables", "secret shapes", "GitHub token", "auto mode", "repo", "s3"]
     assert TOKEN not in out and "AK-secret-value" not in out and "SK-secret-value" not in out
 
 

@@ -185,7 +185,9 @@ and doctor read this file themselves; environment variables override it.
 /curate-skills:curate-doctor --deploy --online
 ```
 
-Read-only check of the file, token, repo, branch and bucket. Values are never shown.
+Read-only check of the file, token, repo, branch and bucket. It also warns when two lines of the
+file run together (a missing newline) or a secret has an implausible length (cut short or run on).
+Values are never shown.
 
 **Auto mode** blocks deploy after the first step. Use manual mode (Shift+Tab) for deploy (it asks
 before each command), or add these to the `allow` list in `~/.claude/settings.json` — deploy offers

@@ -269,6 +269,44 @@ def _key_set(env, name) -> bool:
     return bool(env.get(name) or env.get(name.upper()))
 
 
+# What each secret looks like, to catch a truncated paste or two values run together. Only the
+# length and prefix are checked; a message never holds the value (or its length).
+GH_TOKEN_LENGTHS = {"ghp_": 40, "gho_": 40, "ghu_": 40, "ghs_": 40, "ghr_": 40, "github_pat_": 93}
+
+
+def secret_shape_problems(env) -> list[str]:
+    """Why a secret's shape is implausible, by name only."""
+    out = []
+    tok = str(env.get("GH_PAT", "")).strip()
+    if tok:
+        prefix = next((p for p in GH_TOKEN_LENGTHS if tok.startswith(p)), None)
+        if prefix is None:
+            out.append("GH_PAT does not start like a GitHub token (ghp_… for a classic token): check that the whole "
+                       "token was pasted, on its own line")
+        elif len(tok) != GH_TOKEN_LENGTHS[prefix]:
+            # GitHub doesn't guarantee token lengths: "usually", and only ever a warning
+            out.append(f"GH_PAT has an unusual length for a {prefix}… token (usually {GH_TOKEN_LENGTHS[prefix]} "
+                       "characters): it may be cut short, or run into the next line")
+    access = str(env.get("S3_AccessKey") or env.get("S3_ACCESSKEY") or "").strip()
+    secret = str(env.get("S3_SecretKey") or env.get("S3_SECRETKEY") or "").strip()
+    aws = access[:4] in ("AKIA", "ASIA")
+    if access and (aws and len(access) != 20 or not 3 <= len(access) <= 128):
+        out.append("S3_AccessKey is not the length of an access key ID" + (" (AWS: 20 characters)" if aws else "")
+                   + ": it may be cut short, or run into the next line")
+    if secret and (aws and len(secret) != 40 or not 8 <= len(secret) <= 128):
+        out.append("S3_SecretKey is not the length of a secret access key" + (" (AWS: 40 characters)" if aws else "")
+                   + ": it may be cut short, or run into the next line")
+    return out
+
+
+def check_secret_shapes(r: Report, env):
+    problems = secret_shape_problems(env)
+    if problems:
+        r.add("deploy", "secret shapes", "warn", "; ".join(problems) + " (values not shown)")
+    else:
+        r.add("deploy", "secret shapes", "ok", "GH_PAT and the S3 keys have plausible lengths (values not shown)")
+
+
 def check_settings_file(r: Report, info: dict, deploy: bool):
     """The settings file itself: present, mode 600, readable lines. Names and line numbers only."""
     path = info["path"]
@@ -281,8 +319,12 @@ def check_settings_file(r: Report, info: dict, deploy: bool):
     if info.get("mode") != "600":
         notes.append(f"mode is {info.get('mode')}, not 600: anyone on this machine may read your token and "
                      f"keys. Run: chmod 600 {path}")
-    if info.get("problems"):
-        notes.append("lines not read: " + "; ".join(info["problems"]))
+    glued = [p for p in info.get("problems") or [] if "glued together" in p]
+    unread = [p for p in info.get("problems") or [] if p not in glued]
+    if glued:
+        notes.append("; ".join(glued))
+    if unread:
+        notes.append("lines not read: " + "; ".join(unread))
     if notes:
         r.add("deploy", "settings file", "warn", f"{path}: " + " ".join(notes))
     else:
@@ -667,6 +709,7 @@ def run_checks(args, env=None, claude_dir: Path | None = None, opener=None) -> R
         check_auto_mode_rules(r, args.plugin_root, claude_dir, project, PEGASUS_AUTO_MODE_SCRIPTS, "pegasus")
     if deploy:
         check_deploy_vars(r, env, info["sources"])
+        check_secret_shapes(r, env)
         token = check_token(r, env, info["sources"])
         check_auto_mode_rules(r, args.plugin_root, claude_dir, project)
         if args.online:

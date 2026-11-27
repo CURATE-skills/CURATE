@@ -42,6 +42,16 @@ def default_path() -> Path:
     return Path.home() / ".config" / "curate" / ".env"
 
 
+def glued(key: str, val: str, line: int) -> str | None:
+    """A value holding another setting's `NAME=`: two lines run together (a missing newline), so
+    that setting is unset and this value is wrong. Names only, never the value."""
+    for name in DEPLOY_NAMES + PEGASUS_NAMES:
+        if name.upper() != key.upper() and re.search(re.escape(name) + r"\s*=", val, re.I):
+            return (f"line {line} ({key}): its value contains `{name}=` — two lines are glued together (a "
+                    f"missing newline), so {name} is not set and {key} is wrong; put {name}= on its own line")
+    return None
+
+
 def parse(text: str) -> tuple[dict, list]:
     """{KEY: value} and problems ("line N (KEY): …", never a value)."""
     vals, problems = {}, []
@@ -66,6 +76,9 @@ def parse(text: str) -> tuple[dict, list]:
         if rest and not rest.startswith("#"):
             problems.append(f"line {n} ({key}): text after the value (no spaces in a value, or quote it)")
             continue
+        g = glued(key, val, n)
+        if g:
+            problems.append(g)
         vals[key] = val
     return vals, problems
 
