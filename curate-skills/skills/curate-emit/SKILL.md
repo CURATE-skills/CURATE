@@ -26,7 +26,8 @@ Arguments: `$ARGUMENTS`
   [--stubtest-mode M] [--user-model P]... [--context-file P]...
   --config-catalog-dir '${user_config.catalog_dir}' --config-mga-retries '${user_config.mga_retries}'
   --config-stubtest-mode '${user_config.stubtest_mode}'`.
-  Keep the `--config-*` values in single quotes exactly as written. Map `--catalog` →
+  Keep the `--config-*` values in single quotes exactly as written, even one that still reads
+  `${user_config…}` (not filled in: the script uses the default); never turn it into a name or a value. Map `--catalog` →
   `--catalog-dir`, `--attach` → `--user-model`, `--context` → `--context-file`. Tell the user the
   run id, the settings and any `warnings`. Accepted files: `${CLAUDE_PLUGIN_ROOT}/references/stage-io.md`.
 - Neither: ask for `--session` or `--from`. On exit 2, show the `error` exactly and stop.

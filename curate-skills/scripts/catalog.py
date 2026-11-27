@@ -58,7 +58,7 @@ class InputError(Exception):
 # ── catalog dir resolution ───────────────────────────────────────────────────
 
 def _usable(value: Optional[str]) -> bool:
-    # An unset plugin setting may arrive empty or as the unexpanded "${...}" literal.
+    # a flag, the environment or the run's pinned value (the plugin setting: settings.plugin_value)
     return bool(value and value.strip() and "${" not in value)
 
 
@@ -75,9 +75,11 @@ def resolve_catalog_dir(catalog_dir: Optional[str] = None, session: Optional[str
     env = os.environ.get("CURATE_CATALOG_DIR")
     if _usable(env):
         return Path(env).expanduser().resolve(), "CURATE_CATALOG_DIR"
-    if _usable(config_dir):
-        return Path(config_dir).expanduser().resolve(), "plugin setting"
-    return DEFAULT_CATALOG_DIR, "default"
+    import settings
+    cfg = settings.plugin_value(config_dir, "catalog_dir")
+    if cfg:
+        return Path(cfg).expanduser().resolve(), "plugin setting"
+    return DEFAULT_CATALOG_DIR, settings.NOT_FILLED if (config_dir or "").strip() else "default"
 
 
 # ── loading (from catalog/store.py, workflow_store.py) ───────────────────────

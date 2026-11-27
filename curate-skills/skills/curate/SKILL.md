@@ -13,7 +13,8 @@ the stage skills (`/curate-skills:curate-skeleton` …) use. It does no stage wo
 
 Plugin folder (`<plugin>` in the stage files): `${CLAUDE_PLUGIN_ROOT}`.
 Monitor-minutes setting (`<monitor_minutes>` in the monitor stage file): `${user_config.monitor_minutes}`
-(the plugin setting, filled in here; the stage file uses it in single quotes).
+(the plugin setting, filled in here; the stage file uses it in single quotes. If it still reads
+`${user_config…}`, it was not filled in: pass it unchanged, never as a name or a number).
 Script shorthand: `spec.py …` means `uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/spec.py …`
 (likewise `catalog.py`, `scratch.py`, `emit.py`, `stubtest.py`). Each prints JSON with `"ok"`;
 exit 1 = needs attention, 2 = bad input.
@@ -72,7 +73,8 @@ Arguments: `$ARGUMENTS`
 
 With `import` or `start`, always add `--config-catalog-dir '${user_config.catalog_dir}'
 --config-mga-retries '${user_config.mga_retries}' --config-stubtest-mode '${user_config.stubtest_mode}'`
-in single quotes exactly as written, and map `--catalog` → `--catalog-dir`, `--attach` →
+in single quotes exactly as written (one that still reads `${user_config…}` was not filled in: pass it
+unchanged, the script uses the default; never turn it into a name or a value), and map `--catalog` → `--catalog-dir`, `--attach` →
 `--user-model`, `--context` → `--context-file`. Tell the user the session id (for `--start-at deploy`, the
 run's `<workflow-id>/<run-id>`) and the settings.
 - If `import` or `start` fails with `needs_choice: "existing_code"` (some functions already have

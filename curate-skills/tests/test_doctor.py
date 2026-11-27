@@ -203,7 +203,7 @@ def test_catalog(tmp_path):
     assert "will be created" in check(flag=str(tmp_path / "new" / "deeper"))[1]
     assert "(from --catalog-dir)" in check(flag=str(cat), env={"CURATE_CATALOG_DIR": "/elsewhere"})[1]
     assert "(from plugin setting)" in check(config=str(cat))[1]
-    assert "(from default)" in check(config="${user_config.catalog_dir}")[1]
+    assert "(from default (plugin setting not filled in))" in check(config="${user_config.catalog_dir}")[1]
     f = tmp_path / "file"
     f.write_text("x")
     assert check(flag=str(f))[0] == "fail"

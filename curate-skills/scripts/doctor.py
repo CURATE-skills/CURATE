@@ -215,11 +215,13 @@ def check_loaded_once(r: Report, plugin_root: str | None, claude_dir: Path, proj
 
 def resolve_catalog(flag, env, config) -> tuple[Path, str]:
     """As catalog.py (without a run): --catalog-dir > CURATE_CATALOG_DIR > plugin setting > default."""
+    import settings
     for value, source in ((flag, "--catalog-dir"), (env.get("CURATE_CATALOG_DIR"), "CURATE_CATALOG_DIR"),
-                          (config, "plugin setting")):
+                          (settings.plugin_value(config, "catalog_dir"), "plugin setting")):
         if value and str(value).strip() and "${" not in str(value):
             return Path(str(value).strip()).expanduser().resolve(), source
-    return (Path.home() / ".curate" / "catalog").resolve(), "default"
+    return ((Path.home() / ".curate" / "catalog").resolve(),
+            settings.NOT_FILLED if (config or "").strip() else "default")
 
 
 def check_catalog(r: Report, flag, env, config):

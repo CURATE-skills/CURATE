@@ -10,7 +10,8 @@ allowed-tools: Read, Glob, Grep, Bash(uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scrip
 
 Plugin folder (`<plugin>` in the stage file): `${CLAUDE_PLUGIN_ROOT}`.
 Monitor-minutes setting (`<monitor_minutes>` in the stage file): `${user_config.monitor_minutes}`
-(the plugin setting, filled in here; the stage file uses it in single quotes).
+(the plugin setting, filled in here; the stage file uses it in single quotes. If it still reads
+`${user_config…}`, it was not filled in: pass it unchanged, never as a name or a number).
 Script shorthand: `spec.py …` means `uv run --quiet ${CLAUDE_PLUGIN_ROOT}/scripts/spec.py …`
 (likewise `monitor.py`). Each prints JSON with `"ok"`; exit 1 = needs attention, 2 = bad input.
 

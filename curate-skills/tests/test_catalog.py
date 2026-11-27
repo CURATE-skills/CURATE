@@ -55,8 +55,10 @@ def test_resolution_order(tmp_path, monkeypatch):
 
 
 def test_unset_plugin_setting_is_ignored():
-    for v in ("", "  ", "${user_config.catalog_dir}"):
+    for v in ("", "  "):
         assert catalog.resolve_catalog_dir(None, None, v)[1] == "default"
+    assert catalog.resolve_catalog_dir(None, None, "${user_config.catalog_dir}")[1] == \
+        "default (plugin setting not filled in)"
 
 
 # ── BM25 search ──

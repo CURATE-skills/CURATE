@@ -507,7 +507,7 @@ def test_the_runs_outputs_are_never_overwritten(run, env, capsys):
 
 
 @pytest.mark.parametrize("config,expected", [
-    ("${user_config.monitor_minutes}", (10.0, "default")),  # --plugin-dir: left unsubstituted
+    ("${user_config.monitor_minutes}", (10.0, "default (plugin setting not filled in)")),  # --plugin-dir: left unsubstituted
     ("", (10.0, "default")),
     ("3", (3.0, "plugin setting")),
 ])

@@ -509,10 +509,14 @@ def summary_md(snap: dict, dep: dict, mode: str, minutes_used: float | None = No
 # ── poll command ─────────────────────────────────────────────────────────────
 
 def _setting(flag, env_var: str, config, default, cast):
-    for v, src in ((flag, "flag"), (os.environ.get(env_var), env_var), (config, "plugin setting")):
-        if v not in (None, "") and not str(v).startswith("${"):
-            return cast(v), src
-    return default, "default"
+    """flag > env_var > plugin setting > default (settings.resolve: a placeholder the skill passed
+    unfilled, e.g. '${user_config.monitor_minutes}' or a bare 'monitor_minutes', is not a value)."""
+    import settings
+    key = next((k for k, v in settings.ENV.items() if v == env_var), env_var.lower())
+    try:
+        return settings.resolve(flag, key, config, default, cast, env_var=env_var)
+    except ValueError as e:
+        raise InputError(str(e)) from e
 
 
 def _context(run: str, opener, s3_factory) -> tuple[dict, dict, dict]:

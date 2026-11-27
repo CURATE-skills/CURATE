@@ -55,7 +55,7 @@ def test_init_defaults_and_user_model(make_run, tmp_path, capsys):
     ("0", "5", "7", (0, "flag")),
     (None, "5", "7", (5, "CURATE_MGA_RETRIES")),
     (None, None, "7", (7, "plugin setting")),
-    (None, None, "${user_config.mga_retries}", (3, "default")),
+    (None, None, "${user_config.mga_retries}", (3, "default (plugin setting not filled in)")),
 ])
 def test_mga_retries_precedence(monkeypatch, flag, env, config, expected):
     if env:

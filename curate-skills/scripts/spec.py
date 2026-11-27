@@ -170,19 +170,15 @@ def snapshot_history(session: Path, state: dict, label: str) -> None:
 
 # ── settings resolution (flag > env > plugin setting > default) ─────────────
 
-def _usable(value) -> bool:
-    return value is not None and str(value).strip() != "" and "${" not in str(value)
-
-
 def resolve_setting(flag, env_var: str, config, default, cast):
-    for value, source in ((flag, "flag"), (os.environ.get(env_var), env_var),
-                          (config, "plugin setting")):
-        if _usable(value):
-            try:
-                return cast(str(value).strip()), source
-            except ValueError as e:
-                raise InputError(f"bad value {value!r} from {source}: {e}") from e
-    return default, "default"
+    """flag > env_var > plugin setting > default (settings.resolve; a placeholder the skill passed
+    unfilled is not a value)."""
+    import settings
+    key = next((k for k, v in settings.ENV.items() if v == env_var), env_var)
+    try:
+        return settings.resolve(flag, key, config, default, cast, env_var=env_var)
+    except ValueError as e:
+        raise InputError(str(e)) from e
 
 
 def _retries(v: str) -> int:
