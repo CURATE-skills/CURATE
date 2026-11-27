@@ -212,7 +212,8 @@ and S3 folder (`<workflow-id>/<run-id>/`), so two runs never share either; a lat
 deployment when it is byte-identical. A deployment of another version under the same name is
 refused (tear it down, or set `CURATE_DEPLOY_NAME_SUFFIX`); one of this version whose files differ
 is refused until `deploy.py update-deployment --workflow <workflow-id>` re-pushes them.
-`/curate-skills:curate-deploy --list` shows this project's deployments; `--teardown --run
+`/curate-skills:curate-deploy --list` shows this project's deployments, each version's with its
+runs underneath (active, finished, not invoked or torn down) and the projects its marker lists; `--teardown --run
 <workflow-id>/<run-id>` deletes that run's payload, outputs and logs, and `--teardown --workflow
 <workflow-id> --all` the version's whole deployment and every run's files, each after asking once
 whether to keep the outputs (the default), delete them too, or download them first. Local run

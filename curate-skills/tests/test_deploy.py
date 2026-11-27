@@ -784,6 +784,12 @@ def test_a_second_run_of_the_version_reuses_its_deployment_and_gets_its_own_fold
     prefixes = {e.get("prefix") for e in log_lines(second) if e.get("prefix")}
     assert f"{N}/{RID2}/" in prefixes and OUT not in prefixes  # the two runs' S3 folders differ
     assert [e["path"] for e in log_lines(second) if e.get("path")] == [payload2]
+    # both runs record the marker as they saw it, for `deploy.py list` (which reads no repo)
+    s1 = json.loads((deploying / "state.json").read_text())
+    m = marker_of(fake)
+    for st in (s1, s2):
+        assert st["deploy"]["marker"]["projects"] == m["projects"] and st["deploy"]["marker"]["seen"]
+        assert st["deploy"]["marker"]["deployed_at"] == m["deployed_at"]
 
 
 def test_reusing_from_another_project_adds_it_to_the_marker(deploying, second, env, capsys, runners):

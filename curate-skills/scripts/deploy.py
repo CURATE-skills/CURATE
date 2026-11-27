@@ -29,7 +29,7 @@ publish and register write the deployment when the repo has none, and reuse it (
 when its marker names this version and every file is byte-identical. A marker naming another
 version is refused (tear it down, or set a suffix); a deployment of this version whose files differ
 is refused with `update-deployment --workflow <wid>`, which re-pushes them after checking every
-main() against the version. `list` shows the deployments recorded in this project's runs;
+main() against the version. `list` shows each version's deployment recorded in this project's runs, with its runs;
 `teardown --run` deletes one run's payload and S3 folders, `teardown --workflow <wid> --all` the
 deployment and every run's payload and S3 folder, after the user's yes.
 The deploy copy also fills emit's <FAASR_...> placeholders from the environment (non-secret
@@ -950,7 +950,7 @@ def _deployment_targets(out: dict, gh: GitHub, user: str, repo: str, branch: str
     project = _project_of_state(s)
     out["deployment"] = {"name": new, "state": dep["state"], "differs": dep["differs"], "missing": dep["missing"],
                          "present": dep["present"], "marker": marker_path(new),
-                         "projects": marker.get("projects") or [],
+                         "projects": marker.get("projects") or [], "deployed_at": marker.get("deployed_at"),
                          "adds_project": dep["state"] == "same" and ids.project_id(project) not in (marker.get("projects") or [])}
     problems = []
     if dep["state"] == "unreadable":
@@ -1398,10 +1398,13 @@ def deploy_step(run: str, step: str, name: dict, gh: GitHub | None, token: str |
         **({"deployment": "reused" if reuse else "made"} if step == "publish" else {}),
         "steps": {**((st.get("deploy") or {}).get("steps") or {}), step: {"ok": False, "started": _now_iso()}}}))
     detail: dict = {}
+    seen = None  # the marker as this step saw or wrote it: recorded for `list` (which reads no repo)
     project = _project_of_state(s)
     try:
         if step in STEP_REUSE and reuse:
             detail = {"reused": new, "verified": "byte-identical"}
+            if step == "publish":
+                seen = {"projects": dep.get("projects") or [], "deployed_at": dep.get("deployed_at")}
             if step == "publish" and dep.get("adds_project"):
                 marker, problem = read_marker(gh, user, repo, branch, new)
                 if problem or marker is None:
@@ -1412,6 +1415,7 @@ def deploy_step(run: str, step: str, name: dict, gh: GitHub | None, token: str |
                 _log_written(run_p, {**log_base, "repo": f"{user}/{repo}", "branch": branch,
                                      "path": marker_path(new), "sha": blob_sha(text), "shared": True})
                 detail["written"] = [marker_path(new)]
+                seen = {"projects": marker["projects"], "deployed_at": marker.get("deployed_at")}
         elif step == "publish":
             # Every file is read and leak-checked before the first one is pushed.
             files = []
@@ -1451,6 +1455,7 @@ def deploy_step(run: str, step: str, name: dict, gh: GitHub | None, token: str |
             _log_written(run_p, {**log_base, "repo": f"{user}/{repo}", "branch": branch, "path": marker_path(new),
                                  "sha": blob_sha(text)})
             detail = {"written": paths, "log": log}
+            seen = {"projects": [ids.project_id(project)], "deployed_at": now}
         elif step == "invoke":
             dispatched = _now_iso()
             got = RUNNERS["invoke"](payload_path(new, rid), token, extra)
@@ -1474,6 +1479,8 @@ def deploy_step(run: str, step: str, name: dict, gh: GitHub | None, token: str |
     def finish(st):
         st["deploy"]["steps"][step] = {"ok": True, "ts": _now_iso(),
                                        **{k: v for k, v in detail.items() if k != "log"}}
+        if seen:
+            st["deploy"]["marker"] = {**seen, "seen": _now_iso()}
         if step == "invoke":
             st["deploy"].update(invocation_id=detail["invocation_id"],
                                 invocation_timestamp=detail["invocation_timestamp"],
@@ -1655,52 +1662,108 @@ def _when(ts: str | None) -> str:
         return ts
 
 
+RUN_STATUSES = ("active", "finished", "not invoked", "torn down")
+
+
+def _run_status(st: dict) -> tuple[str, str | None]:
+    """A run of a deployment: torn down (its payload and S3 files deleted; with the date), not
+    invoked, finished (monitored to a verdict) or active (invoked, no verdict yet)."""
+    dep = st.get("deploy") or {}
+    gone = dep.get("teardown") or dep.get("deployment_teardown")
+    if gone:
+        return "torn down", gone.get("ts")
+    if not ((dep.get("steps") or {}).get("invoke") or {}).get("ok"):
+        return "not invoked", None
+    mon = st.get("monitor") or {}
+    if mon.get("finished") or mon.get("result") in ("success", "success_unconfirmed", "failure") \
+            or st.get("stage") in ("finalize", "done"):
+        return "finished", None
+    return "active", None
+
+
+def _first_ok(steps: dict) -> str | None:
+    return min((steps[x]["ts"] for x in STEPS if steps.get(x, {}).get("ok") and steps[x].get("ts")), default=None)
+
+
 def list_deployments(project: str | Path) -> dict:
-    """Deployments recorded in this project's runs: name, the run that deployed it, when, the last
-    invocation (by it or by runs that reused it), and whether it was torn down. Reads only."""
+    """Deployments recorded in this project's runs. One deployment per version: the version's
+    deployment (name, repo, when deployed, the projects its marker listed when a run last saw it,
+    whether `teardown --all` removed it) with its runs underneath, each with its status (active,
+    finished, not invoked, torn down) and invocation. Older date-suffixed deployments (one per
+    run): by the session that made them. Reads only this project's state; no repo or S3."""
     import ids
     import runstate
     project = Path(project).expanduser().resolve()
-    rows: dict[tuple, dict] = {}
     # every session (with its current run's records) and every run not used through a session
     states = [st for d in ids.session_dirs(project) for st in [_read_state(d)] if st]
     states += [st for d in ids.execution_dirs(project) if runstate.resolve_run(d) == d.resolve()
                for st in [_read_state(d)] if st]
+    rows: dict[tuple, dict] = {}
     for st in states:
         dep = st.get("deploy") or {}
         steps = dep.get("steps") or {}
         if not dep.get("deploy_name") or not any(steps.get(x, {}).get("ok") for x in STEPS):
             continue
+        version = dep.get("scheme") == SCHEME
         key = (dep.get("repo"), dep["deploy_name"])
-        row = rows.setdefault(key, {"name": dep["deploy_name"], "repo": dep.get("repo"), "run": None,
-                                    "deployed": None, "last_invoked": None, "invocations": 0,
-                                    "reused_by": [], "torn_down": None})
-        if dep.get("reused_from") or dep.get("deployment") == "reused":
-            row["reused_by"].append(st.get("run_id"))
-        else:
-            row["run"] = st.get("run_id")
-            row["deployed"] = min((steps[x]["ts"] for x in STEPS if steps.get(x, {}).get("ok") and steps[x].get("ts")),
-                                  default=None)
-            # a run's own teardown removes only its payload; the deployment goes with teardown --all
-            gone = dep.get("deployment_teardown") if dep.get("scheme") == SCHEME else dep.get("teardown")
-            row["torn_down"] = (gone or {}).get("ts")
+        row = rows.setdefault(key, {"name": dep["deploy_name"], "repo": dep.get("repo"),
+                                    "scheme": "version" if version else "legacy", "deployed": None,
+                                    "torn_down": None, "projects": None, "projects_seen": None, "runs": [],
+                                    **({} if version else {"session": None, "also_invoked_by": []})})
         inv = steps.get("invoke") or {}
-        if inv.get("ok"):
-            row["invocations"] += 1
-            row["last_invoked"] = max(filter(None, [row["last_invoked"], inv.get("ts")]), default=None)
-    out = sorted(rows.values(), key=lambda r: r["deployed"] or r["last_invoked"] or "")
+        status, when = _run_status(st)
+        made = not (dep.get("reused_from") or dep.get("deployment") == "reused")
+        run = {"run": runstate.handle(st) if version else st.get("run_id"),
+               "run_id": (st.get("execution") or {}).get("run_id") or st.get("run_id"),
+               "status": status, **({"torn_down": when} if when else {}),
+               "invocation_id": dep.get("invocation_id") if inv.get("ok") else None,
+               "invoked": inv.get("ts") if inv.get("ok") else None, "made_deployment": made}
+        row["runs"].append(run)
+        if version:
+            marker = dep.get("marker") or {}
+            if marker.get("seen") and (row["projects_seen"] or "") < marker["seen"]:
+                row["projects"], row["projects_seen"] = marker.get("projects") or [], marker["seen"]
+            first = marker.get("deployed_at") or (_first_ok(steps) if made else None)
+            if first:
+                row["deployed"] = min(filter(None, [row["deployed"], first]))
+            gone = (dep.get("deployment_teardown") or {}).get("ts")
+            if gone:
+                row["torn_down"] = max(filter(None, [row["torn_down"], gone]))
+        elif made:
+            row["session"] = st.get("run_id")
+            row["deployed"] = _first_ok(steps)
+            row["torn_down"] = (dep.get("teardown") or {}).get("ts")
+        else:
+            row["also_invoked_by"].append(st.get("run_id"))
+    for row in rows.values():
+        row["runs"].sort(key=lambda r: (r["invoked"] or "~", r["run_id"] or ""))
+        # deployed again after a teardown --all: the deployment is there again
+        if row["scheme"] == "version" and row["torn_down"] and any(
+                r["made_deployment"] and r["status"] != "torn down" for r in row["runs"]):
+            row["torn_down"] = None
+    out = sorted(rows.values(), key=lambda r: r["deployed"] or min((x["invoked"] or "" for x in r["runs"]), default=""))
     md = []
     for r in out:  # one block per deployment: long names and run ids don't fit a table row
-        md += [f"**`{r['name']}`**" + (" — torn down" if r["torn_down"] else ""),
-               f"- Repo: {r['repo']}",
-               f"- Run: {r['run'] or '(not in this project)'}",
-               f"- Deployed: {_when(r['deployed'])}",
-               f"- Last invoked: {_when(r['last_invoked'])}" + (f" ({r['invocations']} invocation(s))"
-                                                               if r["invocations"] else "")]
-        if r["reused_by"]:
-            md.append(f"- Reused by: {', '.join(r['reused_by'])}")
+        md += [f"**`{r['name']}`**" + (" — torn down" if r["torn_down"] else ""), f"- Repo: {r['repo']}",
+               f"- Deployed: {_when(r['deployed'])}"]
+        if r["scheme"] == "version":
+            md.append("- Projects: " + (f"{', '.join(r['projects']) or '—'} (as of {_when(r['projects_seen'])})"
+                                        if r["projects"] is not None else "not recorded (deployed before this was kept)"))
+        else:
+            md.append(f"- Session: {r['session'] or '(not in this project)'}")
+            invoked = sorted(x["invoked"] for x in r["runs"] if x["invoked"])
+            if invoked:
+                md.append(f"- Last invoked: {_when(invoked[-1])} ({len(invoked)} invocation(s))")
+            if r["also_invoked_by"]:
+                md.append(f"- Also invoked by: {', '.join(r['also_invoked_by'])}")
         if r["torn_down"]:
             md.append(f"- Torn down: {_when(r['torn_down'])}")
+        if r["scheme"] == "version":
+            md.append("- Runs:")
+            for x in r["runs"]:
+                st_txt = x["status"] + (f" {_when(x['torn_down'])}" if x.get("torn_down") else "")
+                inv = f" · invocation `{x['invocation_id']}`, {_when(x['invoked'])}" if x["invoked"] else ""
+                md.append(f"  - `{x['run']}` — {st_txt}{inv}")
         md.append("")
     return {"ok": True, "project": str(project), "deployments": out,
             "markdown": "\n".join(md).rstrip() if out else "No deployments recorded in this project's runs."}

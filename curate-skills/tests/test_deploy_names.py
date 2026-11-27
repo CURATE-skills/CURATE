@@ -157,30 +157,59 @@ def test_list_shows_each_deployment_once_with_its_runs(project, plain, capsys, m
     make_run(project, "20261107-090000-weather", deploy=deployed(
         "weather-1107-0900", "-1107-0900", teardown={"ts": "2026-11-08T00:00:00+00:00"}), stage="done")
     make_run(project, C)  # never deployed: not listed
-    # one deployment per version: made by one run, reused by the next; a run's own teardown leaves it
-    make_run(project, "20261110-090000-aaaa", rid="20261110-090000-aaaa", deploy=version_deployed(
-        "20261110-090000-aaaa", teardown={"ts": "2026-11-11T00:00:00+00:00"}), stage="done")
-    make_run(project, "20261110-100000-bbbb", rid="20261110-100000-bbbb",
-             deploy=version_deployed("20261110-100000-bbbb", "reused"), stage="done")
+    # one deployment per version, made by the first run; the other runs' statuses
+    marker = {"projects": ["p-1"], "deployed_at": "2026-11-05T10:01:00+00:00", "seen": "2026-11-05T10:01:00+00:00"}
+    ra, rb, rc, rd = (f"20261110-0{h}0000-{x}" for h, x in ((9, "aaaa"), (8, "bbbb"), (7, "cccc"), (6, "dddd")))
+    make_run(project, ra, rid=ra, deploy=version_deployed(
+        ra, teardown={"ts": "2026-11-11T00:00:00+00:00"}, marker=marker), stage="done")
+    make_run(project, rb, rid=rb, deploy=version_deployed(rb, "reused", marker={
+        **marker, "projects": ["p-1", "p-2"], "seen": "2026-11-06T00:00:00+00:00"}),
+        monitor={"finished": True, "result": "success"}, stage="done")
+    make_run(project, rc, rid=rc, deploy=version_deployed(rc, "reused"), monitor={"result": "pending"}, stage="monitor")
+    rd_dep = version_deployed(rd, "reused")
+    del rd_dep["steps"]["invoke"]
+    make_run(project, rd, rid=rd, deploy=rd_dep, stage="deploy")
     monkeypatch.chdir(project)
     code, out = cli(capsys, "list")
     assert code == 0
     rows = {r["name"]: r for r in out["deployments"]}
     assert set(rows) == {"weather-cs", "weather-1105-0930", "weather-1107-0900", V}
+    # legacy, date-suffixed: by the session that made it
     a = rows["weather-1105-0930"]
-    assert a["run"] == A and a["reused_by"] == [B] and a["invocations"] == 2
-    assert a["deployed"] == "2026-11-05T10:00:00+00:00" and a["last_invoked"] == "2026-11-06T14:05:00+00:00"
+    assert a["scheme"] == "legacy" and a["session"] == A and a["also_invoked_by"] == [B]
+    assert a["deployed"] == "2026-11-05T10:00:00+00:00" and len(a["runs"]) == 2
     assert rows["weather-1107-0900"]["torn_down"] == "2026-11-08T00:00:00+00:00"
+    # the version's deployment, not attributed to a run, with every run underneath
     v = rows[V]
-    assert v["run"] == "20261110-090000-aaaa" and v["reused_by"] == ["20261110-100000-bbbb"]
-    assert v["invocations"] == 2 and v["torn_down"] is None  # the run's teardown did not remove the deployment
+    assert v["scheme"] == "version" and v["torn_down"] is None  # a run's teardown leaves the deployment
+    assert v["deployed"] == "2026-11-05T10:01:00+00:00" and v["projects"] == ["p-1", "p-2"]
+    status = {x["run_id"]: x["status"] for x in v["runs"]}
+    assert status == {ra: "torn down", rb: "finished", rc: "active", rd: "not invoked"}
+    assert set(D.RUN_STATUSES) == set(status.values())
     blocks = out["markdown"].split("\n\n")
     assert blocks[1].splitlines() == [
-        "**`weather-1105-0930`**", "- Repo: alice/faasr-actions", f"- Run: {A}",
-        "- Deployed: 2026-11-05 10:00 UTC", "- Last invoked: 2026-11-06 14:05 UTC (2 invocation(s))",
-        f"- Reused by: {B}"]
+        "**`weather-1105-0930`**", "- Repo: alice/faasr-actions", "- Deployed: 2026-11-05 10:00 UTC",
+        f"- Session: {A}", "- Last invoked: 2026-11-06 14:05 UTC (2 invocation(s))", f"- Also invoked by: {B}"]
     assert blocks[2].splitlines()[0] == "**`weather-1107-0900`** — torn down"
     assert blocks[2].splitlines()[-1] == "- Torn down: 2026-11-08 00:00 UTC" and "|" not in out["markdown"]
+    vb = next(b for b in blocks if b.startswith(f"**`{V}`**")).splitlines()
+    assert vb[:5] == [f"**`{V}`**", "- Repo: alice/faasr-actions", "- Deployed: 2026-11-05 10:01 UTC",
+                      "- Projects: p-1, p-2 (as of 2026-11-06 00:00 UTC)", "- Runs:"]
+    run_lines = {x: next(line for line in vb if x in line) for x in (ra, rb, rc, rd)}
+    assert run_lines[ra].endswith("— torn down 2026-11-11 00:00 UTC · invocation `inv`, 2026-11-05 10:03 UTC")
+    assert "— finished · invocation `inv`" in run_lines[rb] and "— active · invocation `inv`" in run_lines[rc]
+    assert run_lines[rd].endswith("— not invoked")
+
+
+def test_list_after_teardown_all_and_without_a_recorded_marker(project, plain, capsys):
+    ra = "20261110-090000-aaaa"
+    gone = {"ts": "2026-11-12T00:00:00+00:00"}
+    make_run(project, ra, rid=ra, deploy=version_deployed(ra, teardown=gone, deployment_teardown=gone), stage="done")
+    code, out = cli(capsys, "list", "--project", str(project))
+    v = out["deployments"][0]
+    assert v["torn_down"] == gone["ts"] and v["projects"] is None and v["runs"][0]["status"] == "torn down"
+    assert out["markdown"].splitlines()[0] == f"**`{V}`** — torn down"
+    assert "- Projects: not recorded (deployed before this was kept)" in out["markdown"]
 
 
 def test_list_with_no_runs(tmp_path, capsys):
@@ -327,8 +356,9 @@ def test_docs_describe_version_names_list_and_teardown_and_no_cs_default():
     plugin = Path(__file__).resolve().parents[1]
     readme = " ".join((plugin / "README.md").read_text().split())
     assert "A workflow version is deployed once, named after its workflow id (`<workflow-id>`)" in readme
-    assert "`/curate-skills:curate-deploy --list` shows this project's deployments; `--teardown --run " \
-           "<workflow-id>/<run-id>` deletes that run's payload, outputs and logs" in readme
+    assert "`/curate-skills:curate-deploy --list` shows this project's deployments, each version's with its runs " \
+           "underneath (active, finished, not invoked or torn down)" in readme
+    assert "`--teardown --run <workflow-id>/<run-id>` deletes that run's payload, outputs and logs" in readme
     assert "MMDD" not in readme
     for f in ("README.md", ".env.template", "skills/curate-deploy/SKILL.md", "references/stages/deploy.md",
               "references/stages/monitor.md", "scripts/doctor.py"):

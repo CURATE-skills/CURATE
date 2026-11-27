@@ -19,7 +19,11 @@ Arguments: `$ARGUMENTS`
 ## 0. --list or --teardown (not the deploy stage)
 
 - **`--list`**: `deploy.py list`; print its `markdown` exactly and stop. It only reads this
-  project's runs.
+  project's runs (no repo or S3). Each version's deployment (repo, when deployed, the projects its
+  marker listed when a run last saw it) is listed with its runs underneath, each **active**,
+  **finished**, **not invoked** or **torn down**, with its invocation; a run's teardown leaves the
+  deployment, `--all` removes it. Older date-suffixed deployments (one per run) are listed by the
+  session that made them. Don't restate it or attribute a version's deployment to one run.
 - **`--teardown --run <workflow-id>/<run-id>`** (find the run as in 1; do not run `spec.py begin`) or
   **`--teardown --workflow <workflow-id> --all`**. Below, `<target>` is `--run <run>`, or
   `--workflow <workflow-id> --all`. A run's teardown deletes its payload, its S3 outputs and logs; the
