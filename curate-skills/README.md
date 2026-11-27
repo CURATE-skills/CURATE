@@ -15,7 +15,7 @@ before you see them. Verified functions go into a catalog that later runs reuse.
 | `/curate-skills:curate` | Runs the full pipeline, stopping at each gate |
 | `/curate-skills:curate-skeleton` | Turns the sketch into an outline: steps, order, ranked steps (Gate 1) |
 | `/curate-skills:curate-reuse` | Searches the catalog; decides reuse, adapt or new for each step |
-| `/curate-skills:curate-resolve` | Adds the details: input/output files, data flow, packages (Gate 2) |
+| `/curate-skills:curate-resolve` | Adds the details: input/output files, data flow, packages, and the date ranges dated data uses, read against the day it ran (Gate 2) |
 | `/curate-skills:curate-generate` | Writes and tests each function (Gate 3) |
 | `/curate-skills:curate-emit` | Builds and validates the FaaSr workflow file and bundle (Gate 4) |
 | `/curate-skills:curate-deploy` | Deploys the bundle to your repo and bucket, or runs it on Pegasus/HTCondor, asking before each step (optional) |

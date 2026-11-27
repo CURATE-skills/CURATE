@@ -7,11 +7,14 @@ Adapted from CURATE-prototype `prompts/wca_prompts.py` `WCA_RESOLVE_PROMPT` and
 
 After `apply-candidates`, run `spec.py prompt-context --session <session> --stage resolve`. It returns
 `workflow_json` (the skeleton with candidates applied — catalog renames done, code omitted),
-`fca_candidates`, `user_models_section`, `context_files_section` and `feedback_section`.
+`fca_candidates`, `user_models_section`, `context_files_section`, `feedback_section` and `today`
+(the date relative phrases are read against).
 
 ## Prompt
 
 The workflow skeleton has been reviewed. Now resolve the concrete data dependencies.
+
+Today is {today}.
 
 Current skeleton:
 {workflow_json}
@@ -41,6 +44,11 @@ Produce a complete WorkflowSpec JSON:
   "data_flow": [
     {"from_node": "fn_a", "to_node": "fn_b", "file": "concrete_filename.csv", "format": "csv", "folder": "workflow_folder_name"}
   ],
+  "resolved_on": "{today}",
+  "date_ranges": [
+    {"name": "winter", "start": "2024-12-01", "end": "2025-02-28", "nodes": ["download_station", "summarize_winter"],
+     "source": "GHCN-Daily station USC00351862", "phrase": "this winter"}
+  ],
   "assumptions": {
     "affects_results": [
       "\"extend that window by 30 days\" -> 30 days added after the end date, baseline only",
@@ -52,6 +60,17 @@ Produce a complete WorkflowSpec JSON:
   }
 }
 ```
+
+Date ranges (the user sees them first among the assumptions at Gate 2): for EVERY step that
+downloads or filters dated data, give the range as explicit ISO dates (both ends inclusive), with
+the steps that use it in `nodes`, the dataset in `source`, and the user's words in `phrase`.
+`name` is a short identifier (`winter`, `baseline`). Read relative phrases ("this winter", "last
+year", "recent") against today ({today}) and set `resolved_on` to it. Choose a range the source
+can already cover: it must end on or before today, and sources often publish weeks or months
+late, so for "this winter" or "this year" prefer the most recent COMPLETE period with data and say
+so in the assumption line. `[]` if no step uses dated data. Write each range into the affected
+nodes' descriptions too, and state there that the step raises if a range has no observed values,
+naming the range and the first and last dates in the data (never an empty or all-missing result).
 
 Assumptions (informational; the user sees them at Gate 2 and changes one by an ordinary change
 request): list EVERY interpretation the design relies on that the user's request did not state

@@ -65,6 +65,7 @@ import catalog as catalog_mod
 from curate_models import (
     ContextFile,
     DataFlowEdge,
+    DateRange,
     FunctionSpec,
     IOSpec,
     UserModel,
@@ -521,6 +522,7 @@ def cmd_prompt_context(args) -> dict:
         raise InputError("no candidates applied yet (run apply-candidates)")
     acc = accumulated_feedback(s, include_code_feedback=True)
     return {"ok": True, "stage": "resolve",
+            "today": _dt.date.today().isoformat(),  # what relative phrases ("this winter") are read against
             "workflow_json": _strip_code(enriched),
             "fca_candidates": candidates_text(s["candidates"]),
             "feedback_section": (f"Standing change requests (honor ALL — later items override earlier "
@@ -601,10 +603,18 @@ def parse_workflow_spec(data: dict, skeleton: bool = False) -> WorkflowSpec:
         raise InputError(f"edges reference unknown nodes: {unknown}")
     data_flow = [DataFlowEdge(**df) for df in data.get("data_flow", [])]
     results, presentation = split_assumptions(data.get("assumptions"))
+    ranges = data.get("date_ranges") or []
+    if not isinstance(ranges, list) or not all(isinstance(r, dict) for r in ranges):
+        raise InputError('"date_ranges" must be a list of {"name", "start", "end", "nodes", "source", "phrase"}')
+    try:
+        date_ranges = [DateRange(**{k: v for k, v in r.items() if k in DateRange.model_fields}) for r in ranges]
+    except ValidationError as e:
+        raise InputError(f"a date range is not valid: {e}") from e
     return WorkflowSpec(
         name=data.get("name", "workflow"), description=data.get("description", ""),
         nodes=nodes, edges=edges, data_flow=data_flow, assumptions=results,
         presentation_assumptions=presentation,
+        date_ranges=date_ranges, resolved_on=data.get("resolved_on") or None,
         entry=data.get("entry") or nodes[0].name,
         folder=data.get("folder", "workflow_data"),
         compute_target=data.get("compute_target", "GH"),
@@ -1026,6 +1036,8 @@ def cmd_merge_resolved(args) -> dict:
                          f"missing={sorted(expected - names)} unknown={sorted(names - expected)}")
     log: list[str] = []
     spec = prune_transitive_edges(ensure_reachable(merge_resolved(resolved, enriched.nodes), log), log)
+    if not _iso_date(spec.resolved_on):  # the reference date the ranges were read against
+        spec = spec.model_copy(update={"resolved_on": _dt.date.today().isoformat()})
     s["spec"] = dump(spec)
     s["spec_basis"] = spec_hash(s["enriched_spec"])
     s["repairs"] = (s.get("repairs") or []) + log
@@ -1050,8 +1062,73 @@ def _names_match(a: str, b: str) -> bool:
         or a.replace("{rank}", "#") == b.replace("{rank}", "#")
 
 
+def _iso_date(v) -> _dt.date | None:
+    try:
+        return _dt.date.fromisoformat(str(v)) if v else None
+    except ValueError:
+        return None
+
+
+# words in a step's description that suggest it downloads or filters dated data
+DATED_RX = re.compile(r"\b(?:1[89]|20)\d\d\b|\b(?:winter|summer|spring|autumn|season(?:al)?|daily|monthly|"
+                      r"date range|time series|this (?:week|month|year)|last (?:week|month|year)|"
+                      r"january|february|march|april|june|july|august|september|october|november|december)\b",
+                      re.I)
+
+
+def check_date_ranges(spec: WorkflowSpec) -> list[dict]:
+    """The spec's date ranges: well formed, on known steps, and within what a source can have on the
+    day resolve read them (resolved_on). A step that looks dated but has no range is only a
+    warning. Specs resolved before ranges were recorded (no resolved_on) are not checked."""
+    out: list[dict] = []
+
+    def add(sev, msg):
+        out.append({"severity": sev, "message": msg})
+
+    on = _iso_date(spec.resolved_on)
+    if on is None and not spec.date_ranges:
+        return out
+    names = {n.name for n in spec.nodes}
+    seen = set()
+    for r in spec.date_ranges:
+        label = f"date range {r.name!r}"
+        if not _IDENT.match(r.name):
+            add("error", f"{label}: the name must be an identifier (it may become a workflow input)")
+        if r.name in seen:
+            add("error", f"{label} is defined twice")
+        seen.add(r.name)
+        start, end = _iso_date(r.start), _iso_date(r.end)
+        if start is None or end is None:
+            add("error", f"{label}: start and end must be ISO dates (YYYY-MM-DD), got {r.start!r} – {r.end!r}")
+            continue
+        if start > end:
+            add("error", f"{label}: starts {r.start}, after its end {r.end}")
+        for n in r.nodes:
+            if n not in names:
+                add("error", f"{label} names unknown step {n!r}")
+        if on and start > on:
+            add("warning", f"{label} ({r.start} – {r.end}) is entirely after {on.isoformat()}, the day it was "
+                           "read: no source can have data for it yet; the run would find none")
+        elif on and end > on:
+            add("warning", f"{label} ends {r.end}, after {on.isoformat()}, the day it was read: the data can "
+                           "stop before the end, or (if the source lags) cover none of it")
+    by_name = {n.name: n for n in spec.nodes}
+    for name in dict.fromkeys(x for r in spec.date_ranges for x in r.nodes):
+        if name in by_name and by_name[name].source == "catalog":
+            add("warning", f"{name} uses a date range but is reused as is from the catalog: it may not raise on "
+                           "an empty range; choose adapt to apply the rule")
+    if on:
+        covered = {n for r in spec.date_ranges for n in r.nodes}
+        for n in spec.nodes:
+            m = DATED_RX.search(n.description or "")
+            if m and n.name not in covered:
+                add("warning", f"{n.name} mentions {m.group(0)!r} but no date range names it: if it downloads "
+                               "or filters dated data, ask for its range to be stated")
+    return out
+
+
 def check_spec(spec: WorkflowSpec) -> list[dict]:
-    problems: list[dict] = []
+    problems: list[dict] = check_date_ranges(spec)
 
     def add(sev, msg):
         problems.append({"severity": sev, "message": msg})
@@ -2610,7 +2687,7 @@ def show_gate(s: dict, gate: int, detailed: bool = False) -> str:
             out += ["", "Check:"] + [f"- **{p['severity']}**: {p['message']}" for p in problems]
         out += ["", "### Assumptions", "",
                 "Readings of the sketch the design relies on (to change one, ask for it as a change):"]
-        out += assumption_lines(spec) or ["- none"]
+        out += date_range_lines(spec) + (assumption_lines(spec) or ["- none"])
         return "\n".join(out)
     if gate == 3:
         mga = s.get("mga") or {}
@@ -2887,6 +2964,18 @@ def gate_marker(s: dict, gate: int) -> str:
 
 
 BUNDLE_SKIP = re.compile(r"(^|/)(\.DS_Store|Thumbs\.db|desktop\.ini|\._[^/]*|__pycache__(/.*)?)$")
+
+
+def date_range_lines(spec: WorkflowSpec) -> list[str]:
+    """Gate 2: the dated data each step uses, as explicit ranges, with the day they were read."""
+    if not spec.resolved_on and not spec.date_ranges:
+        return []  # resolved before ranges were recorded
+    out = ["", f"**Date ranges** (read on {spec.resolved_on or '—'}, taken as today)"]
+    for r in spec.date_ranges:
+        said = f' ("{r.phrase}")' if r.phrase else ""
+        src = f"; source: {r.source}" if r.source else ""
+        out.append(f"- `{r.name}`: {r.start} – {r.end}{said}; used by {', '.join(r.nodes) or '—'}{src}")
+    return out if spec.date_ranges else out + ["- none: no step downloads or filters dated data"]
 
 
 def assumption_lines(spec: WorkflowSpec) -> list[str]:

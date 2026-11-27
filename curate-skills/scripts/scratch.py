@@ -274,6 +274,25 @@ YOU ARE NOT DONE UNTIL THIS RUNS CLEANLY on representative inputs:
 {ctx_block}"""
 
 
+def date_ranges_md(spec: FunctionSpec, wf: WorkflowSpec) -> str:
+    """The date ranges this function uses (Gate 2's), and the rule that an empty range fails."""
+    ranges = [r for r in wf.date_ranges if spec.name in r.nodes]
+    if not ranges:
+        return ""
+    lines = "\n".join(f"- `{r.name}`: {r.start} to {r.end}, both inclusive"
+                      + (f' ("{r.phrase}")' if r.phrase else "") + (f"; source: {r.source}" if r.source else "")
+                      for r in ranges)
+    return f"""
+## Date Ranges (approved at Gate 2; read on {wf.resolved_on or "—"})
+{lines}
+Use exactly these dates. After filtering to a range, count the OBSERVED (non-missing) values,
+before any reindexing to a full calendar or filling of gaps. If a range has none (for each series
+a result reports, e.g. each variable or panel), raise ValueError naming the range and the first
+and last dates actually in the data, e.g. "no observations in 2025-12-01..2026-02-28; the data
+covers 1893-01-01..2025-07-31". Never write a result that reads "0 of N days observed".
+"""
+
+
 def node_spec_md(session: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: str,
                  seeded: list[str]) -> str:
     signature, test_call = signature_and_test_call(spec, wf)
@@ -292,6 +311,7 @@ def node_spec_md(session: Path, spec: FunctionSpec, wf: WorkflowSpec, feedback: 
                          for d in wf.data_flow if d.from_node == spec.name) \
         or "  (none — this is a sink node, write final outputs)"
     deps = ", ".join(spec.dependencies) if spec.dependencies else "none"
+    date_block = date_ranges_md(spec, wf)
     secrets_block = "\n".join(f'  - {s}   →   read with os.environ["{s}"]'
                               for s in spec.secrets) or "  (none)"
 
@@ -424,7 +444,7 @@ Your folder (the only place you may write): `{me}`
 
 ## Outputs
 {outputs_lines}
-{rank_block}
+{date_block}{rank_block}
 ## PyPI Dependencies (third-party packages only — NOT stdlib, NOT any workflow system)
 {deps}
 Write the packages your code imports, one per line, to `{me}/{spec.name}.deps.txt`

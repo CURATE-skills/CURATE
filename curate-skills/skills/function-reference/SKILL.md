@@ -80,6 +80,13 @@ simulates or hardcodes data when an API, URL, dataset, file, credential or netwo
 resource is missing or fails. If a required source cannot be reached, print the error and
 raise. Failing loudly is correct; inventing data is never acceptable.
 
+**Dated data: an empty range is an error.** When `spec.md` lists Date Ranges, filter to exactly
+those dates and count the observed (non-missing) values BEFORE any reindexing to a full calendar
+or filling of gaps. If a range has none, for any series a result reports (each variable, panel or
+station), raise `ValueError` naming the range and the first and last dates actually in the data:
+`no observations in 2025-12-01..2026-02-28; the data covers 1893-01-01..2025-07-31`. A table or
+figure reading "0 of 90 days observed" is a failed run, never a result.
+
 ## Secrets
 
 Read each credential with `os.environ["NAME"]` — see Required Secrets in `spec.md`. Never

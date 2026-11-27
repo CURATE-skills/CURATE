@@ -12,7 +12,7 @@ import sys
 import uuid
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_serializer
 
 
 def clean_dependencies(deps) -> list[str]:
@@ -110,6 +110,18 @@ class WorkflowEdge(BaseModel):
     condition: Optional[Literal["True", "False"]] = None  # for conditional branching
 
 
+class DateRange(BaseModel):
+    """A date range a step downloads or filters dated data to: an explicit reading of the
+    sketch's words (e.g. "this winter"), shown at Gate 2 as an assumption. Shaped so it can later
+    become workflow inputs (`<name>_start`, `<name>_end` in inputs.yml); not wired up yet."""
+    name: str  # a Python identifier naming the range, e.g. "winter"
+    start: str  # ISO date YYYY-MM-DD, inclusive
+    end: str  # ISO date YYYY-MM-DD, inclusive
+    nodes: list[str] = Field(default_factory=list)  # the steps that use it
+    source: str = ""  # the dataset it is taken from, e.g. "GHCN-Daily station USC00351862"
+    phrase: str = ""  # the user's words it reads, e.g. "this winter"
+
+
 class WorkflowSpec(BaseModel):
     name: str
     description: str = ""
@@ -125,6 +137,21 @@ class WorkflowSpec(BaseModel):
     # consequential first: those that change the numbers, then presentation and format.
     assumptions: list[str] = Field(default_factory=list)  # affect the results
     presentation_assumptions: list[str] = Field(default_factory=list)  # layout, formats, dpi, source URL
+    # The dated data each step uses, as explicit ranges, and the date resolve took as "today" when it
+    # read relative phrases ("this winter"). Left out of the dump when unset, so the hash of a spec
+    # without them is what it was before they existed.
+    date_ranges: list[DateRange] = Field(default_factory=list)
+    resolved_on: Optional[str] = None  # ISO date
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_dates(self, handler):
+        d = handler(self)
+        if isinstance(d, dict):
+            if not d.get("date_ranges"):
+                d.pop("date_ranges", None)
+            if d.get("resolved_on") is None:
+                d.pop("resolved_on", None)
+        return d
 
 
 # Run-state / provenance fields that describe how a particular run sourced a
