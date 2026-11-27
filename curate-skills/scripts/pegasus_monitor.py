@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shlex
 import shutil
 import time
@@ -182,37 +181,46 @@ def report_md(rec: dict, result: str, st: dict, report: dict | None, deliver: st
 
 # ── the visible output folder ────────────────────────────────────────────────
 
-def _unique(base: Path) -> Path:
-    """`base` if it is free (missing or empty), else `base-2`, `base-3`, … (as emit's bundle folder)."""
-    candidate, n = base, 2
-    while candidate.is_dir() and any(candidate.iterdir()):
-        candidate, n = Path(f"{base}-{n}"), n + 1
-    return candidate
-
-
-def output_folder(run_p: Path, s: dict, mon: dict, deliver: str, report_file: str, result: str, why: str) -> str:
-    """<project>/pegasus_output/<workflow>-<run_id>/: the delivered files (results/ ...) and
-    run-report.json, next to faasr_output/; a FAILED.txt marker when the run failed (its outputs
-    are partial). Copied once per launch: the folder recorded for this launch is reused; a new
-    launch gets a new folder (-2, -3 ...). Never overwrites anything."""
-    prev = mon.get("output_dir")
-    if prev and Path(prev).is_dir():
-        return prev
-    project = Path(s.get("project_dir") or run_p.parents[2])
-    name = re.sub(r"[^a-zA-Z0-9_-]", "_", (s.get("spec") or {}).get("name") or "workflow")
-    dest = _unique(project / "pegasus_output" / f"{name}-{re.sub(r'[^a-zA-Z0-9_-]', '_', s['run_id'])}")
-    if deliver and Path(deliver).is_dir():
-        shutil.copytree(deliver, dest, dirs_exist_ok=True)  # dest is new or empty
-    else:
-        dest.mkdir(parents=True, exist_ok=True)
+def output_folder(run_p: Path, s: dict, deliver: str, report_file: str, result: str, why: str) -> tuple[str, list]:
+    """The run's one outputs/ (its results folder): the delivered files (results/ ...), as
+    outputs_dir fills it in: a later collect of the same launch (a re-check) keeps files with the
+    same bytes, adds missing ones, and never overwrites a file edited by hand (returned as
+    skipped). run-report.json is this collect's report (replaced each time); FAILED.txt marks a
+    failed run (its outputs are partial) and is removed once a collect succeeds. manifest.json
+    records the files and every copy. Returns (folder, skipped)."""
+    import outputs_dir as O
+    dest = local_dir(run_p, s) / "outputs"
+    earlier = O.read_manifest(dest)
+    files, skipped = [], []
+    src = Path(deliver) if deliver else None
+    for f in sorted(src.rglob("*")) if src and src.is_dir() else []:
+        if not f.is_file():
+            continue
+        rel, data = f.relative_to(src).as_posix(), f.read_bytes()
+        if rel in (O.MANIFEST, "run-report.json", "FAILED.txt"):
+            skipped.append({"path": rel, "reason": "a name CURATE uses in outputs/; not copied"})
+            continue
+        status = O.place(dest, rel, data)
+        if status == "differs":
+            skipped.append({"path": rel, "reason": f"{dest / rel} differs from this copy; not overwritten"})
+            continue
+        files.append({"path": rel, "bytes": len(data), "sha256": O.sha256(data), "status": status})
+    dest.mkdir(parents=True, exist_ok=True)
     if report_file and Path(report_file).is_file():
         shutil.copy2(report_file, dest / "run-report.json")
+    marker = dest / "FAILED.txt"
     if result != "success":
-        (dest / "FAILED.txt").write_text(
+        marker.write_text(
             f"This Pegasus run FAILED: {why or 'see run-report.json'}.\n"
             "The files here are the outputs it delivered before failing (partial).\n"
-            f"Details: {run_p / 'pegasus' / 'monitor-report.md'}\n")
-    return str(dest)
+            f"Details: {local_dir(run_p, s) / 'monitor-report.md'}\n")
+    elif marker.is_file():
+        marker.unlink()
+    O.write_manifest(dest, {
+        "run": s["run_id"], "target": "pegasus", "pegasus_run_dir": (s.get("pegasus") or {}).get("run_dir"),
+        "result": result, "files": files, "skipped": skipped,
+        "copies": [*(earlier.get("copies") or []), _now()]})
+    return str(dest), skipped
 
 
 # ── poll ─────────────────────────────────────────────────────────────────────
@@ -283,9 +291,12 @@ def poll(run: str, chunk=None, report_only=False, minutes=None, interval=None, c
     why = ([f"step {', '.join(_failed_steps(st['jobs']))} failed"] if _failed_steps(st["jobs"]) else []) \
         + ([f"DAGMan exit {st['dagman_exit']}"] if st.get("dagman_exit") not in (None, 0) else []) \
         + ([f"missing outputs: {', '.join((report or {}).get('missing') or [])}"] if (report or {}).get("missing") else [])
-    out_dir = None
-    if report is not None:  # once per launch: a re-check of a copied launch reuses its folder
-        out_dir = output_folder(run_p, s, mon, deliver, report_file, result, "; ".join(why))
+    out_dir, out_skipped = None, []
+    if report is not None:  # the run's one outputs/; a re-check fills it in
+        out_dir, out_skipped = output_folder(run_p, s, deliver, report_file, result, "; ".join(why))
+    if out_skipped:
+        lines.append(f"! {len(out_skipped)} file(s) not copied into {out_dir}: "
+                     + "; ".join(f"{x['path']}: {x['reason']}" for x in out_skipped))
     if result == "success":
         lines.append(f"✓ workflow succeeded ({st['counts'].get('done', 0)} jobs; results in {out_dir})")
     elif result == "failure":
@@ -321,7 +332,8 @@ def poll(run: str, chunk=None, report_only=False, minutes=None, interval=None, c
             "accepted": None, "failed": _failed_steps(st["jobs"]), "jobs": st["jobs"], "dagman_exit": st["dagman_exit"],
             "summary": summary, "shown": shown, "report": str(details),
             **({"deliver_dir": deliver, "run_report": report_file, "delivered": report.get("delivered"),
-                "missing": report.get("missing"), "output_dir": out_dir} if report else {}),
+                "missing": report.get("missing"), "output_dir": out_dir,
+                **({"output_skipped": out_skipped} if out_skipped else {})} if report else {}),
             "ts": _now()}
         if result == "pending":
             return

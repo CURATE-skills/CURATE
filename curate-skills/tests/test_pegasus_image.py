@@ -1,5 +1,5 @@
 """A Pegasus run's own image (Gate 4 / "Start this run?"), the shared image check, pinning, and the
-visible pegasus_output/ folder. No Pegasus, HTCondor, Docker or ssh."""
+run's outputs/ folder. No Pegasus, HTCondor, Docker or ssh."""
 import json
 import os
 from pathlib import Path
@@ -226,11 +226,11 @@ def test_start_at_deploy_with_a_different_image(source_run, capsys):  # noqa: F8
     assert s["history"][-1]["image"] == "docker:///me/tools:2"
 
 
-# ── pegasus_output/<workflow>-<run_id>/ ──
+# ── the run's outputs/ ──
 
 def outdir_of(run):
     s = state(run)
-    return Path(s["project_dir"]) / "pegasus_output" / f"mapreduce_word_count-{s['run_id']}"
+    return Path(s["execution"]["dir"]) / "outputs"
 
 
 def test_success_output_folder(launched, monkeypatch):  # noqa: F811
@@ -261,23 +261,53 @@ def test_failure_copies_partial_outputs_with_a_marker_once_per_launch(launched, 
     assert (d / "results" / "word_count_1.json").is_file() and (d / "run-report.json").is_file()
     marker = (d / "FAILED.txt").read_text()
     assert marker.startswith("This Pegasus run FAILED: step reduce failed; DAGMan exit 1; missing outputs:")
+    details = Path(marker.rsplit("Details: ", 1)[1].strip())
+    assert details == d.parent / "monitor-report.md" and details.is_file()  # the report it names exists
     assert "(partial; marked FAILED)" in state(launched)["monitor"]["summary"]
-    # a re-check of the same launch reuses the folder: no -2
+    # a re-check of the same launch uses the same outputs/
     ok(S, ["begin", "--session", str(launched), "--stage", "monitor"], capsys)
     out = poll(launched, Host([failed], collect=rep), monkeypatch)
     assert out["lines"][-1].endswith(f"; partial outputs in {d}")
     assert not Path(f"{d}-2").exists()
 
 
-def test_a_new_launch_gets_a_new_folder(launched, monkeypatch):  # noqa: F811
+def test_a_recheck_fills_in_the_one_outputs_folder(launched, monkeypatch, capsys):  # noqa: F811
+    """A run has exactly one outputs/: a later collect of the same launch (a re-check) keeps files
+    with the same bytes, adds the missing ones and never overwrites a file edited by hand."""
+    work = Path(state(launched)["pegasus"]["work_dir"])
+    res = work / "deliver" / "results"
+    res.mkdir(parents=True)
+    for i in (1, 2):
+        (res / f"word_count_{i}.json").write_text(f'{{"w{i}": 1}}')
+    rep = report("failure (DAGMan status 1)", delivered=["results/word_count_1.json", "results/word_count_2.json"],
+                 missing=[f"word_count_{i}.json" for i in range(3, 6)])
+    (work / "run-report.json").write_text(json.dumps(rep))
+    failed = st("failure", done=JOBS[:7], failed=["reduce__3"], exit_=1)
+    poll(launched, Host([failed], collect=rep), monkeypatch)
     d = outdir_of(launched)
-    d.mkdir(parents=True)
-    (d / "results.txt").write_text("from an earlier launch")  # never overwritten
+    assert (d / "FAILED.txt").is_file()
+    (d / "results" / "word_count_2.json").write_text("edited by hand")
+    # the same Pegasus run folder finishes (e.g. repaired by hand); the re-check collects again
+    for i in range(3, 6):
+        (res / f"word_count_{i}.json").write_text(f'{{"w{i}": 1}}')
+    (work / "run-report.json").write_text(json.dumps(report()))
+    ok(S, ["begin", "--session", str(launched), "--stage", "monitor"], capsys)
     out = poll(launched, Host([ALL], collect=report()), monkeypatch)
-    assert out["lines"][-1].endswith(f"results in {d}-2)")
-    assert (d / "results.txt").read_text() == "from an earlier launch"
+    assert out["result"] == "success" and out["lines"][-1].endswith(f"results in {d})")
+    assert "! 1 file(s) not copied" in out["lines"][-2] and "word_count_2.json" in out["lines"][-2]
+    assert (d / "results" / "word_count_2.json").read_text() == "edited by hand"
+    assert sorted(p.name for p in (d / "results").iterdir()) == [f"word_count_{i}.json" for i in range(1, 6)]
+    assert not (d / "FAILED.txt").exists()  # CURATE's own marker goes once the run succeeded
+    assert json.loads((d / "run-report.json").read_text())["status"] == "success"
+    m = json.loads((d / "manifest.json").read_text())
+    assert len(m["copies"]) == 2 and m["result"] == "success"
+    assert {f["path"]: f["status"] for f in m["files"]} == {
+        "results/word_count_1.json": "kept", **{f"results/word_count_{i}.json": "added" for i in range(3, 6)}}
+    assert [x["path"] for x in m["skipped"]] == ["results/word_count_2.json"]
+    assert sorted(p.name for p in d.parent.iterdir() if p.name.startswith("outputs")) == ["outputs"]  # no outputs-2/
+    assert state(launched)["monitor"]["output_skipped"][0]["path"] == "results/word_count_2.json"
 
 
 def test_report_only_writes_no_output_folder(launched, monkeypatch):  # noqa: F811
     poll(launched, Host([ALL], collect=report()), monkeypatch, report_only=True)
-    assert not (Path(state(launched)["project_dir"]) / "pegasus_output").exists()
+    assert not outdir_of(launched).exists()

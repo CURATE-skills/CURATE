@@ -105,7 +105,7 @@ def test_running_then_success(launched, monkeypatch, capsys):
     out = poll(launched, host, monkeypatch)
     s = state(launched)
     work = s["pegasus"]["work_dir"]
-    outdir = f"{s['project_dir']}/pegasus_output/mapreduce_word_count-{s['run_id']}"
+    outdir = f"{s['execution']['dir']}/outputs"  # the run's outputs/ is its results folder
     assert out["result"] == "success" and out["stage"] == "finalize" and out["next_skill"] == "curate-skills:wda-finalize"
     assert out["lines"] == ["✓ generate_text succeeded", "… split running", "✓ split succeeded",
                             "… map running (0/3)", "✓ map succeeded (3/3)", "✓ shuffle succeeded",
@@ -195,7 +195,7 @@ def test_remote_status_collect_and_fetch(peg_run, monkeypatch, tmp_path):  # noq
     out = poll(peg_run, host, monkeypatch)
     s = state(peg_run)
     res = Path(s["execution"]["dir"]) / "result"  # the run's folder holds its results
-    outdir = Path(s["project_dir"]) / "pegasus_output" / f"mapreduce_word_count-{s['run_id']}"
+    outdir = Path(s["execution"]["dir"]) / "outputs"
     assert out["result"] == "success" and out["lines"][-1].endswith(f"results in {outdir})")
     assert (outdir / "results" / "word_count_1.json").is_file() and (outdir / "run-report.json").is_file()
     ssh = [c for c in host.calls if c[0] == "ssh"]
@@ -257,7 +257,7 @@ def test_real_backend_local(launched, monkeypatch, tmp_path):
     c = Clock()
     out = PM.poll(str(launched), clock=c, sleep=c.sleep)  # PM.RUN is the real hostcmd.run
     assert out["result"] == "success", out
-    outdir = Path(s["project_dir"]) / "pegasus_output" / f"mapreduce_word_count-{s['run_id']}"
+    outdir = Path(s["execution"]["dir"]) / "outputs"
     assert out["lines"] == ["✓ a succeeded", "✓ b succeeded (2/2)", f"✓ workflow succeeded (3 jobs; results in {outdir})"]
     assert (work / "deliver" / "results" / "b_2.txt").read_text() == "b2"
     assert (outdir / "results" / "b_2.txt").read_text() == "b2" and not (outdir / "FAILED.txt").exists()

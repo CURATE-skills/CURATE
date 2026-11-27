@@ -460,6 +460,52 @@ def test_download_outputs_refuses_unsafe_targets_and_skips_secrets(run, env, cap
     assert not (dest / "wx-cs" / "station.csv").exists() and FAKE["S3_SecretKey"] not in json.dumps(out)
 
 
+def _download(capsys, world, *argv):
+    code = M.main(["download-outputs", *argv], s3_factory=world.reader)
+    return code, json.loads(capsys.readouterr().out)
+
+
+def test_download_outputs_goes_to_the_runs_own_outputs_by_default(run, env, capsys):
+    world = World().finish_all()
+    code, out = _download(capsys, world, "--run", str(run))
+    dest = run / "outputs"  # a session made before runs had their own folder: its own outputs/
+    assert code == 0 and out["to"] == str(dest) and (dest / "wx-cs" / "fig.png").read_bytes() == b"data"
+    assert json.loads((dest / "manifest.json").read_text())["invocation_id"] == INV
+
+
+def test_a_partial_download_then_a_full_one_fills_in_the_rest(run, env, capsys):
+    world = World().finish_all()
+    del world.s3["wx-cs/fig.png"]  # not written yet
+    code, out = _download(capsys, world, "--run", str(run))
+    dest = run / "outputs"
+    assert code == 1 and out["skipped"] == [{"key": "wx-cs/fig.png", "reason": "missing"}]
+    first = (dest / "wx-cs" / "station.csv").stat().st_mtime_ns
+    world.s3["wx-cs/fig.png"] = ("png", AFTER)
+    code, out = _download(capsys, world, "--run", str(run))
+    assert code == 0 and out["skipped"] == [] and [f["key"] for f in out["files"]] == OUTPUTS
+    assert (dest / "wx-cs" / "fig.png").read_bytes() == b"png"
+    assert (dest / "wx-cs" / "station.csv").stat().st_mtime_ns == first  # kept, not rewritten
+    m = json.loads((dest / "manifest.json").read_text())
+    assert len(m["copies"]) == 2 and {f["status"] for f in m["files"]} == {"kept", "added"}
+
+
+def test_the_runs_outputs_are_never_overwritten(run, env, capsys):
+    world = World().finish_all()
+    _download(capsys, world, "--run", str(run))
+    dest = run / "outputs"
+    (dest / "wx-cs" / "cmp_1.csv").write_text("edited by hand")
+    code, out = _download(capsys, world, "--run", str(run))
+    assert code == 1 and out["skipped"][0]["key"] == "wx-cs/cmp_1.csv" and "not overwritten" in out["skipped"][0]["reason"]
+    assert (dest / "wx-cs" / "cmp_1.csv").read_text() == "edited by hand"
+    m = json.loads((dest / "manifest.json").read_text())
+    (dest / "manifest.json").write_text(json.dumps({**m, "invocation_id": "another"}))
+    code, out = _download(capsys, world, "--run", str(run))
+    assert code == 2 and "invocation another" in out["error"]
+    (dest / "manifest.json").unlink()
+    code, out = _download(capsys, world, "--run", str(run))
+    assert code == 2 and "has no manifest.json" in out["error"]
+
+
 @pytest.mark.parametrize("config,expected", [
     ("${user_config.monitor_minutes}", (10.0, "default")),  # --plugin-dir: left unsubstituted
     ("", (10.0, "default")),
@@ -604,3 +650,26 @@ def test_deploy_progress_line():
     assert M.D.progress_line(["publish"]) == "published"
     assert M.D.progress_line(["invoke", "publish", "upload", "register"]) == \
         "published · uploaded · registered · invoked"
+
+
+# ── a run in the new layout, named <workflow-id>/<run-id> ────────────────────
+
+from test_flags import deployed  # noqa: E402,F401  (fixture)
+from test_start import source_run  # noqa: E402,F401  (fixture)
+
+
+def test_download_and_status_by_wid_rid_use_the_runs_own_folder(deployed, env, capsys):  # noqa: F811
+    import runstate
+    s = state(deployed)
+    ref, run_dir = s["execution"]["reference"], Path(s["execution"]["dir"])
+    (run_dir / "deploy").mkdir(parents=True, exist_ok=True)
+    (run_dir / "deploy" / "workflow.json").write_text(json.dumps(WF))
+    runstate.update(run_dir, lambda x: x.update(deploy={"deploy_name": "wx-cs", "invocation_id": INV}))
+    world = World()
+    keys = [o["key"] for o in M.run_outputs(run_dir, runstate.load(run_dir), WF)]  # the bundle's outputs.json
+    world.s3.update({k: ("data", AFTER) for k in keys})
+    code, out = _download(capsys, world, "--run", ref)
+    assert code == 0 and out["to"] == str(run_dir / "outputs") and len(out["files"]) == len(keys) > 0
+    assert all((run_dir / "outputs" / k).is_file() for k in keys)
+    assert not (Path(s["project_dir"]) / "results").exists() and not (Path(deployed) / "outputs").exists()
+    assert M.main(["status", "--run", ref]) == 0 and json.loads(capsys.readouterr().out)["ok"]

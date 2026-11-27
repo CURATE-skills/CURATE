@@ -683,22 +683,42 @@ def accept_unconfirmed(run: str, confirmed: bool) -> dict:
     return {"ok": True, "accepted": True}
 
 
-def download_outputs(run: str, to: str, s3_factory=None) -> dict:
-    """Copy the run's declared output files from S3 (get only) to a local folder outside the run,
-    with a manifest of each file's size, LastModified and sha256. Writes nothing in the run."""
-    import hashlib
-    run_p, dest = Path(run).resolve(), Path(to).expanduser().resolve()
-    if dest == run_p or run_p in dest.parents:
-        raise InputError(f"{dest} is inside the run folder; download outside it")
-    if dest.exists() and any(dest.iterdir()):
-        raise InputError(f"{dest} is not empty; nothing is overwritten")
+def download_outputs(run: str, to: str | None = None, s3_factory=None) -> dict:
+    """Copy the run's declared output files from S3 (get only), with a manifest of each file's
+    size, LastModified and sha256. By default into the run's own outputs/ (its results folder);
+    `to`: an empty folder outside the run instead.
+
+    In the run's outputs/, a later download fills it in (outputs_dir: a partial download, then a
+    full one): files already there with the same bytes are kept, the rest are fetched; a file
+    there whose bytes differ is never overwritten (it is reported as skipped). Writes nothing else
+    in the run."""
+    import outputs_dir as O
+    run_p = Path(run).resolve()
     s, _ = D.load_run(run)
     if not (s.get("deploy") or {}).get("invocation_id"):
         raise InputError("this run has no deployed invocation")
+    own = D.files_dir(run_p, s) / "outputs"
+    dest = Path(to).expanduser().resolve() if to else own
+    earlier: dict = {}
+    if dest == own:
+        if (dest / O.MANIFEST).is_file():
+            earlier = O.read_manifest(dest)
+            if earlier.get("invocation_id") != s["deploy"]["invocation_id"]:
+                raise InputError(f"{dest} holds the outputs of invocation {earlier.get('invocation_id')}, not this "
+                                 f"run's {s['deploy']['invocation_id']}; nothing is overwritten (use --to <folder>)")
+        elif dest.exists() and any(dest.iterdir()):
+            raise InputError(f"{dest} is not empty and has no manifest.json; nothing is overwritten (use --to <folder>)")
+    else:
+        if dest == run_p or run_p in dest.parents:
+            raise InputError(f"{dest} is inside the run folder; download outside it (or leave out --to: the "
+                             "run's outputs/)")
+        if dest.exists() and any(dest.iterdir()):
+            raise InputError(f"{dest} is not empty; nothing is overwritten")
     wf = json.loads((D.files_dir(run_p, s) / "deploy" / "workflow.json").read_text())
     s3 = (s3_factory or s3_reader)(wf)
     files, skipped = [], []
     for o in run_outputs(run_p, s, wf):
+        target = dest / o["key"]
         h = s3.head(o["key"])
         if h is None:
             skipped.append({"key": o["key"], "reason": "missing"})
@@ -708,18 +728,19 @@ def download_outputs(run: str, to: str, s3_factory=None) -> dict:
         if leaked:
             skipped.append({"key": o["key"], "reason": f"contains secret values ({', '.join(leaked)}); not saved"})
             continue
-        target = dest / o["key"]
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
+        status = O.place(dest, o["key"], data)
+        if status == "differs":
+            skipped.append({"key": o["key"], "reason": f"{target} differs from S3; not overwritten"})
+            continue
         files.append({"key": o["key"], "action": o["action"], "size": h.get("size"), "bytes": len(data),
-                      "last_modified": h.get("last_modified"), "sha256": hashlib.sha256(data).hexdigest(),
-                      "saved_as": str(target)})
-    manifest = {"run": s["run_id"], "invocation_id": s["deploy"]["invocation_id"], "bucket": s3.bucket,
-                "downloaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "files": files,
-                "skipped": skipped}
-    dest.mkdir(parents=True, exist_ok=True)
-    (dest / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    return {"ok": not skipped, **manifest, "manifest": str(dest / "manifest.json")}
+                      "last_modified": h.get("last_modified"), "sha256": O.sha256(data), "saved_as": str(target),
+                      "status": status})
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    manifest = {"run": s["run_id"], "target": "faasr", "invocation_id": s["deploy"]["invocation_id"],
+                "bucket": s3.bucket, "downloaded_at": now, "files": files, "skipped": skipped,
+                "copies": [*(earlier.get("copies") or []), now]}
+    path = O.write_manifest(dest, manifest)
+    return {"ok": not skipped, **manifest, "manifest": str(path), "to": str(dest)}
 
 
 def status(run: str) -> dict:
@@ -728,7 +749,8 @@ def status(run: str) -> dict:
     return {"ok": True, "stage": s.get("stage"), "result": mon.get("result"), "accepted": mon.get("accepted"),
             "minutes_used": round(float(mon.get("seconds_used") or 0) / 60, 2), "settings": mon.get("settings"),
             "summary": mon.get("summary"),
-            **({"deliver_dir": mon["deliver_dir"]} if mon.get("deliver_dir") else {})}  # Pegasus runs only
+            **({"deliver_dir": mon["deliver_dir"]} if mon.get("deliver_dir") else {}),  # Pegasus runs only
+            **({"output_dir": mon["output_dir"]} if mon.get("output_dir") else {})}
 
 
 # ── Pegasus runs (pegasus_monitor.py) ────────────────────────────────────────
@@ -746,8 +768,8 @@ def _pegasus_main(args, clock, sleep) -> int:
     import pegasus_monitor as PM
     try:
         if args.cmd == "download-outputs":
-            raise PM.InputError("a Pegasus run's results are already on disk: see deliver_dir in "
-                                "`monitor.py status` (state.monitor) after the monitor finished")
+            raise PM.InputError("a Pegasus run's results are already on disk: the monitor copies them into the "
+                                "run's outputs/ (output_dir in `monitor.py status`) when the workflow finishes")
         out = PM.poll(args.run, args.chunk, args.report_only, args.minutes, args.interval, args.config_minutes,
                       clock, sleep)
     except PM.InputError as e:
@@ -772,9 +794,9 @@ def main(argv=None, opener=None, s3_factory=None, clock=time.monotonic, sleep=ti
     q.add_argument("--interval", help=f"seconds between polls (default {DEFAULT_INTERVAL})")
     q.add_argument("--config-minutes", help="plugin setting value; empty = unset")
     sub.add_parser("status").add_argument("--run", required=True, help=RUN_HELP)
-    q = sub.add_parser("download-outputs", help="copy the declared outputs from S3 to a local folder (read-only)")
+    q = sub.add_parser("download-outputs", help="copy the declared outputs from S3 into the run's outputs/ (S3 read-only)")
     q.add_argument("--run", required=True, help=RUN_HELP)
-    q.add_argument("--to", required=True, help="an empty folder outside the run")
+    q.add_argument("--to", help="an empty folder outside the run instead of the run's outputs/")
     q = sub.add_parser("accept-unconfirmed", help="the user accepted runs matched by time only (Gate 5)")
     q.add_argument("--run", required=True, help=RUN_HELP)
     q.add_argument("--confirmed", action="store_true")

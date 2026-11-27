@@ -1764,7 +1764,7 @@ def teardown(run: str, gh: GitHub | None, token: str | None, s3_factory=boto3_s3
     kept = out_objs if outputs == "keep" else []
     saved = None
     if outputs == "download" and out_objs:
-        dest = Path(to) if to else run_p.resolve().parents[2] / "teardown-outputs" / plan["deploy_name"]
+        dest = Path(to) if to else _project_of(run_p) / "teardown-outputs" / plan["deploy_name"]
         try:
             saved = _download(run_p, bundle, out_objs, dest, s3_factory)
         except Exception as e:  # noqa: BLE001

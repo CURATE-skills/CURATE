@@ -50,13 +50,16 @@ and `result` values (no unconfirmed match). It reads, here or over ssh, the Pega
 `state.pegasus.run_dir` records (so it works after a logout or reboot): DAGMan's exit status and
 each job's state. It never submits, removes or changes the workflow. When DAGMan has finished, it
 copies the declared outputs into the run's Pegasus work folder (`deliver/`, plus `run-report.json`)
-and, for an ssh host, fetches both into the run's `result/`; then into the visible folder
-`<project>/pegasus_output/<workflow>-<run_id>/` (with `FAILED.txt` when the run failed: partial
-outputs), which the last line names. Success needs DAGMan exit 0 and
+and, for an ssh host, fetches both into the run's `result/`; then into the run's one `outputs/`, its
+results folder (with `FAILED.txt` when the run failed: partial outputs, and a `manifest.json`), which
+the last line names. A re-check that collects again fills the same `outputs/` in, as FaaSr's
+`download-outputs` does (below); a line starting `!` names any hand-edited file it left alone. Success needs DAGMan exit 0 and
 every declared output delivered. A `timeout` means DAGMan is still running the workflow; the
 re-check continues watching it. Its details file is `monitor-report.md` in the run's folder.
-A Pegasus run started before phase 8 (an `ir.yaml` folder) can no longer be monitored or collected. A FaaSr run's `download-outputs` takes the
-file names from the bundle's `outputs.json`.
+A Pegasus run started before phase 8 (an `ir.yaml` folder) can no longer be monitored or collected. A FaaSr run's outputs stay in S3 until `monitor.py download-outputs --run <run>` copies them into
+the run's `outputs/` (its results folder; `--to <folder>` for an empty folder elsewhere), with a
+`manifest.json`; it takes the file names from the bundle's `outputs.json`. Run it again after a
+partial download: it fetches what is missing, keeps what is there, and never overwrites a file.
 
 ## 2. The result
 
