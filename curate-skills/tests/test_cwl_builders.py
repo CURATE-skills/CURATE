@@ -2,7 +2,7 @@
 example (curate_ir/cwl/examples/features): curate:run_if, curate:after, curate:secrets, folder inputs,
 and the Pegasus backend planning a built folder. The builders' output for every reference workflow is
 fixed in tests/test_cwl_reference.py and tests/test_real_versions.py (until phase 8 this file also
-compared them with the old spec-to-bundle path, emit.write_bundle and pegasus_ir.build_ir)."""
+compared them with the old spec-to-bundle path, emit.write_bundle and pegasus_ir.build_ir (now pegasus_target.py))."""
 import ast
 import json
 import sys

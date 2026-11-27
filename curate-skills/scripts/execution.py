@@ -51,6 +51,25 @@ def project_of(s: dict, run) -> Path:
     return Path(s.get("project_dir") or Path(run).resolve().parent.parent.parent)
 
 
+def gate4_ids(s: dict, run) -> tuple[str | None, str | None]:
+    """(the workflow id the FaaSr deployment and the Pegasus workflow are named after, the id they get
+    instead if the user drops the workflow as a duplicate at Gate 4). Once Gate 4 published: (its id,
+    None). Before: the id Gate 4 would publish, worked out as Gate 4 does (with the catalog), and
+    the existing version Gate 4 keeps on "drop" (the latest duplicate). (None, None) if unknown."""
+    if s.get("workflow_id"):
+        return s["workflow_id"], None
+    if not s.get("spec"):
+        return None, None
+    try:
+        import catalog as C
+        name = s.get("workflow_name") or ids.slug(s["spec"]["name"])
+        cat = C.Catalog(Path(s["catalog_dir"]).expanduser()) if s.get("catalog_dir") else None
+        plan = ids.plan_publish(source_dir(s, run), name, project_of(s, run), catalog=cat)
+    except Exception:  # noqa: BLE001 — a preview only; Gate 4 itself decides
+        return None, None
+    return plan["workflow_id"], (plan["duplicates"][-1] if plan["duplicates"] else None)
+
+
 def stale_draft(s: dict) -> str | None:
     """Why the draft no longer matches the spec (it was changed after emit), or None."""
     if s.get("version_dir") or not s.get("draft_spec_hash"):

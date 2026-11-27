@@ -119,7 +119,7 @@ def test_running_then_success(launched, monkeypatch, capsys):
     assert (Path(state(launched)["execution"]["dir"]) / "monitor-report.md").is_file()
     # the backend ran with the plugin's backend and the run's own IR and work folders, here
     (first,) = host.calls[:1]
-    assert first[:2] == ["sh", "-c"] and f"{PM.IR_TOOLS}/backends/pegasus_backend.py status" in first[2]
+    assert first[:2] == ["sh", "-c"] and f"{PM.PEGASUS_TOOLS}/backends/pegasus_backend.py status" in first[2]
     assert f"--work {work}" in first[2]
     # finalize and Gate 5 work from it
     assert S.require_problems(S.load_state(launched), "finalize") == []
@@ -252,7 +252,7 @@ def test_real_backend_local(launched, monkeypatch, tmp_path):
     for i in (1, 2):
         (work / "output" / f"b_{i}.txt").write_text(f"b{i}")
     s = state(launched)
-    s["pegasus"].update(ir_dir=str(ir.parent), work_dir=str(work), run_dir=str(run_dir))
+    s["pegasus"].update(workflow_dir=str(ir.parent), work_dir=str(work), run_dir=str(run_dir))
     runstate.save(launched, s)
     c = Clock()
     out = PM.poll(str(launched), clock=c, sleep=c.sleep)  # PM.RUN is the real hostcmd.run
@@ -263,3 +263,12 @@ def test_real_backend_local(launched, monkeypatch, tmp_path):
     assert (outdir / "results" / "b_2.txt").read_text() == "b2" and not (outdir / "FAILED.txt").exists()
     assert json.loads((outdir / "run-report.json").read_text())["status"] == "success"
     assert json.loads((work / "run-report.json").read_text())["status"] == "success"
+
+
+def test_a_run_prepared_before_the_rename_is_still_found():
+    """prepare records the Pegasus folder as workflow_dir; runs prepared before step 5 recorded ir_dir."""
+    old = PM._where({"host": None, "ir_dir": "/p/workflows/w-v1/runs/r/bundle", "work_dir": "/p/work"})
+    new = PM._where({"host": None, "workflow_dir": "/p/workflows/w-v1/runs/r/bundle", "work_dir": "/p/work"})
+    assert old == new and new["workflow"] == "/p/workflows/w-v1/runs/r/bundle/workflow.yml"
+    remote = PM._where({"host": "maxwell", "remote_dir": "/h/curate-runs/w-v1/r", "ir_dir": "/x/bundle", "work_dir": "w"})
+    assert remote["workflow"] == "/h/curate-runs/w-v1/r/bundle/workflow.yml"

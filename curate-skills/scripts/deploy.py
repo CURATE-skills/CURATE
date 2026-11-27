@@ -1120,20 +1120,9 @@ def _gate4_target(run: str) -> dict:
     else:
         s, bundle = load_run(run)
         wf = json.loads((bundle / "workflow.json").read_text())
-    duplicates = []
-    if not s.get("workflow_id") and s.get("spec"):
-        # Before Gate 4 publishes: the id it would publish, as Gate 4 works it out (with the catalog),
-        # and, if the workflow is identical to an existing version, the id it gets when the user
-        # drops it as a duplicate at Gate 4 (that version's deployment is used).
-        try:
-            import catalog as C
-            import ids
-            wname = s.get("workflow_name") or ids.slug(s["spec"]["name"])
-            cat = C.Catalog(Path(s["catalog_dir"]).expanduser()) if s.get("catalog_dir") else None
-            plan = ids.plan_publish(X.source_dir(s, run), wname, _project_of(run), catalog=cat)
-            s, duplicates = {**s, "workflow_id": plan["workflow_id"]}, plan["duplicates"]
-        except Exception:  # noqa: BLE001 — the preview then shows <workflow-id>
-            pass
+    wid, dropped = X.gate4_ids(s, run)  # before Gate 4 publishes: the id it would publish (or on "drop")
+    if wid and not s.get("workflow_id"):
+        s = {**s, "workflow_id": wid}
     name = deploy_name(run, override, s)
     rid = (s.get("execution") or {}).get("run_id") or "<run-id>"
     filled_wf, _, unset = fill_placeholders(wf)
@@ -1141,7 +1130,7 @@ def _gate4_target(run: str) -> dict:
     repo = os.environ.get("FAASR_ACTION_REPO", "").strip() or "<FAASR_ACTION_REPO>"
     branch = os.environ.get("FAASR_ACTION_BRANCH", "").strip() or "main"
     copy_wf, targets, s3_targets = deploy_copy(filled_wf, name["name"], rid, user, repo, branch)
-    if_dropped = duplicates[-1] + name["suffix"] if duplicates else None  # Gate 4 keeps the latest duplicate
+    if_dropped = dropped + name["suffix"] if dropped else None
     return {"copy_wf": copy_wf, "targets": targets, "s3_targets": s3_targets, "name": name, "unset": unset,
             "user": user, "repo": repo, "branch": branch, "if_dropped": if_dropped}
 

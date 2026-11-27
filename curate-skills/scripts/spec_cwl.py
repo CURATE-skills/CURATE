@@ -22,7 +22,7 @@ The mapping:
 - a step's `secrets` are curate:secrets {names}; its imports SoftwareRequirement packages;
 - the files read but written by no step are workflow inputs (locations `inputs/<file>`); the files
   written but read by no step are the workflow outputs (curate:deliver_as `results/<file>`).
-The agent never writes CWL. Until phase 8 this went through IR v0.2 (pegasus_ir.build_ir, then
+The agent never writes CWL. Until phase 8 this went through IR v0.2 (pegasus_ir.build_ir (now pegasus_target.py), then
 cwl/from_ir.py); the output is byte for byte the same (tests/test_real_versions.py,
 tests/test_cwl_reference.py).
 

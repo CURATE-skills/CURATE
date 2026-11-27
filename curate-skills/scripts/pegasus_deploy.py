@@ -43,14 +43,14 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import hostcmd  # noqa: E402
 import images  # noqa: E402
 import leakcheck  # noqa: E402
-import pegasus_ir as P  # noqa: E402
+import pegasus_target as P  # noqa: E402
 import spec as S  # noqa: E402
 from curate_models import WorkflowSpec  # noqa: E402
 import runstate  # noqa: E402
 from runstate import RUN_HELP  # noqa: E402
 
 PLUGIN_DIR = SCRIPT_DIR.parent
-IR_TOOLS = PLUGIN_DIR / "curate_ir"
+PEGASUS_TOOLS = PLUGIN_DIR / "curate_ir"  # the backend copied to a Pegasus host
 LOG = Path("deploy-log.jsonl")  # in the run
 LEGACY_LOG = Path("pegasus") / "deploy-log.jsonl"  # runs made before runs had their own state
 REMOTE_ROOT = "curate-runs"
@@ -153,16 +153,16 @@ def _layout(run: Path, s: dict, st: dict) -> dict:
                         "this run has no Pegasus run (it is opened when Gate 4 or \"Start this run?\" "
                         "chooses Pegasus); approve Gate 4 again with --deploy pegasus")
     # the folder is the run's bundle, and the host path its full reference
-    local, ir_dir, ref = Path(ex["dir"]), Path(ex["bundle_dir"]), ex["reference"]  # ir_dir: the Pegasus folder
-    out = {"local": local, "ir_dir": ir_dir, "where": st["host"] or "local", "reference": ref}
+    local, workflow_dir, ref = Path(ex["dir"]), Path(ex["bundle_dir"]), ex["reference"]  # the Pegasus folder
+    out = {"local": local, "workflow_dir": workflow_dir, "where": st["host"] or "local", "reference": ref}
     if st["host"]:
         remote = rec.get("remote_dir")  # absolute, known after copy
         shown = remote or f"~/{REMOTE_ROOT}/{ref}"
-        out.update(remote_dir=remote, shown_remote=shown, workflow_on_host=f"{shown}/{ir_dir.name}/workflow.yml",
+        out.update(remote_dir=remote, shown_remote=shown, workflow_on_host=f"{shown}/{workflow_dir.name}/workflow.yml",
                    work=f"{shown}/work", backend=f"{shown}/curate_ir/backends/pegasus_backend.py")
     else:
-        out.update(remote_dir=None, workflow_on_host=str(ir_dir / "workflow.yml"), work=str(local / "work"),
-                   backend=str(IR_TOOLS / "backends" / "pegasus_backend.py"))
+        out.update(remote_dir=None, workflow_on_host=str(workflow_dir / "workflow.yml"), work=str(local / "work"),
+                   backend=str(PEGASUS_TOOLS / "backends" / "pegasus_backend.py"))
     return out
 
 
@@ -235,12 +235,12 @@ def preflight(run: str, inputs_dir=None) -> dict:
         lines.append(f"- Pegasus {out.strip()} on {lay['where']}")
 
     if "prepare" in done:
-        lines.append(f"- `{lay['ir_dir']}/`: written by this run (prepared)")
+        lines.append(f"- `{lay['workflow_dir']}/`: written by this run (prepared)")
     else:
-        state_ = "exists — refused" if lay["ir_dir"].exists() else "new"
-        if lay["ir_dir"].exists():
-            problems.append(f"{lay['ir_dir']} already exists; nothing is overwritten")
-        lines.append(f"- writes `{lay['ir_dir']}/` (workflow.yml, functions/ {plan['functions']} files, inputs/): {state_}")
+        state_ = "exists — refused" if lay["workflow_dir"].exists() else "new"
+        if lay["workflow_dir"].exists():
+            problems.append(f"{lay['workflow_dir']} already exists; nothing is overwritten")
+        lines.append(f"- writes `{lay['workflow_dir']}/` (workflow.yml, functions/ {plan['functions']} files, inputs/): {state_}")
         problems += _inputs(plan["inputs"], inputs_dir)
     if st["host"]:
         if "copy" in done:
@@ -249,7 +249,7 @@ def preflight(run: str, inputs_dir=None) -> dict:
             code, _, _ = _on(st["host"], f"test -e ~/{REMOTE_ROOT}/{q(lay['reference'])}", timeout=60)
             if code == 0:
                 problems.append(f"{st['host']}:{lay['shown_remote']} already exists; nothing is overwritten")
-            lines.append(f"- copies to `{st['host']}:{lay['shown_remote']}/` ({lay['ir_dir'].name}/, curate_ir/): "
+            lines.append(f"- copies to `{st['host']}:{lay['shown_remote']}/` ({lay['workflow_dir'].name}/, curate_ir/): "
                          + ("exists — refused" if code == 0 else "new"))
     if "launch" not in done:
         exists = Path(lay["work"]).exists() if not st["host"] else False
@@ -270,9 +270,9 @@ def preflight(run: str, inputs_dir=None) -> dict:
 def _plan(step: str, run_p: Path, s: dict, st: dict, lay: dict) -> dict:
     where = st["host"] or "this machine"
     if step == "prepare":
-        paths = [f"{lay['ir_dir']}/workflow.yml", f"{lay['ir_dir']}/functions/", f"{lay['ir_dir']}/inputs/"]
+        paths = [f"{lay['workflow_dir']}/workflow.yml", f"{lay['workflow_dir']}/functions/", f"{lay['workflow_dir']}/inputs/"]
     elif step == "copy":
-        paths = [f"{st['host']}:{lay['shown_remote']}/{lay['ir_dir'].name}/", f"{st['host']}:{lay['shown_remote']}/curate_ir/"]
+        paths = [f"{st['host']}:{lay['shown_remote']}/{lay['workflow_dir'].name}/", f"{st['host']}:{lay['shown_remote']}/curate_ir/"]
     else:
         paths = [f"{lay['work']}/ (Pegasus work folder, submit/ run folder)"]
     return {"step": step, "what": STEP_WHAT[step], "where": where, "paths": paths}
@@ -321,12 +321,12 @@ def _set_step(s: dict, name: str, ok: bool, error):
 
 
 def _prepare(run_p, s, st, lay, overwrite_own, inputs_dir) -> dict:
-    ir_dir = lay["ir_dir"]
-    if ir_dir.exists():
-        if not (overwrite_own and _own(run_p, "prepare", "local", ir_dir)):
-            raise StepError(f"{ir_dir} already exists; nothing is overwritten"
+    workflow_dir = lay["workflow_dir"]
+    if workflow_dir.exists():
+        if not (overwrite_own and _own(run_p, "prepare", "local", workflow_dir)):
+            raise StepError(f"{workflow_dir} already exists; nothing is overwritten"
                             + ("" if overwrite_own else " (if this run's prepare wrote it, retry with --overwrite-own)"))
-        shutil.rmtree(ir_dir)
+        shutil.rmtree(workflow_dir)
     return _prepare_versioned(run_p, s, st, lay, inputs_dir, WorkflowSpec.model_validate(s["spec"]))
 
 
@@ -336,8 +336,8 @@ def _prepare_versioned(run_p, s, st, lay, inputs_dir, spec) -> dict:
     import cwl_pegasus
     import execution as X
     ex = s["execution"]
-    ir_dir = lay["ir_dir"]
-    name = P.run_ir_name(spec.name, ex["run_id"])
+    workflow_dir = lay["workflow_dir"]
+    name = s["workflow_id"]  # the Pegasus workflow is named after the version, as the FaaSr deployment
     try:
         built = X.pegasus_built(s, run_p, name, st["image"])
     except X.ExecutionError as e:
@@ -345,18 +345,18 @@ def _prepare_versioned(run_p, s, st, lay, inputs_dir, spec) -> dict:
     missing = _inputs(built["needed"], inputs_dir)
     if missing:
         raise StepError(missing[0])
-    _log(run_p, "prepare", "local", ir_dir)
-    cwl_pegasus.write_folder(ir_dir, built)
+    _log(run_p, "prepare", "local", workflow_dir)
+    cwl_pegasus.write_folder(workflow_dir, built)
     for f in built["needed"]:
-        shutil.copy2(Path(inputs_dir) / f, ir_dir / "inputs" / f)
-    v = cwl_pegasus.validate_folder(ir_dir)
+        shutil.copy2(Path(inputs_dir) / f, workflow_dir / "inputs" / f)
+    v = cwl_pegasus.validate_folder(workflow_dir)
     if v["errors"]:
         raise StepError("the Pegasus workflow folder is not valid: " + " | ".join(v["errors"]))
     return {"execution": X.finish_pegasus(s, ex), "record": {"name": name, "host": st["host"], "runtime": st["runtime"], "image": st["image"],
                        "image_source": st["image_source"], "reference": ex["reference"],
-                       "ir_dir": str(ir_dir), "inputs_from": str(Path(inputs_dir).resolve()) if inputs_dir else None,
+                       "workflow_dir": str(workflow_dir), "inputs_from": str(Path(inputs_dir).resolve()) if inputs_dir else None,
                        "jobs": v["jobs"]},
-            "message": f"wrote {ir_dir} ({v['jobs']} jobs, {ex['reference']}); validated"}
+            "message": f"wrote {workflow_dir} ({v['jobs']} jobs, {ex['reference']}); validated"}
 
 
 def _copy(run_p, s, st, lay, overwrite_own, inputs_dir) -> dict:
@@ -376,7 +376,7 @@ def _copy(run_p, s, st, lay, overwrite_own, inputs_dir) -> dict:
     if code != 0:
         raise StepError(f"could not create {host}:{remote} ({_tail(err, 2)})")
     _log(run_p, "copy", host, remote)
-    code, _, err = RUN(["scp", "-r", "-q", *SSH_OPTS, str(lay["ir_dir"]), str(IR_TOOLS), f"{host}:{remote}/"],
+    code, _, err = RUN(["scp", "-r", "-q", *SSH_OPTS, str(lay["workflow_dir"]), str(PEGASUS_TOOLS), f"{host}:{remote}/"],
                        timeout=600)
     if code != 0:
         raise StepError(f"scp to {host}:{remote} failed ({_tail(err, 3)})")

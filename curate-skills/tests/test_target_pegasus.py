@@ -69,9 +69,11 @@ def test_gate4_summary_local(source_run, capsys):
     s = state(source_run)
     md = ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)["markdown"]
     sec = where_section(md)
-    rid = s["run_id"]
-    assert sec.index("**FaaSr (cloud)**") < sec.index("**Pegasus**")
-    assert (f"**Pegasus** on this machine: `mapreduce-word-count-{rid[4:8]}-{rid[9:13]}`, 11 jobs, image "
+    import execution as X
+    wid, dropped = X.gate4_ids(s, source_run)  # the id Gate 4 would publish: the FaaSr and Pegasus name
+    assert wid.startswith("mapreduce-word-count-v") and dropped is None
+    assert sec.index("**FaaSr (cloud)**") < sec.index("**Pegasus**") and f"deploys as `{wid}`" in sec
+    assert (f"**Pegasus** on this machine: `{wid}`, 11 jobs, image "
             f"`{DEFAULT_IMG}` (the built-in default), runtime docker, 5 deliverables") in sec
     assert "- input files you must provide: none" in sec
     # no file lists at the gate, for either target
@@ -225,8 +227,8 @@ def test_settings_file_loading_keeps_faasr_names_only_by_default(tmp_path):
     env = {}
     envfile.load(env, f, names=envfile.PEGASUS_NAMES)
     assert env == {"CURATE_PEGASUS_HOST": "maxwell", "CURATE_PEGASUS_IMAGE": "docker:///x:1"}
-    import pegasus_ir
-    assert pegasus_ir.settings({}) == {"host": None, "runtime": "docker", "image": "docker:///python:3.12-slim"}
+    import pegasus_target
+    assert pegasus_target.settings({}) == {"host": None, "runtime": "docker", "image": "docker:///python:3.12-slim"}
 
 
 # ── doctor --pegasus: the auto-mode rules ──
@@ -275,8 +277,7 @@ def test_start_at_deploy_offers_both_targets_and_runs_on_pegasus(source_run, cap
     monkeypatch.setattr(PD, "RUN", lambda cmd, timeout=600: (0, "5.1.3", "") if cmd[-1] == "pegasus-version"
                         else (1, "", ""))
     pf = PD.preflight(str(new))
-    assert pf["ok"] and pf["name"].startswith("mapreduce-word-count-") and pf["name"] != ""
-    assert pf["name"].endswith(f"{s['run_id'][4:8]}-{s['run_id'][9:13]}")  # the new run's own name
+    assert pf["ok"] and pf["name"] == state(Path(new))["workflow_id"]  # the version's id, as for FaaSr
 
 
 def test_start_at_deploy_pegasus_refused_when_it_cannot_run(source_run, capsys):

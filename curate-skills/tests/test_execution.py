@@ -41,6 +41,12 @@ def test_gate4_names_the_deployment_for_both_outcomes_of_the_duplicate_question(
     md = ok(S, ["show", "--session", str(source_run), "--gate", "4"], capsys)["markdown"]
     sec = where_section(md)
     assert f"deploys as `{nxt}` (as `{plan['workflow_id']}` if you drop it as a duplicate)" in sec
+    assert f"**Pegasus** on this machine: `{nxt}` (as `{plan['workflow_id']}` if you drop it as a duplicate)" in sec
+    import pegasus_target as P
+    lines = P.plan_lines({**s, "run_dir": str(source_run)}, P.settings({}))
+    assert any(l.startswith(f"- Workflow: `{nxt}` (`{plan['workflow_id']}` if you drop it as a duplicate at Gate 4)")
+               for l in lines)
+    assert any(f"workflows/{nxt}/runs/<run-id>/bundle/" in l for l in lines)  # the run's own folder
     import deploy as D
     first = D.plan_lines(str(source_run))[0]
     assert first.startswith(f"Deploys as: `{nxt}`") and f"if you drop it at Gate 4 as a duplicate of " \

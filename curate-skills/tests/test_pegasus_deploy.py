@@ -117,7 +117,7 @@ def test_preflight_local(peg_run, fake):
     assert out["ok"], out
     assert out["steps"] == ["prepare", "launch"] and out["next_step"] == "prepare"
     s = state(peg_run)
-    assert out["summary"].startswith(f"Pegasus run `mapreduce-word-count-{s['run_id'][4:8]}-{s['run_id'][9:13]}` "
+    assert out["summary"].startswith(f"Pegasus run `{s['workflow_id']}` "  # named after the version
                                      "on this machine: 11 jobs, image `docker:///python:3.12-slim` (the built-in default), "
                                      "runtime docker")
     ir, _, ref = ex(peg_run)
@@ -197,7 +197,7 @@ def test_failed_launch_retry_with_overwrite_own(peg_run, fake, monkeypatch, tmp_
 
 def test_inputs_from_a_folder(peg_run, fake, monkeypatch, tmp_path):
     import execution as X
-    import pegasus_ir as P
+    import pegasus_target as P
     real = X.pegasus_built
 
     def with_input(*a, **kw):

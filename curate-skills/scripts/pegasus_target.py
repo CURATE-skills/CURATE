@@ -8,8 +8,10 @@ Pegasus run of the draft or the approved version would do (plan: built in memory
 execution.pegasus_built, i.e. scripts/cwl_pegasus.py).
 
 The Pegasus folder itself is written by pegasus_deploy.py prepare, from the approved version.
-Until phase 8 this module also mapped a spec straight to an IR v0.2 folder (build_ir); every
-workflow now goes through the CWL draft.
+The Pegasus workflow is named after the version, its workflow id (as the FaaSr deployment is);
+each run has its own folder (workflows/<workflow-id>/runs/<run-id>/bundle/, and on an ssh host
+~/curate-runs/<workflow-id>/<run-id>/). (Named pegasus_ir.py until step 5; until phase 8 it also
+mapped a spec straight to an IR v0.2 folder.)
 """
 from __future__ import annotations
 
@@ -24,21 +26,22 @@ import envfile  # noqa: E402
 from curate_models import WorkflowSpec  # noqa: E402
 
 DEFAULT_IMAGE = envfile.DEFAULT_PEGASUS_IMAGE
-RUN_TS_RX = re.compile(r"^\d{4}(\d{2})(\d{2})-(\d{2})(\d{2})")  # run ids: YYYYMMDD-HHMMSS-<4 hex> (older: -<name>)
 
 
-def ir_name(name: str) -> str:
+def slug(name: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
     return s or "workflow"
 
 
 # ── Gate 4: the Pegasus target, read-only ────────────────────────────────────
 
-def run_ir_name(spec_name: str, run_id: str) -> str:
-    """The IR (Pegasus workflow) name for a run: <workflow>-<MMDD-HHMM> of the run, the same
-    timestamp rule as the FaaSr deploy name's default suffix."""
-    m = RUN_TS_RX.match(run_id or "")
-    return ir_name(spec_name) + (f"-{m[1]}{m[2]}-{m[3]}{m[4]}" if m else "")
+def workflow_name(s: dict, run=None) -> tuple[str, str | None]:
+    """(the Pegasus workflow's name, its name if the user drops the workflow as a duplicate at
+    Gate 4): the version's workflow id, as for the FaaSr deployment (execution.gate4_ids); the
+    spec's name only when no id can be worked out yet."""
+    import execution as X
+    wid, dropped = X.gate4_ids(s, run or s.get("run_dir") or ".")
+    return wid or slug(WorkflowSpec.model_validate(s["spec"]).name), dropped
 
 
 def settings(env=None) -> dict:
@@ -92,8 +95,7 @@ def plan(s: dict, st: dict) -> dict:
     spec = WorkflowSpec.model_validate(s["spec"])
     import execution as X
     if X.is_versioned(s) and s.get("run_dir"):  # built in memory from the draft or the approved version
-        ex = s.get("execution") or {}
-        name = run_ir_name(spec.name, ex.get("run_id") or s.get("run_id", ""))
+        name, dropped = workflow_name(s)
         peg_v = (s.get("validation") or {}).get("pegasus") or {}
         if peg_v.get("ok") is False and not X.stale_draft(s):  # emit's validation already refused it
             return {"ok": False, "name": name, "problems": peg_v.get("problems") or [peg_v.get("error")]}
@@ -101,10 +103,10 @@ def plan(s: dict, st: dict) -> dict:
             b = X.pegasus_built(s, s["run_dir"], name, st["image"])
         except X.ExecutionError as e:
             return {"ok": False, "name": name, "problems": e.problems}
-        return {"ok": True, "name": name, "jobs": len(b["jobs"]), "functions": len(b["functions"]),
+        return {"ok": True, "name": name, "if_dropped": dropped, "jobs": len(b["jobs"]), "functions": len(b["functions"]),
                 "inputs": b["needed"], "deliverables": [o["deliver_as"] for o in b["deliverables"]],
                 "deliverable_files": len(b["deliverables"]), "warnings": b["warnings"]}
-    return {"ok": False, "name": run_ir_name(spec.name, s.get("run_id", "")),
+    return {"ok": False, "name": slug(spec.name),
             "problems": [f"no workflow draft yet: run /curate-skills:curate-emit --run {s.get('run_id')}"]}
 
 
@@ -117,7 +119,8 @@ def summary_lines(s: dict, st: dict, p: dict | None = None) -> list[str]:
         return [f"**Pegasus** on {where}: **cannot run on Pegasus:**"] + [f"- {x}" for x in p["problems"]]
     src = st.get("image_source")
     n = p["deliverable_files"]
-    out = [f"**Pegasus** on {where}: `{p['name']}`, {p['jobs']} jobs, image `{st['image']}`"
+    dropped = f" (as `{p['if_dropped']}` if you drop it as a duplicate)" if p.get("if_dropped") else ""
+    out = [f"**Pegasus** on {where}: `{p['name']}`{dropped}, {p['jobs']} jobs, image `{st['image']}`"
            + (f" ({src})" if src else "") + f", runtime {st['runtime']}, {n} deliverable{'s' if n != 1 else ''}",
            "- input files you must provide: " + (f"{len(p['inputs'])} (listed in the full review)"
                                                   if p["inputs"] else "none")]
@@ -127,20 +130,22 @@ def summary_lines(s: dict, st: dict, p: dict | None = None) -> list[str]:
 
 def plan_lines(s: dict, st: dict) -> list[str]:
     """The full "Pegasus run would write" lines, for the Gate 4 review file."""
-    run_dir = s.get("run_dir") or "<run>"
-    local = f"{run_dir}/pegasus"
+    p = plan(s, st)
+    ex = s.get("execution") or {}
+    ref = ex.get("reference") or f"{p['name']}/<run-id>"
+    local = ex.get("bundle_dir") or f"workflows/{ref.replace('/', '/runs/', 1)}/bundle"
     out = [f"If you choose **{option_label(st)}** (nothing is written now; the run asks before each step):", ""]
     if st["host"]:
         out.append(f"- Runs on: `{st['host']}` over ssh; `{local}/` is copied to "
-                   f"`{st['host']}:~/curate-runs/{s.get('run_id')}/` and run there")
+                   f"`{st['host']}:~/curate-runs/{ref}/` and run there")
     else:
         out.append(f"- Runs on: this machine (Pegasus + HTCondor), in `{local}/`")
-    p = plan(s, st)
     if not p["ok"]:
         out.append("- **Cannot run on Pegasus:**")
         out += [f"  - {x}" for x in p["problems"]]
         return out
-    out += [f"- Workflow: `{p['name']}`, {p['jobs']} jobs, image `{st['image']}`, runtime {st['runtime']}",
+    out += [f"- Workflow: `{p['name']}`" + (f" (`{p['if_dropped']}` if you drop it as a duplicate at Gate 4)"
+                                            if p.get("if_dropped") else "") + f", {p['jobs']} jobs, image `{st['image']}`, runtime {st['runtime']}",
             f"- Writes: `{local}/workflow.yml` (the Pegasus workflow), `{local}/functions/` ({p['functions']} files), "
             f"`{local}/inputs/`",
             "- Input files you must provide: " + (", ".join(f"`{f}`" for f in p["inputs"]) or "none"),

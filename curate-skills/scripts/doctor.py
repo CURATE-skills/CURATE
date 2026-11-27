@@ -536,7 +536,7 @@ def s3_probe() -> int:
 # ── pegasus ──────────────────────────────────────────────────────────────────
 
 PLUGIN_DIR = SCRIPT_DIR.parent
-IR_TOOLS = ("curate_ir/backends/pegasus_backend.py",
+PEGASUS_TOOLS = ("curate_ir/backends/pegasus_backend.py",
             "curate_ir/runner/curate_run.py")
 PEGASUS_RUNTIMES = ("docker", "singularity")
 DEFAULT_PEGASUS_IMAGE = envfile.DEFAULT_PEGASUS_IMAGE
@@ -574,7 +574,7 @@ def check_pegasus_settings(r: Report, s: dict) -> bool:
 
 
 def check_ir_tools(r: Report, plugin_dir: Path = PLUGIN_DIR):
-    missing = [t for t in IR_TOOLS if not (plugin_dir / t).is_file()]
+    missing = [t for t in PEGASUS_TOOLS if not (plugin_dir / t).is_file()]
     if missing:
         r.add("pegasus", "IR tools", "fail", f"missing in the plugin ({plugin_dir}): {', '.join(missing)}. "
               "Reinstall or update curate-skills.")

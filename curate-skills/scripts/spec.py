@@ -2695,7 +2695,7 @@ def deploy_plan(s: dict) -> list[str]:
 
 def _pegasus():
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import pegasus_ir as P
+    import pegasus_target as P
     return P
 
 
@@ -2704,7 +2704,7 @@ IMAGE_FROM_START = 'chosen at "Start this run?", this run only'
 
 
 def pegasus_plan(s: dict) -> dict:
-    """The Pegasus target for this run (pegasus_ir.plan: local, read-only)."""
+    """The Pegasus target for this run (pegasus_target.plan: local, read-only)."""
     P = _pegasus()
     return P.plan(s, P.effective(s))
 

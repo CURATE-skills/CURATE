@@ -1,7 +1,7 @@
 """How a spec becomes a workflow (scripts/spec_cwl.py), checked through what the builders make of it:
 the CWL validator, the Pegasus build (cwl_pegasus: one job per copy), and a local run job by job
 with condorio-style staging through the plain runner (tests/ir_local.py). Until phase 8 these were
-the tests of pegasus_ir.build_ir (spec -> IR v0.2); the shapes and refusals are the same.
+the tests of pegasus_ir.build_ir (now pegasus_target.py), spec -> IR v0.2; the shapes and refusals are the same.
 
 Generated file names are <step>__<output>[__<rank>]__<spec file name>, so the checks name a file by
 the step and output that write it and its rank."""

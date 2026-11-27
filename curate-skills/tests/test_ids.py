@@ -37,12 +37,10 @@ def test_names_and_ids():
         ids.parse_workflow_id("no-version")
 
 
-def test_run_ids_keep_the_timestamp_prefix_the_pegasus_names_parse():
+def test_run_ids_keep_the_timestamp_prefix():
     rid = ids.new_run_id(datetime(2026, 11, 18, 1, 29, 3), "a3f9")
     assert rid == "20261118-012903-a3f9" and ids.RUN_ID.match(rid)
     assert ids.RUN_ID.match(ids.new_run_id())
-    import pegasus_ir
-    assert pegasus_ir.run_ir_name("t", rid) == "t-1118-0129"
     assert ids.reference("corvallis-winter-v3", rid) == "corvallis-winter-v3/20261118-012903-a3f9"
 
 

@@ -28,7 +28,7 @@ from pathlib import Path
 import hostcmd
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-IR_TOOLS = SCRIPT_DIR.parent / "curate_ir"
+PEGASUS_TOOLS = SCRIPT_DIR.parent / "curate_ir"
 DEFAULT_MINUTES = 10
 DEFAULT_INTERVAL = 10
 DEFAULT_CHUNK = 60
@@ -70,15 +70,21 @@ def _setting(flag, env_var, config, default, cast):
 
 # ── the backend on the Pegasus host ──────────────────────────────────────────
 
+def _workflow_dir(rec: dict) -> str | None:
+    """The run's Pegasus folder, as prepare recorded it (workflow_dir; "ir_dir" in runs prepared
+    before step 5)."""
+    return rec.get("workflow_dir") or rec.get("ir_dir")
+
+
 def _where(rec: dict) -> dict:
     """Paths on the Pegasus host for the backend's status/collect."""
     if rec.get("host"):
         root = rec["remote_dir"]
-        folder = Path(rec.get("ir_dir") or "bundle").name  # the Pegasus folder (the run's bundle/)
+        folder = Path(_workflow_dir(rec) or "bundle").name  # the Pegasus folder (the run's bundle/)
         return {"host": rec["host"], "workflow": f"{root}/{folder}/workflow.yml", "work": rec["work_dir"],
                 "backend": f"{root}/curate_ir/backends/pegasus_backend.py"}
-    return {"host": None, "workflow": str(Path(rec["ir_dir"]) / "workflow.yml"), "work": rec["work_dir"],
-            "backend": str(IR_TOOLS / "backends" / "pegasus_backend.py")}
+    return {"host": None, "workflow": str(Path(_workflow_dir(rec)) / "workflow.yml"), "work": rec["work_dir"],
+            "backend": str(PEGASUS_TOOLS / "backends" / "pegasus_backend.py")}
 
 
 def _backend(w: dict, cmd: str, timeout=300) -> dict:
